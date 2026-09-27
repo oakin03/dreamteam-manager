@@ -1,0 +1,21 @@
+{
+  "id": "task1-quick-play",
+  "name": "Task 1 \u00b7 Quick Play",
+  "version": "0.2.0",
+  "description": "Quick Play every 270 seconds",
+  "executionKind": "continuous",
+  "defaultConfig": {
+    "intervalSeconds": 270,
+    "retrySeconds": 30
+  },
+  "fields": [
+    {
+      "key": "intervalSeconds",
+      "label": "Quick Play interval",
+      "type": "number",
+      "unit": "seconds",
+      "min": 60,
+      "default": 270
+    }
+  ]
+}
