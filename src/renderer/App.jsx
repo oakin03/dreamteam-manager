@@ -243,77 +243,497 @@ function Market({ state, t, refresh, toast }) {
   const [selectedIds,setSelectedIds]=useState([]);
   const [busy,setBusy]=useState({});
   const [batchBusy,setBatchBusy]=useState('');
+  const [tableFilters,setTableFilters]=useState({
+    SOLD:{accountId:'',name:'',rating:''},
+    LISTED:{accountId:'',name:'',rating:''},
+    EXPIRED:{accountId:'',name:'',rating:''}
+  });
+
   const accountKey=state.accounts.map(a=>a.id).join('|');
-  useEffect(()=>{const valid=new Set(state.accounts.map(a=>a.id));setSelectedIds(ids=>ids.filter(id=>valid.has(id)))},[accountKey]);
-  const toggle=id=>setSelectedIds(ids=>ids.includes(id)?ids.filter(x=>x!==id):[...ids,id]);
-  const allSelected=state.accounts.length>0&&state.accounts.every(a=>selectedIds.includes(a.id));
+
+  useEffect(()=>{
+    const valid=new Set(state.accounts.map(a=>a.id));
+    setSelectedIds(ids=>ids.filter(id=>valid.has(id)));
+  },[accountKey]);
+
+  const toggle=id=>setSelectedIds(ids=>
+    ids.includes(id)?ids.filter(x=>x!==id):[...ids,id]
+  );
+
+  const allSelected=
+    state.accounts.length>0 &&
+    state.accounts.every(a=>selectedIds.includes(a.id));
+
   const invoke=async(id,mode)=>{
     if(mode==='close')return api.market.close(id);
     if(mode==='claim')return api.market.claim(id);
     return api.market.open(id);
   };
+
   const runOne=async(id,mode)=>{
     if(busy[id]||batchBusy)return;
+
     setBusy(previous=>({...previous,[id]:mode}));
-    try{await invoke(id,mode);await refresh()}catch(error){toast(error.message,'error')}
-    finally{setBusy(previous=>{const next={...previous};delete next[id];return next})}
+
+    try{
+      await invoke(id,mode);
+      await refresh();
+    }catch(error){
+      toast(error.message,'error');
+    }finally{
+      setBusy(previous=>{
+        const next={...previous};
+        delete next[id];
+        return next;
+      });
+    }
   };
+
   const runBatch=async(mode,ids)=>{
     if(batchBusy||!ids.length)return;
+
     setBatchBusy(mode);
     const failed=[];
+
     try{
       for(const id of ids){
         const account=state.accounts.find(a=>a.id===id);
+
         if(!account||busy[id])continue;
         if(mode==='close'&&!state.market?.[id]?.browserOpen)continue;
+
         setBusy(previous=>({...previous,[id]:mode}));
-        try{await invoke(id,mode)}catch(error){failed.push(`${account.name}: ${error.message}`)}
-        finally{setBusy(previous=>{const next={...previous};delete next[id];return next})}
+
+        try{
+          await invoke(id,mode);
+        }catch(error){
+          failed.push(`${account.name}: ${error.message}`);
+        }finally{
+          setBusy(previous=>{
+            const next={...previous};
+            delete next[id];
+            return next;
+          });
+        }
       }
+
       await refresh();
-      if(failed.length)toast(`${failed.length} ${t.accounts.toLowerCase()}: ${failed[0]}`,'error');
-    }finally{setBatchBusy('')}
+
+      if(failed.length)
+        toast(`${failed.length} ${t.accounts.toLowerCase()}: ${failed[0]}`,'error');
+
+    }finally{
+      setBatchBusy('');
+    }
   };
-  const rows=state.accounts.flatMap(account=>(state.market?.[account.id]?.rows||[]).map(row=>({...row,accountName:account.name})));
+
+  const rows=state.accounts.flatMap(account=>
+    (state.market?.[account.id]?.rows||[])
+      .map(row=>({...row,accountName:account.name}))
+  );
+
+  const updateTableFilter=(status,key,value)=>
+    setTableFilters(previous=>({
+      ...previous,
+      [status]:{
+        ...previous[status],
+        [key]:value
+      }
+    }));
+
   const section=(status,title)=>{
-    const items=rows.filter(row=>row.status===status);
-    return <section className="panel market-table-panel" key={status}>
-      <div className="market-table-heading"><h2>{title} <span>{status}</span></h2><b>{items.length}</b></div>
-      <div className="table-panel"><table><thead><tr><th>{t.account}</th><th>{t.players}</th><th>{t.salary}</th><th>{t.marketSalePrice}</th></tr></thead>
-      <tbody>{items.length?items.map((row,index)=><tr key={`${row.accountId}-${row.page}-${row.index}-${index}`}><td>{row.accountName}</td><td title={row.name}><b>{row.fullName||row.name}</b></td><td>{fmtNumber(row.salary)}</td><td>{fmtNumber(row.price)} {row.currency}</td></tr>):<tr><td colSpan="4" className="market-empty">{t.marketNoRows}</td></tr>}</tbody></table></div>
-    </section>;
-  };
-  return <div className="page market-page">
-    <div className="page-title"><div><h1>{t.market}</h1><span className="subtitle">{t.marketSubtitle} · {selectedIds.length} {t.selected}</span></div>
-      <div className="toolbar">
-        <button className="btn primary" disabled={!!batchBusy||!selectedIds.length} onClick={()=>runBatch('open',selectedIds)}>{t.marketOpenSelected}</button>
-        <button className="btn ghost" disabled={!!batchBusy||!selectedIds.length} onClick={()=>runBatch('close',selectedIds)}>{t.marketCloseSelected}</button>
-        <button className="btn primary" disabled={!!batchBusy||!state.accounts.length} onClick={()=>runBatch('open',state.accounts.map(a=>a.id))}>{t.marketOpenAll}</button>
-        <button className="btn danger-soft" disabled={!!batchBusy||!state.accounts.length} onClick={()=>runBatch('close',state.accounts.map(a=>a.id))}>{t.marketCloseAll}</button>
-      </div>
-    </div>
-    <section className="panel market-account-panel">
-      <label className="scout-select-all"><input type="checkbox" checked={allSelected} onChange={()=>setSelectedIds(allSelected?[]:state.accounts.map(a=>a.id))}/> {t.selectAll}</label>
-      <div className="market-account-grid">{state.accounts.map(account=>{
-        const s=state.market?.[account.id]||{};
-        const sold=(s.rows||[]).filter(row=>row.status==='SOLD').length;
-        const listed=(s.rows||[]).filter(row=>row.status==='LISTED').length;
-        const expired=(s.rows||[]).filter(row=>row.status==='EXPIRED').length;
-        const waiting=Boolean(busy[account.id]||batchBusy||['scanning','claiming'].includes(s.status));
-        const status=s.status==='scanning'?t.marketScanning:s.status==='claiming'?t.marketClaiming:s.status==='error'?t.error:s.browserOpen?t.marketOpen:t.marketClosed;
-        return <div className="market-account" key={account.id}>
-          <div className="market-account-header"><input type="checkbox" checked={selectedIds.includes(account.id)} onChange={()=>toggle(account.id)} aria-label={account.name}/><b>{account.name}</b><span className={`scout-browser-state ${s.browserOpen?'open':'closed'}`}>{status}</span></div>
-          <div className="market-account-counts"><span>SOLD <b>{sold}</b></span><span>LISTED <b>{listed}</b></span><span>EXPIRED <b>{expired}</b></span><span>{s.page||0}/{s.totalPages||0}</span></div>
-          <div className="market-account-actions"><button className="btn ghost small" disabled={waiting} onClick={()=>runOne(account.id,'open')}><Icon name="refresh" size={14}/>{s.scannedAt?t.marketRescan:t.marketScan}</button>
-            {sold>0&&<button className="btn success small" disabled={waiting} onClick={()=>runOne(account.id,'claim')}>{t.marketClaim}</button>}
-            {s.browserOpen&&<button className="btn danger-soft small" disabled={waiting||s.pendingApkRefresh} onClick={()=>runOne(account.id,'close')}>{t.close}</button>}
-          </div>{s.pendingApkRefresh&&<small className="market-account-pending">{t.marketApkPending}</small>}{s.error&&<small className="market-account-error">{s.error}</small>}
+    const filter=tableFilters[status];
+    const allItems=rows.filter(row=>row.status===status);
+
+    const ratings=[
+      ...new Set(
+        allItems
+          .map(row=>String(row.rating||'').toUpperCase())
+          .filter(Boolean)
+      )
+    ].sort((a,b)=>gradeRank(b)-gradeRank(a));
+
+    const items=allItems.filter(row=>{
+      if(
+        filter.accountId &&
+        String(row.accountId)!==filter.accountId
+      ) return false;
+
+      if(
+        filter.name &&
+        !String(row.fullName||row.name||'')
+          .toLowerCase()
+          .includes(filter.name.toLowerCase())
+      ) return false;
+
+      if(
+        filter.rating &&
+        String(row.rating||'').toUpperCase()!==filter.rating
+      ) return false;
+
+      return true;
+    });
+
+    return (
+      <section className="panel market-table-panel" key={status}>
+
+        <div className="market-table-heading">
+          <h2>{title} <span>{status}</span></h2>
+          <b>{items.length}</b>
         </div>
-      })}</div>
-    </section>
-    {section('SOLD',t.marketSold)}{section('LISTED',t.marketListed)}{section('EXPIRED',t.marketExpired)}
-  </div>;
+
+        <div
+          className="filter-panel"
+          style={{margin:'10px 12px'}}
+        >
+          <div
+            className="filters-grid"
+            style={{
+              gridTemplateColumns:'1.15fr 1.4fr .8fr auto'
+            }}
+          >
+
+            <select
+              value={filter.accountId}
+              onChange={e=>
+                updateTableFilter(
+                  status,
+                  'accountId',
+                  e.target.value
+                )
+              }
+            >
+              <option value="">
+                {t.all} · {t.account}
+              </option>
+
+              {state.accounts.map(account=>
+                <option
+                  key={account.id}
+                  value={String(account.id)}
+                >
+                  {account.name}
+                </option>
+              )}
+            </select>
+
+            <input
+              value={filter.name}
+              onChange={e=>
+                updateTableFilter(
+                  status,
+                  'name',
+                  e.target.value
+                )
+              }
+              placeholder={t.name}
+            />
+
+            <select
+              value={filter.rating}
+              onChange={e=>
+                updateTableFilter(
+                  status,
+                  'rating',
+                  e.target.value
+                )
+              }
+            >
+              <option value="">
+                {t.all} · {t.rating}
+              </option>
+
+              {ratings.map(rating=>
+                <option
+                  key={rating}
+                  value={rating}
+                >
+                  {rating}
+                </option>
+              )}
+            </select>
+
+            <button
+              className="btn ghost small"
+              onClick={()=>
+                setTableFilters(previous=>({
+                  ...previous,
+                  [status]:{
+                    accountId:'',
+                    name:'',
+                    rating:''
+                  }
+                }))
+              }
+            >
+              {t.clear}
+            </button>
+
+          </div>
+        </div>
+
+        <div className="table-panel">
+          <table>
+
+            <thead>
+              <tr>
+                <th>{t.account}</th>
+                <th>{t.players}</th>
+                <th>{t.rating}</th>
+                <th>{t.salary}</th>
+                <th>{t.marketSalePrice}</th>
+              </tr>
+            </thead>
+
+            <tbody>
+
+              {items.length
+                ? items.map((row,index)=>
+                  <tr
+                    key={`${row.accountId}-${row.page}-${row.index}-${index}`}
+                  >
+                    <td>{row.accountName}</td>
+
+                    <td title={row.name}>
+                      <b>{row.fullName||row.name}</b>
+                    </td>
+
+                    <td>
+                      <span
+                        className={`grade-chip ${gradeToneClass(row.rating)}`}
+                      >
+                        {row.rating||'—'}
+                      </span>
+                    </td>
+
+                    <td>{fmtNumber(row.salary)}</td>
+
+                    <td>
+                      {fmtNumber(row.price)} {row.currency}
+                    </td>
+
+                  </tr>
+                )
+                : <tr>
+                    <td
+                      colSpan="5"
+                      className="market-empty"
+                    >
+                      {t.marketNoRows}
+                    </td>
+                  </tr>
+              }
+
+            </tbody>
+
+          </table>
+        </div>
+
+      </section>
+    );
+  };
+
+  return (
+    <div className="page market-page">
+
+      <div className="page-title">
+        <div>
+          <h1>{t.market}</h1>
+          <span className="subtitle">
+            {t.marketSubtitle} · {selectedIds.length} {t.selected}
+          </span>
+        </div>
+
+        <div className="toolbar">
+          <button
+            className="btn primary"
+            disabled={!!batchBusy||!selectedIds.length}
+            onClick={()=>runBatch('open',selectedIds)}
+          >
+            {t.marketOpenSelected}
+          </button>
+
+          <button
+            className="btn ghost"
+            disabled={!!batchBusy||!selectedIds.length}
+            onClick={()=>runBatch('close',selectedIds)}
+          >
+            {t.marketCloseSelected}
+          </button>
+
+          <button
+            className="btn primary"
+            disabled={!!batchBusy||!state.accounts.length}
+            onClick={()=>runBatch(
+              'open',
+              state.accounts.map(a=>a.id)
+            )}
+          >
+            {t.marketOpenAll}
+          </button>
+
+          <button
+            className="btn danger-soft"
+            disabled={!!batchBusy||!state.accounts.length}
+            onClick={()=>runBatch(
+              'close',
+              state.accounts.map(a=>a.id)
+            )}
+          >
+            {t.marketCloseAll}
+          </button>
+        </div>
+      </div>
+
+      <section className="panel market-account-panel">
+
+        <label className="scout-select-all">
+          <input
+            type="checkbox"
+            checked={allSelected}
+            onChange={()=>
+              setSelectedIds(
+                allSelected
+                  ? []
+                  : state.accounts.map(a=>a.id)
+              )
+            }
+          />
+          {' '}
+          {t.selectAll}
+        </label>
+
+        <div className="market-account-grid">
+
+          {state.accounts.map(account=>{
+            const s=state.market?.[account.id]||{};
+
+            const sold=(s.rows||[])
+              .filter(row=>row.status==='SOLD').length;
+
+            const listed=(s.rows||[])
+              .filter(row=>row.status==='LISTED').length;
+
+            const expired=(s.rows||[])
+              .filter(row=>row.status==='EXPIRED').length;
+
+            const waiting=Boolean(
+              busy[account.id] ||
+              batchBusy ||
+              ['scanning','claiming'].includes(s.status)
+            );
+
+            const status=
+              s.status==='scanning'
+                ? t.marketScanning
+                : s.status==='claiming'
+                  ? t.marketClaiming
+                  : s.status==='error'
+                    ? t.error
+                    : s.browserOpen
+                      ? t.marketOpen
+                      : t.marketClosed;
+
+            return (
+              <div className="market-account" key={account.id}>
+
+                <div className="market-account-header">
+
+                  <input
+                    type="checkbox"
+                    checked={selectedIds.includes(account.id)}
+                    onChange={()=>toggle(account.id)}
+                    aria-label={account.name}
+                  />
+
+                  <b>{account.name}</b>
+
+                  <span
+                    className={`scout-browser-state ${
+                      s.browserOpen?'open':'closed'
+                    }`}
+                  >
+                    {status}
+                  </span>
+
+                </div>
+
+                <div className="market-account-counts">
+                  <span>SOLD <b>{sold}</b></span>
+                  <span>LISTED <b>{listed}</b></span>
+                  <span>EXPIRED <b>{expired}</b></span>
+                  <span>{s.page||0}/{s.totalPages||0}</span>
+                </div>
+
+                <div className="market-account-actions">
+
+                  <button
+                    className="btn ghost small"
+                    disabled={waiting}
+                    onClick={()=>runOne(account.id,'open')}
+                  >
+                    <Icon name="refresh" size={14}/>
+                    {s.scannedAt
+                      ? t.marketRescan
+                      : t.marketScan}
+                  </button>
+
+                  {sold>0 &&
+                    <button
+                      className="btn success small"
+                      disabled={waiting}
+                      onClick={()=>runOne(
+                        account.id,
+                        'claim'
+                      )}
+                    >
+                      {t.marketClaim}
+                    </button>
+                  }
+
+                  {s.browserOpen &&
+                    <button
+                      className="btn danger-soft small"
+                      disabled={
+                        waiting ||
+                        s.pendingApkRefresh
+                      }
+                      onClick={()=>runOne(
+                        account.id,
+                        'close'
+                      )}
+                    >
+                      {t.close}
+                    </button>
+                  }
+
+                </div>
+
+                {s.pendingApkRefresh &&
+                  <small className="market-account-pending">
+                    {t.marketApkPending}
+                  </small>
+                }
+
+                {s.error &&
+                  <small className="market-account-error">
+                    {s.error}
+                  </small>
+                }
+
+              </div>
+            );
+          })}
+
+        </div>
+      </section>
+
+      {section('SOLD',t.marketSold)}
+      {section('LISTED',t.marketListed)}
+      {section('EXPIRED',t.marketExpired)}
+
+    </div>
+  );
 }
 
 function ScoutCardInfo({ card, t }) {
@@ -422,11 +842,45 @@ function AutoTrade({ state, t, refresh, toast }) {
   const accounts = state.accounts || [];
   const roles = state.cards?.roles || [];
   const previous = state.autoTrade?.lastRun?.config || {};
+
+  const roleId = name =>
+    roles.find(r =>
+      String(r.name || '').trim().toLocaleLowerCase('tr-TR') ===
+      name.toLocaleLowerCase('tr-TR')
+    )?.id;
+
+  const defaultSideToMain = [
+    roleId('Kart')
+  ].filter(Boolean);
+
+  const defaultMainToSide = [
+    roleId('Satılabilir'),
+    roleId('Stok')
+  ].filter(Boolean);
+
   const [form, setForm] = useState(() => ({
-    sideAccountIds: previous.sideAccountIds || [], purchaseMaxPrice: String(previous.purchaseMaxPrice ?? 100),
-    sideToMainRoleIds: previous.sideToMainRoleIds || [], mainToSideRoleIds: previous.mainToSideRoleIds || [],
-    roomDescription: previous.roomDescription || 'Auto Trade',
-    roomPassword: '', visible: previous.visible ?? true
+    sideAccountIds: previous.sideAccountIds || [],
+
+    purchaseMaxPrice: String(
+      previous.purchaseMaxPrice ?? 100
+    ),
+
+    sideToMainRoleIds:
+      Array.isArray(previous.sideToMainRoleIds)
+        ? previous.sideToMainRoleIds
+        : defaultSideToMain,
+
+    mainToSideRoleIds:
+      Array.isArray(previous.mainToSideRoleIds)
+        ? previous.mainToSideRoleIds
+        : defaultMainToSide,
+
+    roomDescription:
+      previous.roomDescription || '923589325',
+
+    roomPassword: '32958209',
+
+    visible: previous.visible ?? true
   }));
   const [busy, setBusy] = useState(false);
   const running = rt && ['running', 'paused', 'stopping'].includes(rt.status);

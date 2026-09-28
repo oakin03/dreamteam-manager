@@ -65,9 +65,13 @@ function readMarketView() {
     const amount = marker && [...marker.parentElement.querySelectorAll('span')]
       .map(span => integer(text(span))).find(value => value !== null);
     const status = field(card, 'Status').toUpperCase();
+    const rating = [...card.querySelectorAll('span,div')]
+      .map(node => text(node).toUpperCase())
+      .find(value => /^(?:X|N|D-|D|D\+|C-|C|C\+|B-|B|B\+|A-|A|A\+|S-|S|S\+)$/.test(value)) || '';
+
     return {
       index, name: text(heading), fullName: (image?.getAttribute('alt') || '').trim(),
-      imagePath: image?.getAttribute('src') || '', salary: integer(field(card, 'Salary')),
+      imagePath: image?.getAttribute('src') || '', rating, salary: integer(field(card, 'Salary')),
       status, price: amount ?? null, currency
     };
   });
@@ -79,7 +83,7 @@ function readMarketView() {
     ? headerCounts.reduce((sum, match) => sum + Number(match[2]), 0) : null;
   const bodyText = text(listingRoot === document ? listingHeading?.closest?.('main') || document.body : listingRoot);
   const empty = /(?:no listings|no active listings|no players listed|nothing listed)/i.test(bodyText);
-  const signature = rows.map(row => [row.fullName, row.imagePath, row.salary, row.status, row.price, row.currency].join('|')).join('\n');
+  const signature = rows.map(row => [row.fullName, row.imagePath, row.rating, row.salary, row.status, row.price, row.currency].join('|')).join('\n');
   return { listingOpen, pagination, rows, cardCount: cards.length, headerCount, invalid,
     empty, loading: /loading (?:listings|players)/i.test(bodyText), signature };
 }
@@ -220,8 +224,16 @@ class MarketService {
       const lastPage = pager?.current === target && pager.total === target;
       const validCount = pager && (lastPage ? count >= 1 && count <= 8 : count === 8) &&
         (view.headerCount == null || view.headerCount > 8 || count === view.headerCount);
+
+      const unpagedSinglePage = target === 1 && !pager &&
+        view.headerCount != null &&
+        view.headerCount >= 1 &&
+        view.headerCount <= 8 &&
+        count === view.headerCount;
+
       if (view?.listingOpen && !view.loading && !view.invalid &&
         ((pager?.current === target && pager.total >= target && validCount) ||
+          unpagedSinglePage ||
           (target === 1 && view.empty && count === 0 && (!pager || pager.current === 1))) &&
         (previousSignature === null || view.signature !== previousSignature)) {
         stable = view.signature === lastSignature ? stable + 1 : 1;
@@ -277,7 +289,6 @@ class MarketService {
     await page.getByRole('heading', { name: /^My Listings$/i }).waitFor({ state: 'visible', timeout: 30000 });
     return this._firstPage(page, signal);
   }
-
   async _scanPages(page, accountId, signal) {
     let view = await this._firstPage(page, signal);
     const rows = [];

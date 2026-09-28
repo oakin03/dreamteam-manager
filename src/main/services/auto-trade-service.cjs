@@ -29,6 +29,45 @@ function identityOf(p) {
   const path=normPath(p?.imagePath),name=normName(p?.name);
   return placeholderPath(path)&&name?`name:${name}`:path||name;
 }
+function normalizeTradeName(v) {
+  return clean(v).normalize('NFKD').replace(/[\u0300-\u036f]/g,'')
+    .toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
+}
+function tradeSurname(v) {
+  const parts=normalizeTradeName(v).split(' ').filter(Boolean);
+  return parts[parts.length-1]||'';
+}
+function tradeIdentityOf(p) {
+  return [
+    normalizeTradeName(p?.name),
+    clean(p?.position).toUpperCase(),
+    clean(p?.rating).toUpperCase(),
+    num(p?.salary)??'',
+    num(p?.price)??''
+  ].join('|');
+}
+function resolveTradePlayer(players, subject) {
+  const pool=(players||[]).filter(Boolean);
+  const wantedName=normalizeTradeName(subject?.name);
+  let candidates=wantedName?pool.filter(p=>normalizeTradeName(p?.name)===wantedName):[];
+  if(!candidates.length && subject?.name)
+    candidates=pool.filter(p=>p?.name&&namesMatch(p.name,subject.name));
+  if(!candidates.length){
+    const surname=tradeSurname(subject?.name);
+    if(surname)candidates=pool.filter(p=>tradeSurname(p?.name)===surname);
+  }
+  const narrow=(key,normalize)=>{
+    const wanted=subject?.[key];
+    if(wanted==null||wanted==='')return;
+    const matches=candidates.filter(p=>p?.[key]!=null&&p?.[key]!==''&&normalize(p[key])===normalize(wanted));
+    if(matches.length)candidates=matches;
+  };
+  narrow('position',v=>clean(v).toUpperCase());
+  narrow('rating',v=>clean(v).toUpperCase());
+  narrow('salary',v=>num(v));
+  narrow('price',v=>num(v));
+  return candidates.length===1?candidates[0]:null;
+}
 function makeNameMatches(full,short) {
   const name=clean(full).toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
   const label=clean(short).toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
@@ -36,22 +75,54 @@ function makeNameMatches(full,short) {
   return name.length>=label.length && name.slice(-label.length).join('')===label.join('');
 }
 function resolveMakeBenchPlayer(players,tile) {
+  const pool=players||[];
+
+  const named=tile?.name?pool.filter(p=>
+    makeNameMatches(p.name,tile.name)||
+    makeNameMatches(tile.name,p.name)
+  ):[];
+
+  if(named.length===1)return named[0];
+
   const path=normPath(tile?.imagePath);
   if(!path)return null;
-  const samePath=(players||[]).filter(p=>normPath(p.imagePath)===path);
-  const matches=tile.name?samePath.filter(p=>makeNameMatches(p.name,tile.name)):samePath;
+
+  const samePath=pool.filter(p=>normPath(p.imagePath)===path);
+
+  // Gerçek oyuncu portrait'i benzersizse path tek başına yeterlidir.
+  // Make ekranı "Trey Jemison III" -> "Jemison" gibi isimleri kısaltabiliyor.
+  if(samePath.length===1 && !placeholderPath(path))
+    return samePath[0];
+
+  // no-face gibi ortak portrait'lerde isim eşleşmesi hâlâ zorunlu.
+  const matches=tile.name?samePath.filter(p=>
+    makeNameMatches(p.name,tile.name)||
+    makeNameMatches(tile.name,p.name)
+  ):samePath;
+
   return matches.length===1?matches[0]:null;
 }
 function matchMakeConfirmation(selected, tiles) {
   if(tiles.length!==selected.length)return null;
   const used=new Set(),matches=[];
   for(const tile of tiles){
-    if(!tile.name || !normPath(tile.imagePath))return null;
-    const candidates=selected.filter((p,index)=>!used.has(index) &&
-      normPath(p.imagePath)===normPath(tile.imagePath) && namesMatch(p.name,tile.name));
+    if(!tile.name && !normPath(tile.imagePath))return null;
+    const named=tile.name?selected.map((p,index)=>({p,index}))
+      .filter(x=>!used.has(x.index) && namesMatch(x.p.name,tile.name)):[];
+    const path=normPath(tile.imagePath);
+    const byPath=path?selected.map((p,index)=>({p,index}))
+      .filter(x=>
+        !used.has(x.index) &&
+        normPath(x.p.imagePath)===path &&
+        (
+          !placeholderPath(path) ||
+          !tile.name ||
+          namesMatch(x.p.name,tile.name)
+        )
+      ):[];
+    const candidates=named.length===1?named:byPath;
     if(candidates.length!==1)return null;
-    const index=selected.indexOf(candidates[0]);
-    used.add(index);matches.push(candidates[0]);
+    used.add(candidates[0].index);matches.push(candidates[0].p);
   }
   return used.size===selected.length?matches:null;
 }
@@ -77,24 +148,58 @@ function readOwnTradePlayers() {
   for(let i=0;panel&&i<6;i++,panel=panel.parentElement)
     if(clean(panel.textContent).includes('Offering'))break;
   if(!panel || !clean(panel.textContent).includes('Offering'))return null;
+
   const cards=[];
-  for(const image of panel.querySelectorAll('div.grid.grid-cols-6 img[src*="players/"]')) {
-    let card=image;
-    for(let i=0;card&&i<6;i++,card=card.parentElement)
-      if(/h-\[80px\]/.test(String(card.className||'')))break;
-    if(!card || !/h-\[80px\]/.test(String(card.className||'')))continue;
-    let path=image.getAttribute('src')||'';
-    if(path.includes('/_next/image')){
-      try{path=new URL(path,location.href).searchParams.get('url')||path;}catch{}
+  for(const card of panel.querySelectorAll('div.grid.grid-cols-6 > div')) {
+    if(!/h-\[80px\]/.test(String(card.className||'')) || !/\bgroup\b/.test(String(card.className||'')))continue;
+
+    const tooltip=[...card.querySelectorAll('div')].find(node=>{
+      const cls=String(node.className||'');
+      return /\bgroup-hover:block\b/.test(cls) && /\bpointer-events-none\b/.test(cls);
+    });
+    if(!tooltip)continue;
+
+    const header=[...tooltip.querySelectorAll('div')].find(node=>{
+      const cls=String(node.className||'');
+      return /\bjustify-between\b/.test(cls) && /\buppercase\b/.test(cls);
+    });
+    const spans=[...(header?.querySelectorAll('span')||[])];
+    const name=clean(spans[0]?.textContent);
+    const position=clean(spans[1]?.textContent).toUpperCase();
+
+    const portrait=[...card.querySelectorAll('img')]
+      .find(img=>/players\//i.test(img.getAttribute('src')||''));
+
+    let imagePath=portrait?.getAttribute('src')||'';
+
+    if(imagePath.includes('/_next/image')){
+      try{
+        imagePath=new URL(imagePath,location.href).searchParams.get('url')||imagePath;
+      }catch{}
     }
-    const imagePath=path.replace(/^https?:\/\/[^/]+/i,'').split('?')[0];
-    const text=clean(card.textContent);
-    cards.push({name:clean(image.getAttribute('alt')),imagePath:/^\/?players\//i.test(imagePath)?
-      `/${imagePath.replace(/^\/+/, '')}`:'',
-      salary:number(text.match(/Salary:\s*([\d.,]+)/i)?.[1]),
-      price:number(text.match(/Price:\s*([\d.,]+)/i)?.[1]),
-      selectable:/\bcursor-pointer\b/.test(String(card.className||'')) &&
-        !/\bcursor-not-allowed\b/.test(String(card.className||''))});
+
+    imagePath=String(imagePath||'')
+      .replace(/^https?:\/\/[^/]+/i,'')
+      .split('?')[0];
+
+    if(/^\/?players\//i.test(imagePath))
+      imagePath=`/${imagePath.replace(/^\/+/,'')}`;
+    else
+      imagePath='';
+
+    const text=clean(tooltip.textContent);
+    const rating=clean(text.match(/Rating:\s*([A-Z][+-]?)/i)?.[1]).toUpperCase();
+    const offense=number(text.match(/Offense:\s*([\d.,]+)/i)?.[1]);
+    const defense=number(text.match(/Defense:\s*([\d.,]+)/i)?.[1]);
+    const salary=number(text.match(/Salary:\s*([\d.,]+)/i)?.[1]);
+    const price=number(text.match(/Price:\s*([\d.,]+)/i)?.[1]);
+    if(!name || salary==null || price==null)continue;
+
+      cards.push({
+        name,imagePath,position,rating,offense,defense,salary,price,
+        selectable:/\bcursor-pointer\b/.test(String(card.className||'')) &&
+          !/\bcursor-not-allowed\b/.test(String(card.className||''))
+      });
   }
   return cards;
 }
@@ -109,6 +214,102 @@ function readOwnTradeOfferCount() {
     .find(node=>clean(node.textContent)==='Offering');
   const value=clean(offering?.nextElementSibling?.textContent).match(/^(\d+)\s*\/\s*(\d+)/);
   return value?{count:Number(value[1]),limit:Number(value[2])}:null;
+}
+
+function tradeCardAction({player,action}) {
+  const clean=value=>String(value||'').replace(/\s+/g,' ').trim();
+  const number=value=>{const digits=String(value??'').replace(/[^0-9]/g,'');return digits?Number(digits):null;};
+  const norm=value=>clean(value).normalize('NFKD').replace(/[\u0300-\u036f]/g,'')
+    .toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
+  const surname=value=>{const parts=norm(value).split(' ').filter(Boolean);return parts[parts.length-1]||'';};
+  const nameMatch=(a,b)=>{
+    const aa=norm(a),bb=norm(b);
+    if(!aa||!bb)return false;
+    if(aa===bb)return true;
+    const pa=aa.split(' ').filter(Boolean),pb=bb.split(' ').filter(Boolean);
+    const shortLong=(short,long)=>{
+      if(short.length<2||long.length<2)return false;
+      const first=short[0].replace(/\.$/,'');
+      return first.length===1&&long[0].startsWith(first)&&
+        long[long.length-1]===short[short.length-1];
+    };
+    return shortLong(pa,pb)||shortLong(pb,pa);
+  };
+
+  const you=[...document.querySelectorAll('span')].find(node=>clean(node.textContent)==='You');
+  let panel=you;
+  for(let i=0;panel&&i<6;i++,panel=panel.parentElement)
+    if(clean(panel.textContent).includes('Offering'))break;
+  if(!panel)return action==='state'?null:false;
+
+  const parsed=[];
+  for(const card of panel.querySelectorAll('div.grid.grid-cols-6 > div')){
+    if(!/h-\[80px\]/.test(String(card.className||'')) || !/\bgroup\b/.test(String(card.className||'')))continue;
+    const tooltip=[...card.querySelectorAll('div')].find(node=>{
+      const cls=String(node.className||'');
+      return /\bgroup-hover:block\b/.test(cls)&&/\bpointer-events-none\b/.test(cls);
+    });
+    if(!tooltip)continue;
+    const header=[...tooltip.querySelectorAll('div')].find(node=>{
+      const cls=String(node.className||'');
+      return /\bjustify-between\b/.test(cls)&&/\buppercase\b/.test(cls);
+    });
+    const spans=[...(header?.querySelectorAll('span')||[])];
+    const text=clean(tooltip.textContent);
+    parsed.push({
+      card,
+      name:clean(spans[0]?.textContent),
+      position:clean(spans[1]?.textContent).toUpperCase(),
+      rating:clean(text.match(/Rating:\s*([A-Z][+-]?)/i)?.[1]).toUpperCase(),
+      salary:number(text.match(/Salary:\s*([\d.,]+)/i)?.[1]),
+      price:number(text.match(/Price:\s*([\d.,]+)/i)?.[1])
+    });
+  }
+
+  let candidates=parsed.filter(x=>norm(x.name)===norm(player?.name));
+  if(!candidates.length)candidates=parsed.filter(x=>nameMatch(x.name,player?.name));
+  if(!candidates.length){
+    const wantedSurname=surname(player?.name);
+    if(wantedSurname)candidates=parsed.filter(x=>surname(x.name)===wantedSurname);
+  }
+  const narrow=(key,normalize)=>{
+    const wanted=player?.[key];
+    if(wanted==null||wanted==='')return;
+    const matches=candidates.filter(x=>x[key]!=null&&x[key]!==''&&normalize(x[key])===normalize(wanted));
+    if(matches.length)candidates=matches;
+  };
+  narrow('position',v=>clean(v).toUpperCase());
+  narrow('rating',v=>clean(v).toUpperCase());
+  narrow('salary',v=>number(v));
+  narrow('price',v=>number(v));
+
+  if(candidates.length!==1)return action==='state'?null:false;
+  const chosen=candidates[0];
+
+  if(action==='click'){
+    if(!/\bcursor-pointer\b/.test(String(chosen.card.className||'')) ||
+       /\bcursor-not-allowed\b/.test(String(chosen.card.className||'')))return false;
+    chosen.card.click();
+    return true;
+  }
+
+  const offering=[...panel.querySelectorAll('span')].find(x=>clean(x.textContent)==='Offering');
+  const offerCount=clean(offering?.nextElementSibling?.textContent).match(/^(\d+)\s*\/\s*(\d+)/);
+  if(!offerCount)return null;
+  const parts=[chosen.card,chosen.card.parentElement,
+    ...chosen.card.querySelectorAll('[aria-selected],[aria-pressed],[data-state]')];
+  return {
+    found:true,
+    offerCount:Number(offerCount[1]),
+    offerLimit:Number(offerCount[2]),
+    signature:JSON.stringify(parts.map(el=>[
+      String(el?.className||''),
+      el?.getAttribute('style'),
+      el?.getAttribute('aria-selected'),
+      el?.getAttribute('aria-pressed'),
+      el?.getAttribute('data-state')
+    ]))
+  };
 }
 
 // This reads the game's Make tab, where the actual convertible bench lives.
@@ -139,7 +340,18 @@ function readMakeBenchTiles() {
     if(!tile || tile===root || seen.has(tile))continue;
     seen.add(tile);
     const imagePath=pathOf(el);
-    const name=clean(el.getAttribute('alt')||tile.querySelector('span[class*="max-w-"]')?.textContent||'');
+    const name=clean(
+      el.getAttribute('alt') ||
+      tile.querySelector('span[class*="max-w-"]')?.textContent ||
+      [...tile.querySelectorAll('span')]
+        .map(span=>clean(span.textContent))
+        .find(value =>
+          value &&
+          /[a-z]/i.test(value) &&
+          !/^(Make|Bench|Selected|Clear All|Rating|Salary|Price)$/i.test(value)
+        ) ||
+      ''
+    );
     tiles.push({name,imagePath});
   }
   return tiles;
@@ -150,6 +362,15 @@ function selectMakeBenchTile({path,name}) {
   const norm=v=>{
     const s=String(v||'').replace(/^https?:\/\/[^/]+/i,'').split('?')[0].toLowerCase();
     return /^\/?players\//.test(s)?`/${s.replace(/^\/+/, '')}`:s;
+  };
+  const nameMatches=(a,b)=>{
+    const tokens=v=>clean(v).toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+    const aa=tokens(a),bb=tokens(b);
+    if(!aa.length||!bb.length)return false;
+    if(aa.join('')===bb.join(''))return true;
+    const suffix=(full,short)=>full.length>=short.length &&
+      full.slice(-short.length).join('')===short.join('');
+    return suffix(aa,bb)||suffix(bb,aa);
   };
   const pathOf=el=>{
     let raw=el.tagName==='IMG'?(el.getAttribute('src')||el.getAttribute('srcset')||''):
@@ -170,21 +391,28 @@ function selectMakeBenchTile({path,name}) {
   if(!root || root===document.body)return false;
   const candidates=[];
   for(const el of portraits(root)){
-    const src=pathOf(el);
-    if(path?norm(src)!==norm(path):!name)continue;
     let clickable=el;
-    while(clickable && clickable!==root && !(/\bcursor-pointer\b/.test(String(clickable.className||'')) || clickable.tagName==='BUTTON' || clickable.getAttribute('role')==='button'))clickable=clickable.parentElement;
-    if(clickable && clickable!==root){
-      const label=clean(el.getAttribute('alt')||clickable.querySelector('span[class*="max-w-"]')?.textContent||'');
-      candidates.push({clickable,label});
-    }
+    while(clickable && clickable!==root && !( /\bcursor-pointer\b/.test(String(clickable.className||'')) || clickable.tagName==='BUTTON' || clickable.getAttribute('role')==='button'))clickable=clickable.parentElement;
+    if(!clickable || clickable===root)continue;
+    const label=clean(
+      el.getAttribute('alt') ||
+      clickable.querySelector('span[class*="max-w-"]')?.textContent ||
+      [...clickable.querySelectorAll('span')]
+        .map(span=>clean(span.textContent))
+        .find(value =>
+          value &&
+          /[a-z]/i.test(value) &&
+          !/^(Make|Bench|Selected|Clear All|Rating|Salary|Price)$/i.test(value)
+        ) ||
+      ''
+    );
+    candidates.push({clickable,label,imagePath:pathOf(el)});
   }
-  const buttons=[...new Set(candidates.map(x=>x.clickable))];
-  const named=[...new Set(candidates.filter(x=>name && (
-    x.label.toLowerCase()===String(name).toLowerCase() ||
-    x.label && String(name).toLowerCase().split(/\s+/).some(part=>part===x.label.toLowerCase())
-  )).map(x=>x.clickable))];
-  const selected=buttons.length===1?buttons[0]:named.length===1?named[0]:null;
+  const unique=list=>[...new Set(list.map(x=>x.clickable))];
+  const byName=unique(candidates.filter(x=>name&&nameMatches(x.label,name)));
+  const byPath=unique(candidates.filter(x=>path&&norm(x.imagePath)===norm(path)));
+  const namedPath=unique(candidates.filter(x=>path&&name&&norm(x.imagePath)===norm(path)&&nameMatches(x.label,name)));
+  const selected=byName.length===1?byName[0]:namedPath.length===1?namedPath[0]:byPath.length===1?byPath[0]:null;
   if(!selected)return false;
   selected.click();
   return true;
@@ -281,10 +509,10 @@ class AutoTradeService {
     return (this.cards.snapshot().players || []).filter(p => p.active !== false);
   }
   _decorate(p, players = this._cardMap()) {
-    const resolved = resolvePlayer(players, p);
-    // A matching abbreviated name cannot override a different known portrait.
-    // This is especially important when only one of two S. Curry records was scanned.
-    const card = resolved && (!p.imagePath || !resolved.imagePath || playerKeyOf(p)===playerKeyOf(resolved)) ? resolved : null;
+    // resolvePlayer already rejects ambiguous name matches. Do not discard its
+    // safe name match merely because different game screens expose a different
+    // portrait URL; doing so removes the saved Auto-Trade roles.
+    const card = resolvePlayer(players, p);
     return { ...p, name:p.name||card?.name||'', roleIds: card?.roleIds || [], roles: card?.roles || [], cardKey: card?.key || null };
   }
   _hasAnyRole(p, roleIds) {
@@ -765,6 +993,20 @@ class AutoTradeService {
     const e=this.sessions.get(accountId); if(!e) return null;
     const {page}=e.session;
     const starNav=page.locator('nav[aria-label="Star card sections"]').first();
+    // A completed Auto-Trade Scout action can leave its result modal mounted
+    // over Stadium. Close only a visible modal that owns the Call Back button;
+    // otherwise its backdrop intercepts the next Agent/Scout click.
+    const callbackButton=page.getByRole('button',{name:/^Call Back$/i}).first();
+    if(await callbackButton.isVisible().catch(()=>false)) {
+      await page.keyboard.press('Escape').catch(()=>{});
+      await callbackButton.waitFor({state:'hidden',timeout:5000}).catch(()=>{});
+      if(await callbackButton.isVisible().catch(()=>false)) {
+        const modal=callbackButton.locator('xpath=ancestor::div[contains(concat(" ", normalize-space(@class), " "), " fixed ")][1]');
+        const close=modal.getByRole('button',{name:/^(Close|Cancel|×)$/i}).first();
+        if(await close.isVisible().catch(()=>false))await close.click({timeout:5000}).catch(()=>{});
+        await callbackButton.waitFor({state:'hidden',timeout:5000}).catch(()=>{});
+      }
+    }
     if(await page.locator(SCOUT_DIALOG).first().isVisible().catch(()=>false)) {
       await page.keyboard.press('Escape');
       await page.locator(SCOUT_DIALOG).first().waitFor({state:'hidden',timeout:10000});
@@ -888,15 +1130,13 @@ class AutoTradeService {
   }
   async _readTradeRoster(page,accountId){
     const began=Date.now(),deadline=began+30000;
-    const expected=Math.max(5,num(this.runtime.homeSnapshots?.[accountId]?.rosterCount)??5,
-      num(this._scoutRosterCounts?.get(accountId))??5);
     let signature='',stableSince=0,players=null;
     do{
       players=await page.evaluate(readOwnTradePlayers).catch(()=>null);
-      if(players && players.every(p=>p.name&&p.imagePath&&p.salary!=null&&p.price!=null)){
+      if(players && players.length>=1 && players.every(p=>p.name&&p.imagePath&&p.salary!=null&&p.price!=null)){
         const next=JSON.stringify(players);
         if(next!==signature){signature=next;stableSince=Date.now();}
-        if(Date.now()-stableSince>=1200 && Date.now()-began>=2200 && players.length>=expected){
+        if(Date.now()-stableSince>=1200 && Date.now()-began>=2200){
           const ids=players.map(identityOf);
           if(new Set(ids).size!==ids.length)
             throw new Error(`The Trade roster has duplicate player identities on ${this._account(accountId)?.name||accountId}. No offer was made.`);
@@ -905,7 +1145,7 @@ class AutoTradeService {
       }else{signature='';stableSince=0;}
       await sleep(200);
     }while(Date.now()<deadline);
-    throw new Error(`The Trade roster for ${this._account(accountId)?.name||accountId} did not finish loading (${players?.length??0}/${expected} players). No offer was made.`);
+    throw new Error(`The Trade roster for ${this._account(accountId)?.name||accountId} did not finish loading (${players?.length??0} visible players). No offer was made.`);
   }
   _transferCandidates(home, roleIds, fromId, toMain) {
     const excluded = new Set(this.runtime?.transferExclusions?.[fromId] || []);
@@ -981,6 +1221,7 @@ class AutoTradeService {
       this._save();
     };
     markScout('open-scout');
+    const attemptedAgentKeys=new Set();
     let actions=0;
     for(let wave=0;wave<12;wave++) {
       await this._safeBoundary();
@@ -1005,8 +1246,12 @@ class AutoTradeService {
         while(slots>0 && actions<40) {
           await this._safeBoundary();
           if(!Array.isArray(data?.agents))throw new Error(`Scout player list could not be read for ${this._account(accountId)?.name||accountId}.`);
-          const agent=data.agents.find(a=>this._shouldBuyScout(a,cfg,purchaseRoles));
+          const agent=data.agents.find(a=>
+            !attemptedAgentKeys.has(a.key) &&
+            this._shouldBuyScout(a,cfg,purchaseRoles)
+          );
           if(agent) {
+            attemptedAgentKeys.add(agent.key);
             const pending={name:agent.name,imagePath:agent.imagePath,price:num(agent.price)};
             // Persist intent before clicking. If the app exits at the click,
             // Continue checks the roster rather than buying the same player again.
@@ -1026,8 +1271,12 @@ class AutoTradeService {
               batch.players.pop();
               this.runtime.pendingScoutBatch=batch.players.length?batch:null;
               this._save();
+
               data=result;
-              slots=Math.min(slots,num(result.roster)==null?slots:Math.max(0,rosterMax-num(result.roster)));
+
+              // Bu denemede yeni oyuncu alınmadı.
+              // "You already signed" sonrası Scout roster değeri kısa süreli yanlış/full
+              // görünebildiği için kalan slot sayısını burada değiştirme.
               actions++;
               continue;
             }
@@ -1058,6 +1307,19 @@ class AutoTradeService {
         this._scoutRosterCounts.set(accountId,num(data.roster));
       }
       const verified=batch.players.length?await this._verifyScoutBatch(accountId,batch):null;
+
+      if(
+        accountId===this.runtime.mainAccountId &&
+        batch.players.length
+      ){
+        this.runtime.pendingMakePlayers=batch.players.map(p=>({
+          name:p.name,
+          imagePath:p.imagePath,
+          price:p.price
+        }));
+        this._save();
+      }
+
       if(actions>=40)throw new Error('Scout reached the maximum number of verified actions without completing.');
       if(!allowMake)return;
       const home=verified || await this._snapshotHome(accountId,session.page,false);
@@ -1131,7 +1393,10 @@ class AutoTradeService {
     if(confirmed<2)
       throw new Error('The Main roster has not confirmed the Star Card conversion. The conversion will not be repeated.');
     for(const p of selected)this._ledger('make-card',{accountId,player:p});
-    this.runtime.pendingMake=null;this._save();
+
+    this.runtime.pendingMake=null;
+    this.runtime.pendingMakePlayers=null;
+    this._save();
     this._log('success',`${selected.length} Star Card(s) verified by the Main roster decrease.`,this._account(accountId));
     return selected.length;
   }
@@ -1200,6 +1465,14 @@ class AutoTradeService {
   async _makeEligible(accountId,{expectedPlayers=[],scoutRosterCount=null}={}) {
     if(accountId!==this.runtime.mainAccountId)return 0;
     if(this.runtime.pendingMake)return this._verifyPendingMake(accountId,this.runtime.pendingMake);
+
+    if(
+      !expectedPlayers.length &&
+      Array.isArray(this.runtime.pendingMakePlayers) &&
+      this.runtime.pendingMakePlayers.length
+    ){
+      expectedPlayers=this.runtime.pendingMakePlayers;
+    }
     const previous=this.runtime.checkpoint||{};
     this.runtime.checkpoint={phase:'main-make',accountId,action:'open-make',
       returnPhase:previous.phase==='main-make'?previous.returnPhase:previous.phase,
@@ -1228,6 +1501,19 @@ class AutoTradeService {
     };
     const hasPortrait=p=>before.players.some(home=>normPath(home.imagePath)===normPath(p.imagePath));
     const alreadyMade=p=>(this.runtime.ledger||[]).some(entry=>entry.type==='make-card'&&entry.accountId===accountId&&identityOf(entry.player)===identityOf(p));
+    for(const player of expectedPlayers||[]){
+      if(!player || alreadyMade(player) || this._protectedStarter(accountId,player))continue;
+
+      const candidate=this._decorate(player,cardMap);
+      const price=num(player.price);
+
+      if(
+        this._hasAnyRole(candidate,cardRoles) ||
+        (price!=null && price<=this.runtime.config.purchaseMaxPrice)
+      ){
+        addCandidate(candidate);
+      }
+    }
     for(const entry of this.runtime.ledger||[]){
       if(!entry.player || alreadyMade(entry.player) || this._protectedStarter(accountId,entry.player))continue;
       const acquired=entry.type==='scout-acquire'&&entry.accountId===accountId;
@@ -1281,6 +1567,17 @@ class AutoTradeService {
       if(match && !onBench.some(p=>identityOf(p)===identityOf(match)))
         onBench.push({...match,name:match.name||tile.name,imagePath:tile.imagePath||match.imagePath});
     }
+
+    this._log(
+      'warning',
+      `MAKE DEBUG · bench=${JSON.stringify(
+        bench.map(p=>({name:p.name,imagePath:p.imagePath}))
+      )} · eligible=${JSON.stringify(
+        eligible.map(p=>({name:p.name,imagePath:p.imagePath,roleIds:p.roleIds,price:p.price}))
+      )}`,
+      this._account(accountId)
+    );
+
     if(!onBench.length){
       this._log('info','Star Card Make has no eligible bench player; players in the starting five are left on the team.',this._account(accountId));
       await this._returnHome(accountId);
@@ -1400,9 +1697,21 @@ class AutoTradeService {
       throw new Error(`An eligible bench player cannot be selected in Trade: ${blocked[0].name}. No offer was made.`);
     // The Trade roster includes the whole team; Stadium may display only five.
     // Use the live sizes so neither side can exceed eleven after confirmation.
-    const fitted=this._fitTrade({players:fullMain,rosterCount:fullMain.length},
-      {players:fullSide,rosterCount:fullSide.length},
-      allMain.slice(0,5),allSide.slice(0,5));
+    const mainRosterCount =
+      num(this.runtime.homeSnapshots?.[mainId]?.rosterCount) ??
+      fullMain.length;
+
+    const sideRosterCount =
+      this._scoutRosterCounts?.get(sideId) ??
+      num(this.runtime.homeSnapshots?.[sideId]?.rosterCount) ??
+      fullSide.length;
+
+    const fitted=this._fitTrade(
+      {players:fullMain,rosterCount:mainRosterCount},
+      {players:fullSide,rosterCount:sideRosterCount},
+      allMain.slice(0,5),
+      allSide.slice(0,5)
+    );
     if((allMain.length||allSide.length) && !fitted.mainToSide.length && !fitted.sideToMain.length)
       throw new Error('Eligible bench players were found, but current roster limits prevent a safe Trade. No offer was made.');
     mainToSide=fitted.mainToSide;sideToMain=fitted.sideToMain;
@@ -1439,7 +1748,8 @@ class AutoTradeService {
 
     await this._selectOffer(mainSession.page,mainToSide); await this._selectOffer(sideSession.page,sideToMain);
     await this._verifyOffer(mainSession.page,mainToSide); await this._verifyOffer(sideSession.page,sideToMain);
-    await this._agree(mainSession.page,main); await this._agree(sideSession.page,side);
+    await this._agree(sideSession.page,side);
+    await this._agree(mainSession.page,main);
     const confirm=await this._waitTradeConfirmReady(sideSession.page,sideId,mainId);
     this.runtime.pendingTrade={sideId,mainToSide,sideToMain,mainBefore:mainTk,sideBefore:sideTk,at:new Date().toISOString()};
     this.runtime.checkpoint={phase:'trade-confirm',accountId:sideId};this._save();
@@ -1473,8 +1783,8 @@ class AutoTradeService {
         mainPage.evaluate(readOwnTradePlayers).catch(()=>null),
         sidePage.evaluate(readOwnTradePlayers).catch(()=>null)
       ]);
-      if(main && side && mainToSide.every(p=>this._contains(side,p)&&!this._contains(main,p)) &&
-         sideToMain.every(p=>this._contains(main,p)&&!this._contains(side,p))) {
+      if(main && side && mainToSide.every(p=>resolveTradePlayer(side,p)&&!resolveTradePlayer(main,p)) &&
+         sideToMain.every(p=>resolveTradePlayer(main,p)&&!resolveTradePlayer(side,p))) {
         verified=true;break;
       }
       await sleep(500);
@@ -1503,37 +1813,29 @@ class AutoTradeService {
   }
 
   async _enrichAndFilterTradePlayers(page, fromId, players) {
-    const visible = await page.evaluate(() => {
-      const clean=v=>String(v||'').replace(/\s+/g,' ').trim();
-      const norm=v=>{
-        const path=String(v||'').replace(/^https?:\/\/[^/]+/i,'').split('?')[0].toLowerCase();
-        return /^\/?players\//.test(path)?`/${path.replace(/^\/+/, '')}`:path;
-      };
-      const you=[...document.querySelectorAll('span')].find(x=>clean(x.textContent)==='You');
-      let panel=you; for(let i=0;panel&&i<6;i++,panel=panel.parentElement) if(clean(panel.textContent).includes('Offering')) break;
-      if(!panel)return[];
-      const out=[];
-      for(const img of panel.querySelectorAll('div.grid.grid-cols-6 img[src*="players/"]')){
-        let card=img; for(let i=0;card&&i<5;i++,card=card.parentElement){
-          const txt=clean(card.textContent); if(!/Salary:\s*\d+/i.test(txt)||!/Price:\s*\d+/i.test(txt))continue;
-          const sm=txt.match(/Salary:\s*([\d.,]+)/i), pm=txt.match(/Price:\s*([\d.,]+)/i);
-          out.push({name:clean(img.getAttribute('alt')),imagePath:norm(img.getAttribute('src')),salary:sm?Number(sm[1].replace(/[^0-9]/g,'')):null,price:pm?Number(pm[1].replace(/[^0-9]/g,'')):null}); break;
-        }
-      }
-      const seen=new Set();return out.filter(x=>{const k=`${x.imagePath}|${x.name}`;if(!x.imagePath&&!x.name||seen.has(k))return false;seen.add(k);return true});
-    }).catch(()=>[]);
+    const visible=await page.evaluate(readOwnTradePlayers).catch(()=>[]);
     const out=[];
     for(const p of players){
-      const found=resolvePlayer(visible,p);
+      const found=resolveTradePlayer(visible,p);
       const price=found?num(found.price):null;
       if(price==null||price<0){
         const err=new Error(`Current Trade Price could not be verified for ${p.name||'Player'} on ${this._account(fromId)?.name||fromId}.`);
         err.sideOnly=fromId!==this.runtime.mainAccountId;
         throw err;
       }
-      out.push({...p,price,salary:found.salary,name:p.name||found.name});
+      out.push({
+        ...p,
+        name:p.name||found.name,
+        position:found.position||p.position,
+        rating:found.rating||p.rating,
+        offense:found.offense??p.offense,
+        defense:found.defense??p.defense,
+        salary:found.salary??p.salary,
+        price
+      });
     }
-    this._save(); return out;
+    this._save();
+    return out;
   }
 
   async _openTradeRooms(page){if(await page.locator(ROOM_DIALOG).isVisible().catch(()=>false))return;await page.locator(TRADE_ICON).first().click();await page.locator(ROOM_DIALOG).waitFor({state:'visible',timeout:60000});}
@@ -1603,79 +1905,51 @@ class AutoTradeService {
     return true;
   }
   async _offerCardState(page,player){
-    return page.evaluate(({path,name})=>{
-      const norm=v=>{
-        const path=String(v||'').replace(/^https?:\/\/[^/]+/i,'').split('?')[0].toLowerCase();
-        return /^\/?players\//.test(path)?`/${path.replace(/^\/+/, '')}`:path;
-      };
-      const you=[...document.querySelectorAll('span')].find(x=>(x.textContent||'').trim()==='You');
-      let panel=you;
-      for(let i=0;panel&&i<6;i++,panel=panel.parentElement)if((panel.textContent||'').includes('Offering'))break;
-      if(!panel)return null;
-      const offering=[...panel.querySelectorAll('span')]
-        .find(x=>(x.textContent||'').trim()==='Offering');
-      const offerCount=(offering?.nextElementSibling?.textContent||'').trim().match(/^(\d+)\s*\/\s*(\d+)/);
-      if(!offerCount)return null;
-      const imgs=[...panel.querySelectorAll('div.grid.grid-cols-6 img')]
-        .filter(x=>/players\//i.test(x.getAttribute('src')||''));
-      const candidates=path?imgs.filter(x=>norm(x.getAttribute('src'))===norm(path))
-        :imgs.filter(x=>name&&(x.getAttribute('alt')||'')===name);
-      const named=candidates.filter(x=>name&&(x.getAttribute('alt')||'')===name);
-      const img=candidates.length===1?candidates[0]:named.length===1?named[0]:null;
-      if(!img)return null;
-      let card=img;
-      for(let i=0;card&&i<5;i++,card=card.parentElement){
-        if(!/h-\[80px\]/.test(String(card.className||'')))continue;
-        const parts=[card,card.parentElement,img,...card.querySelectorAll('[aria-selected],[aria-pressed],[data-state]')];
-        return {found:true,offerCount:Number(offerCount[1]),offerLimit:Number(offerCount[2]),signature:JSON.stringify(parts.map(el=>[
-          String(el?.className||''),el?.getAttribute('style'),el?.getAttribute('aria-selected'),
-          el?.getAttribute('aria-pressed'),el?.getAttribute('data-state')
-        ]))};
-      }
-      return null;
-    },{path:player.imagePath,name:player.name});
+    return page.evaluate(tradeCardAction,{player:{
+      name:player.name,
+      position:player.position,
+      rating:player.rating,
+      salary:player.salary,
+      price:player.price
+    },action:'state'});
   }
   async _selectOffer(page,players){
     this.offerProofs ||= new WeakMap();
     const proof=new Map();
     this.offerProofs.set(page,proof);
+
     if(!players.length){
       const summary=await page.evaluate(readOwnTradeOfferCount);
       if(!summary || summary.count!==0)
         throw new Error('The Trade offer contains an unexpected player. No agreement was made.');
     }
+
     for(const [index,p] of players.entries()){
       const before=await this._offerCardState(page,p);
-      if(!before)throw new Error(`Trade player could not be found in the own roster: ${p.name||p.imagePath}`);
+      if(!before)throw new Error(`Trade player could not be found in the own roster: ${p.name||'Unknown player'}`);
       if(before.offerCount!==index || before.offerLimit<players.length)
         throw new Error('Trade offer already contains players or has insufficient room. No more players were selected.');
-      const clicked=await page.evaluate(({path,name})=>{
-        const norm=v=>{
-          const path=String(v||'').replace(/^https?:\/\/[^/]+/i,'').split('?')[0].toLowerCase();
-          return /^\/?players\//.test(path)?`/${path.replace(/^\/+/, '')}`:path;
-        };
-        const you=[...document.querySelectorAll('span')].find(x=>(x.textContent||'').trim()==='You');
-        let panel=you;for(let i=0;panel&&i<6;i++,panel=panel.parentElement)if((panel.textContent||'').includes('Offering'))break;
-        if(!panel)return false;
-        const imgs=[...panel.querySelectorAll('div.grid.grid-cols-6 img')]
-          .filter(x=>/players\//i.test(x.getAttribute('src')||''));
-        const candidates=path?imgs.filter(x=>norm(x.getAttribute('src'))===norm(path))
-          :imgs.filter(x=>name&&(x.getAttribute('alt')||'')===name);
-        const named=candidates.filter(x=>name&&(x.getAttribute('alt')||'')===name);
-        const img=candidates.length===1?candidates[0]:named.length===1?named[0]:null;
-        if(!img)return false;
-        let card=img;for(let i=0;card&&i<5;i++,card=card.parentElement)if(/h-\[80px\]/.test(String(card.className||''))){card.click();return true}
-        return false;
-      },{path:p.imagePath,name:p.name}).catch(()=>false);
-      if(!clicked)throw new Error(`Trade player could not be selected: ${p.name||p.imagePath}`);
+
+      const clicked=await page.evaluate(tradeCardAction,{player:{
+        name:p.name,
+        position:p.position,
+        rating:p.rating,
+        salary:p.salary,
+        price:p.price
+      },action:'click'}).catch(()=>false);
+      if(!clicked)throw new Error(`Trade player could not be selected: ${p.name||'Unknown player'}`);
+
       let changed=null;
       const deadline=Date.now()+3500;
       while(Date.now()<deadline){
         const after=await this._offerCardState(page,p).catch(()=>null);
-        if(after && after.signature!==before.signature && after.offerCount===index+1){changed=after.signature;break;}
+        if(after && after.signature!==before.signature && after.offerCount===index+1){
+          changed=after.signature;
+          break;
+        }
         await sleep(100);
       }
-      if(!changed)throw new Error(`Trade selection did not change the player card: ${p.name||p.imagePath}`);
+      if(!changed)throw new Error(`Trade selection did not change the player card: ${p.name||'Unknown player'}`);
       proof.set(identityOf(p),changed);
     }
   }
