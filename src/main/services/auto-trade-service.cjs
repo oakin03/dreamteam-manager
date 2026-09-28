@@ -77,28 +77,39 @@ function makeNameMatches(full,short) {
 function resolveMakeBenchPlayer(players,tile) {
   const pool=players||[];
 
-  const named=tile?.name?pool.filter(p=>
-    makeNameMatches(p.name,tile.name)||
-    makeNameMatches(tile.name,p.name)
-  ):[];
+  const named=tile?.name
+    ? pool.filter(p=>
+        makeNameMatches(p.name,tile.name)||
+        makeNameMatches(tile.name,p.name)
+      )
+    : [];
 
   if(named.length===1)return named[0];
 
   const path=normPath(tile?.imagePath);
   if(!path)return null;
 
-  const samePath=pool.filter(p=>normPath(p.imagePath)===path);
+  const samePath=pool.filter(p=>
+    normPath(p.imagePath)===path
+  );
 
-  // Gerçek oyuncu portrait'i benzersizse path tek başına yeterlidir.
-  // Make ekranı "Trey Jemison III" -> "Jemison" gibi isimleri kısaltabiliyor.
-  if(samePath.length===1 && !placeholderPath(path))
+  // Gerçek oyuncu portrait'i benzersizse isim farklı olsa bile
+  // portrait kesin eşleşme olarak kullanılabilir.
+  if(
+    samePath.length===1 &&
+    !placeholderPath(path)
+  ){
     return samePath[0];
+  }
 
-  // no-face gibi ortak portrait'lerde isim eşleşmesi hâlâ zorunlu.
-  const matches=tile.name?samePath.filter(p=>
-    makeNameMatches(p.name,tile.name)||
-    makeNameMatches(tile.name,p.name)
-  ):samePath;
+  // /players/no-face.webp gibi ortak portrait'lerde
+  // isim eşleşmesi zorunlu.
+  const matches=tile.name
+    ? samePath.filter(p=>
+        makeNameMatches(p.name,tile.name)||
+        makeNameMatches(tile.name,p.name)
+      )
+    : samePath;
 
   return matches.length===1?matches[0]:null;
 }
@@ -1194,10 +1205,38 @@ class AutoTradeService {
       const verified=expected.map((p,i)=>acquired[i] ||
         (placeholderPath(p.imagePath) && visiblePaths.has(normPath(p.imagePath))
           ? {name:p.name,imagePath:p.imagePath}:null));
-      if(countBefore!=null && verified.every(Boolean) && countAfter>=countBefore+expected.length){
-        for(let i=0;i<expected.length;i++)this._ledger('scout-acquire',{accountId,player:{...verified[i],name:verified[i].name||expected[i].name,price:expected[i].price}});
+      const rosterConfirmed =
+        countBefore!=null &&
+        countAfter>=countBefore+expected.length;
+
+      if(rosterConfirmed){
+        const unresolved=expected.filter((p,i)=>!verified[i]);
+
+        for(let i=0;i<expected.length;i++){
+          const player=verified[i] || expected[i];
+
+          this._ledger('scout-acquire',{
+            accountId,
+            player:{
+              ...player,
+              name:player.name||expected[i].name,
+              imagePath:player.imagePath||expected[i].imagePath,
+              price:player.price??expected[i].price
+            }
+          });
+        }
+
         this.runtime.pendingScoutBatch=null;
         this._save();
+
+        if(unresolved.length){
+          this._log(
+            'warning',
+            `Scout purchase count verified, but ${unresolved.length} player identity could not be matched on the Main roster: ${unresolved.map(p=>p.name||p.imagePath).join(', ')}. Make will attempt the verified purchases that appear there.`,
+            this._account(accountId)
+          );
+        }
+
         return after;
       }
       await sleep(750);
@@ -1428,7 +1467,7 @@ class AutoTradeService {
     this._log('info','Unchanged roster and Make bench verified; retrying the saved Star Card action.',this._account(accountId));
   }
 
-  async _waitMakeBench(accountId, page, requiredPlayers, {timeoutMs=120000,stableMs=1200,minWaitMs=15000}={}) {
+  async _waitMakeBench(accountId, page, requiredPlayers, {timeoutMs=120000,stableMs=1200,minWaitMs=5000}={}) {
     // Make omits unsellable, rookie and X players, so its count is not the
     // Stadium's bench count. Only players this run acquired via Scout/Trade
     // are required to appear.
@@ -1446,9 +1485,21 @@ class AutoTradeService {
       if(bench){
         const signature=JSON.stringify(bench);
         if(signature!==lastSignature){lastSignature=signature;stableSince=Date.now();}
-        const allPresent=required.every(p=>bench.some(tile=>resolveMakeBenchPlayer([p],tile)));
-        if(allPresent && Date.now()-stableSince>=stableMs &&
-           Date.now()-started>=(required.length?0:minWaitMs))return bench;
+        const matchedCount=required.filter(p=>
+          bench.some(tile=>resolveMakeBenchPlayer([p],tile))
+        ).length;
+
+        const ready =
+          required.length===0 ||
+          matchedCount>0 ||
+          Date.now()-started>=minWaitMs;
+
+        if(
+          ready &&
+          Date.now()-stableSince>=stableMs
+        ){
+          return bench;
+        }
       }else{lastSignature='';stableSince=0;}
       await sleep(250);
     }while(Date.now()<deadline);

@@ -929,10 +929,10 @@ function AutoTrade({ state, t, refresh, toast }) {
   const main = accounts.find(a => a.id === mainId);
   return <div className="page auto-trade-page">
     <div className="page-title auto-trade-title"><div><h1>{t.autoTrade}</h1><span className="subtitle">{t.autoTradeSubtitle}</span></div>
-      <div className="toolbar">{running ? <>
+      <div className="toolbar">{running ? ((rt?.config?.visible ?? form.visible) ? <>
         <button className="btn ghost" disabled={busy || rt.status === 'stopping'} onClick={() => control(rt.status === 'paused' ? 'resume' : 'pause')}>{rt.status === 'paused' ? t.autoTradeContinue : t.autoTradePause}</button>
         <button className="btn danger" disabled={busy} onClick={() => control('stop')}>{t.autoTradeStop}</button>
-      </> : rt?.pendingTrade ? <><button className="btn primary" disabled={busy} onClick={() => control('reconcilePending')}>{t.autoTradeVerifyPending}</button><button className="btn danger-soft" disabled={busy} onClick={() => control('stop')}>{t.autoTradeStop}</button></>
+      </> : null) : rt?.pendingTrade ? <><button className="btn primary" disabled={busy} onClick={() => control('reconcilePending')}>{t.autoTradeVerifyPending}</button><button className="btn danger-soft" disabled={busy} onClick={() => control('stop')}>{t.autoTradeStop}</button></>
       : rt?.status === 'needs-attention' || rt?.status === 'interrupted' || rt?.status === 'error' ? <>
         {['interrupted','error'].includes(rt.status) && <button className="btn primary" disabled={busy} onClick={() => control('resume')}>{t.autoTradeResumeRun}</button>}
         <button className="btn danger-soft" disabled={busy} onClick={() => control('stop')}>{t.autoTradeStop}</button>
