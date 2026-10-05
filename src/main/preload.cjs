@@ -12,6 +12,23 @@ contextBridge.exposeInMainWorld('dreamteam', {
     ipcRenderer.on('auto-trade:hotkey', handler);
     return () => ipcRenderer.removeListener('auto-trade:hotkey', handler);
   },
+  playerMarket: {
+    get: () =>
+      ipcRenderer.invoke('player-market:get'),
+
+    scan: () =>
+      ipcRenderer.invoke('player-market:scan'),
+
+    stop: () =>
+      ipcRenderer.invoke('player-market:stop'),
+
+    setRole: (playerKey, roleIds) =>
+      ipcRenderer.invoke(
+        'player-market:set-role',
+        playerKey,
+        roleIds
+      )
+  },
   accounts: {
     add: (payload) => ipcRenderer.invoke('accounts:add', payload),
     update: (id, patch) => ipcRenderer.invoke('accounts:update', { id, patch }),

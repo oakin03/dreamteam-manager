@@ -1,0 +1,13 @@
+{
+  "id": "task2-pvp",
+  "name": "PVP",
+  "version": "1.0.0",
+  "description": "Find PVP Match 10 times with 4.5 minute intervals.",
+  "executionKind": "once",
+  "defaultConfig": {
+    "clickCount": 10,
+    "intervalSeconds": 270,
+    "finishWaitSeconds": 270
+  },
+  "fields": []
+}

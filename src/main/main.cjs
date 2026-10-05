@@ -54,6 +54,10 @@ function snapshot({ incremental = false } = {}) {
   const state = {
     accounts: store.getAccounts().map(sanitizeAccount),
     tradeAccount: sanitizeAccount(store.getTradeAccount()),
+    playerMarketAccount: {
+      username: '',
+      password: ''
+    },
     tasks: registry.list(),
     schedules: store.getSchedules(),
     settings: store.getSettings(),
@@ -302,11 +306,22 @@ function registerIpc() {
   ipcMain.handle('schedules:add', async (_event, payload) => {
     const schedules = store.getSchedules(); const task = registry.get(payload.taskId || defaultTaskId()); if (!task) throw new Error('Task not found.');
     const item = {
-      id: crypto.randomUUID(), name: String(payload.name || task.name).trim(), taskId: task.id, taskName: task.name,
-      accountIds: Array.isArray(payload.accountIds) ? payload.accountIds : [], startAt: payload.startAt,
+      id: crypto.randomUUID(),
+      name: String(payload.name || task.name).trim(),
+      taskId: task.id,
+      taskName: task.name,
+      scheduleType: payload.scheduleType || 'autoplay',
+      accountIds: Array.isArray(payload.accountIds) ? payload.accountIds : [],
+      startAt: payload.startAt,
       preparationMinutes: Number(payload.preparationMinutes ?? store.getSettings().defaultPreparationMinutes ?? 6),
-      executionMode: payload.executionMode || 'parallel', delaySeconds: Number(payload.delaySeconds || 0), visibleBrowser: Boolean(payload.visibleBrowser),
-      enabled: true, prepared: false, started: false, completed: false, createdAt: new Date().toISOString()
+      executionMode: payload.executionMode || 'parallel',
+      delaySeconds: Number(payload.delaySeconds || 0),
+      visibleBrowser: Boolean(payload.visibleBrowser),
+      enabled: true,
+      prepared: false,
+      started: false,
+      completed: false,
+      createdAt: new Date().toISOString()
     };
     if (!item.accountIds.length) throw new Error('Select at least one account.');
     if (!item.startAt) throw new Error('Start time is required.');
@@ -324,6 +339,27 @@ function registerIpc() {
   });
   ipcMain.handle('settings:open-data-folder', async () => shell.openPath(dataDir));
   ipcMain.handle('activity:clear', async () => { activity.clear(); return true; });
+  ipcMain.handle('player-market:get', async () => {
+    return playerMarketService.snapshot();
+  });
+
+  ipcMain.handle('player-market:scan', async () => {
+    return playerMarketService.start();
+  });
+
+  ipcMain.handle('player-market:stop', async () => {
+    return playerMarketService.stop();
+  });
+
+  ipcMain.handle(
+    'player-market:set-role',
+    async (_event, playerKey, roleIds) => {
+      return playerMarketService.setRole(
+        playerKey,
+        roleIds
+      );
+    }
+  );
 }
 
 app.whenReady().then(() => {

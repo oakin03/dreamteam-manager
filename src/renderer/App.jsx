@@ -199,12 +199,222 @@ function Accounts({ state, t, refresh, toast }) {
 }
 
 function ScheduleModal({ state, t, onClose, refresh, toast }) {
-  const d=new Date(Date.now()+15*60000);d.setSeconds(0,0);
-  const local=new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,16);
-  const [form,setForm]=useState({accountIds:[],startAtLocal:local,preparationMinutes:state.settings.defaultPreparationMinutes??6,executionMode:'parallel',delaySeconds:30});
-  const toggle=id=>setForm(f=>({...f,accountIds:f.accountIds.includes(id)?f.accountIds.filter(x=>x!==id):[...f.accountIds,id]}));
-  const submit=async e=>{e.preventDefault();try{const task=state.tasks.find(x=>!x.loadError);await api.schedules.add({name:'Auto Play',taskId:task?.id,accountIds:form.accountIds,startAt:new Date(form.startAtLocal).toISOString(),preparationMinutes:Number(form.preparationMinutes),executionMode:form.executionMode,delaySeconds:Number(form.delaySeconds),visibleBrowser:false});await refresh();onClose()}catch(err){toast(err.message,'error')}};
-  return <Modal title={t.schedule} onClose={onClose} width={600}><form className="form" onSubmit={submit}><label><span>{t.accounts}</span><div className="account-picks">{state.accounts.map(a=><button type="button" key={a.id} className={form.accountIds.includes(a.id)?'selected':''} onClick={()=>toggle(a.id)}>{a.name}</button>)}</div></label><div className="form-two"><label><span>{t.at}</span><input type="datetime-local" required value={form.startAtLocal} onChange={e=>setForm({...form,startAtLocal:e.target.value})}/></label><label><span>{t.prepare} ({t.minutes})</span><input type="number" min="0" value={form.preparationMinutes} onChange={e=>setForm({...form,preparationMinutes:e.target.value})}/></label></div><div className="form-two"><label><span>Mode</span><select value={form.executionMode} onChange={e=>setForm({...form,executionMode:e.target.value})}><option value="parallel">Parallel</option><option value="staggered">Staggered</option></select></label>{form.executionMode==='staggered'&&<label><span>Delay ({t.seconds})</span><input type="number" min="0" value={form.delaySeconds} onChange={e=>setForm({...form,delaySeconds:e.target.value})}/></label>}</div><div className="modal-actions"><button type="button" className="btn ghost" onClick={onClose}>{t.cancel}</button><button className="btn primary">{t.save}</button></div></form></Modal>;
+  const d = new Date(Date.now() + 15 * 60000);
+  d.setSeconds(0, 0);
+
+  const local = new Date(
+    d.getTime() - d.getTimezoneOffset() * 60000
+  ).toISOString().slice(0, 16);
+
+  const [form, setForm] = useState({
+    scheduleType: 'autoplay',
+    taskId: '',
+    accountIds: [],
+    startAtLocal: local,
+    preparationMinutes: state.settings.defaultPreparationMinutes ?? 6,
+    executionMode: 'parallel',
+    delaySeconds: 30
+  });
+
+  const toggle = id =>
+    setForm(f => ({
+      ...f,
+      accountIds: f.accountIds.includes(id)
+        ? f.accountIds.filter(x => x !== id)
+        : [...f.accountIds, id]
+    }));
+
+  const availableTasks = (state.tasks || []).filter(
+    task => !task.loadError
+  );
+
+  const submit = async e => {
+    e.preventDefault();
+
+    try {
+      const isTask = form.scheduleType === 'task';
+
+      const task = isTask
+        ? availableTasks.find(x => x.id === form.taskId)
+        : availableTasks.find(x => x.id === 'task1-quick-play') || availableTasks[0];
+
+      if (!task) {
+        throw new Error('Task bulunamadı.');
+      }
+
+      await api.schedules.add({
+        name: isTask ? task.name : 'Auto Play',
+        taskId: task.id,
+        scheduleType: form.scheduleType,
+        accountIds: form.accountIds,
+        startAt: new Date(form.startAtLocal).toISOString(),
+        preparationMinutes: Number(form.preparationMinutes),
+        executionMode: form.executionMode,
+        delaySeconds: Number(form.delaySeconds),
+        visibleBrowser: false
+      });
+
+      await refresh();
+      onClose();
+    } catch (err) {
+      toast(err.message, 'error');
+    }
+  };
+
+  return (
+    <Modal title={t.schedule} onClose={onClose} width={600}>
+      <form className="form" onSubmit={submit}>
+
+        <label>
+          <span>Görev</span>
+          <select
+            value={form.scheduleType}
+            onChange={e =>
+              setForm({
+                ...form,
+                scheduleType: e.target.value,
+                taskId: e.target.value === 'task'
+                  ? (availableTasks.find(x => x.id === 'task2-pvp')?.id || '')
+                  : ''
+              })
+            }
+          >
+            <option value="autoplay">Auto Play</option>
+            <option value="task">Görev</option>
+          </select>
+        </label>
+
+        {form.scheduleType === 'task' && (
+          <label>
+            <span>Görev</span>
+            <select
+              required
+              value={form.taskId}
+              onChange={e =>
+                setForm({
+                  ...form,
+                  taskId: e.target.value
+                })
+              }
+            >
+              {availableTasks
+                .filter(task => task.id !== 'task1-quick-play')
+                .map(task => (
+                  <option key={task.id} value={task.id}>
+                    {task.name}
+                  </option>
+                ))}
+            </select>
+          </label>
+        )}
+
+        <label>
+          <span>{t.accounts}</span>
+
+          <div className="account-picks">
+            {state.accounts.map(a => (
+              <button
+                type="button"
+                key={a.id}
+                className={
+                  form.accountIds.includes(a.id)
+                    ? 'selected'
+                    : ''
+                }
+                onClick={() => toggle(a.id)}
+              >
+                {a.name}
+              </button>
+            ))}
+          </div>
+        </label>
+
+        <div className="form-two">
+          <label>
+            <span>{t.at}</span>
+            <input
+              type="datetime-local"
+              required
+              value={form.startAtLocal}
+              onChange={e =>
+                setForm({
+                  ...form,
+                  startAtLocal: e.target.value
+                })
+              }
+            />
+          </label>
+
+          <label>
+            <span>{t.prepare} ({t.minutes})</span>
+            <input
+              type="number"
+              min="0"
+              value={form.preparationMinutes}
+              onChange={e =>
+                setForm({
+                  ...form,
+                  preparationMinutes: e.target.value
+                })
+              }
+            />
+          </label>
+        </div>
+
+        <div className="form-two">
+          <label>
+            <span>Mode</span>
+
+            <select
+              value={form.executionMode}
+              onChange={e =>
+                setForm({
+                  ...form,
+                  executionMode: e.target.value
+                })
+              }
+            >
+              <option value="parallel">Parallel</option>
+              <option value="staggered">Staggered</option>
+            </select>
+          </label>
+
+          {form.executionMode === 'staggered' && (
+            <label>
+              <span>Delay ({t.seconds})</span>
+
+              <input
+                type="number"
+                min="0"
+                value={form.delaySeconds}
+                onChange={e =>
+                  setForm({
+                    ...form,
+                    delaySeconds: e.target.value
+                  })
+                }
+              />
+            </label>
+          )}
+        </div>
+
+        <div className="modal-actions">
+          <button
+            type="button"
+            className="btn ghost"
+            onClick={onClose}
+          >
+            {t.cancel}
+          </button>
+
+          <button className="btn primary">
+            {t.save}
+          </button>
+        </div>
+
+      </form>
+    </Modal>
+  );
 }
 
 function AutoPlay({ state, t, refresh, toast }) {

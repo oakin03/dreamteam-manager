@@ -32,10 +32,20 @@ class SchedulerService {
       if (!schedule.enabled || schedule.completed) continue;
       const startAt = new Date(schedule.startAt).getTime();
       if (!Number.isFinite(startAt)) continue;
+      const isTaskSchedule = schedule.scheduleType === 'task';
       const prepMin = Number(schedule.preparationMinutes ?? 6);
-      const prepAt = startAt - prepMin * 60000;
+      const prepAt = isTaskSchedule
+        ? startAt
+        : startAt - prepMin * 60000;
 
-      if (!schedule.prepared && now >= prepAt && now < startAt) {
+      if (
+        !schedule.prepared &&
+        (
+          isTaskSchedule
+            ? now >= startAt
+            : now >= prepAt && now < startAt
+        )
+      ) {
         if (!this.processing.has(`${schedule.id}:prepare`)) {
           this.processing.add(`${schedule.id}:prepare`);
           schedule.prepared = true;
@@ -54,7 +64,14 @@ class SchedulerService {
         }
       }
 
-      if (now >= startAt && !schedule.started) {
+      if (
+        !schedule.started &&
+        (
+          isTaskSchedule
+            ? now >= startAt + prepMin * 60000
+            : now >= startAt
+        )
+      ) {
         if (!this.processing.has(`${schedule.id}:start`)) {
           this.processing.add(`${schedule.id}:start`);
           schedule.started = true;
@@ -62,7 +79,11 @@ class SchedulerService {
           this.store.saveSchedules(schedules);
           this.onChanged?.();
 
-          this.startSchedule(schedule)
+          const runner = schedule.scheduleType === 'task'
+            ? this.startTaskSchedule(schedule)
+            : this.startSchedule(schedule);
+
+          runner
             .catch(() => {})
             .finally(() => this.processing.delete(`${schedule.id}:start`));
         }
@@ -70,6 +91,125 @@ class SchedulerService {
     }
 
     if (changed) this.store.saveSchedules(schedules);
+  }
+
+  async startTaskSchedule(schedule) {
+    const accounts = this.store
+      .getAccounts()
+      .filter(a => schedule.accountIds.includes(a.id));
+
+    const autoplayAccounts = [];
+
+    for (const account of accounts) {
+      const worker = this.engine.workers.get(account.id);
+
+      if (
+        worker &&
+        worker.taskId === 'task1-quick-play' &&
+        ['running', 'preparing', 'starting'].includes(worker.status)
+      ) {
+        autoplayAccounts.push({
+          account,
+          visibleBrowser: worker.visibleBrowser,
+          config: worker.config
+        });
+      }
+    }
+
+    // Only stop Auto Play accounts that were actually running.
+    for (const item of autoplayAccounts) {
+      await this.engine.stopAccount(item.account.id, {
+        reason: `Scheduled ${schedule.taskName}`,
+        quiet: true
+      });
+    }
+
+    // Preparation happens AFTER the configured schedule time.
+    const preparationMs =
+      Math.max(0, Number(schedule.preparationMinutes || 0)) * 60000;
+
+    if (preparationMs > 0) {
+      await new Promise(resolve => setTimeout(resolve, preparationMs));
+    }
+
+    const mode = schedule.executionMode || 'parallel';
+    const delayMs =
+      Math.max(0, Number(schedule.delaySeconds || 0)) * 1000;
+
+    const startPvp = async account => {
+      try {
+        await this.engine.startAccount(
+          account.id,
+          schedule.taskId,
+          {
+            visibleBrowser: Boolean(schedule.visibleBrowser),
+            forceFresh: true,
+            config: schedule.taskConfig || null
+          }
+        );
+
+        const worker = this.engine.workers.get(account.id);
+
+        if (worker?.donePromise) {
+          await worker.donePromise;
+        }
+      } catch (error) {
+        this.activity.add({
+          level: 'error',
+          accountId: account.id,
+          accountName: account.name,
+          taskId: schedule.taskId,
+          taskName: schedule.taskName || '',
+          message: `Scheduled task failed: ${error.message}`
+        });
+      }
+    };
+
+    if (mode === 'parallel') {
+      await Promise.all(accounts.map(startPvp));
+    } else {
+      for (let i = 0; i < accounts.length; i++) {
+        await startPvp(accounts[i]);
+
+        if (delayMs && i < accounts.length - 1) {
+          await new Promise(resolve => setTimeout(resolve, delayMs));
+        }
+      }
+    }
+
+    // Restart ONLY the Auto Play accounts that were running before PVP.
+    for (const item of autoplayAccounts) {
+      try {
+        await this.engine.startAccount(
+          item.account.id,
+          'task1-quick-play',
+          {
+            visibleBrowser: item.visibleBrowser,
+            forceFresh: false,
+            config: item.config || null
+          }
+        );
+      } catch (error) {
+        this.activity.add({
+          level: 'error',
+          accountId: item.account.id,
+          accountName: item.account.name,
+          taskId: 'task1-quick-play',
+          taskName: 'Task 1 · Quick Play',
+          message: `Auto Play could not be restarted: ${error.message}`
+        });
+      }
+    }
+
+    const schedules = this.store.getSchedules();
+    const item = schedules.find(s => s.id === schedule.id);
+
+    if (item) {
+      item.completed = true;
+      item.completedAt = new Date().toISOString();
+      this.store.saveSchedules(schedules);
+      this.onChanged?.();
+    }
   }
 
   async prepareSchedule(schedule) {
