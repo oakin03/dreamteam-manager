@@ -641,10 +641,7 @@ class AutoTradeService {
       if (!saved || !['paused','interrupted','error'].includes(saved.status)) throw new Error('No previous Auto Trade run can be resumed.');
       this.runtime = saved;
     }
-    if(this.runtime.pendingTrade){
-      await this.reconcilePending();
-      this.runtime=this.store.getAutoTrade()?.runtime||this.runtime;
-    }
+    if(this.runtime.pendingTrade)throw new Error('A Trade confirmation was interrupted. Review both rosters before resuming.');
     if(this._mainId()!==this.runtime.mainAccountId)throw new Error('The Main Account changed since this run. Restore it before resuming.');
     // An error is saved before browser cleanup finishes. A quick Continue must
     // wait for that old run to end, or it marks the run active without starting it.
@@ -689,14 +686,11 @@ class AutoTradeService {
       const mainId=this.runtime.mainAccountId,sideId=pending.sideId;
       const main=await this._open(this._account(mainId),'reconcile-main');
       const side=await this._open(this._account(sideId),'reconcile-side');
-      const {mainAfter,sideAfter}=await this._verifyTransferFromHome(
-        mainId,
-        sideId,
-        pending.mainToSide,
-        pending.sideToMain,
-        main.page,
-        side.page
-      );
+      const mainAfter=await this._snapshotHome(mainId,main.page,false);
+      const sideAfter=await this._snapshotHome(sideId,side.page,false);
+      const confirmedByHome=pending.mainToSide.every(p=>this._contains(sideAfter.players,p)&&!this._contains(mainAfter.players,p))
+        && pending.sideToMain.every(p=>this._contains(mainAfter.players,p)&&!this._contains(sideAfter.players,p));
+      if(!confirmedByHome)await this._verifyTransferOnFreshDesk(sideId,pending.mainToSide,pending.sideToMain);
       for(const p of pending.mainToSide)this._ledger('trade-transfer',{from:mainId,to:sideId,player:p});
       for(const p of pending.sideToMain)this._ledger('trade-transfer',{from:sideId,to:mainId,player:p,routeToCard:true});
       this._syncTradeTk(mainId,sideId,pending.mainBefore,pending.sideBefore,pending.mainToSide,pending.sideToMain,mainAfter,sideAfter);
@@ -708,49 +702,39 @@ class AutoTradeService {
     }finally{await this._closeAllSessions();}
   }
   async stop() {
-    this.stopRequested=true;
-
-    if(this.runtime){
-      this.runtime.status='stopping';
-      this.runtime.message='Stopping safely…';
-      this._save();
-    }
-
-    for(const w of this.pauseWaiters.splice(0)) w();
-
-    await this._closeAllSessions().catch(()=>{});
-
-    if(this.runtime){
-      this.runtime.status='stopped';
-      this.runtime.finishedAt=new Date().toISOString();
-      this.runtime.message='Stopped.';
-      this._recomputeResults();
-      this._finishPersist();
-    }
-
+    this.stopRequested = true;
+    if (this.runtime) { this.runtime.status = 'stopping'; this.runtime.message = 'Stopping safely…'; this._save(); }
+    for (const w of this.pauseWaiters.splice(0)) w();
+    await this._closeAllSessions();
+    if (this.runtime) { this.runtime.status='stopped'; this.runtime.finishedAt=new Date().toISOString(); this.runtime.message='Stopped.'; this._recomputeResults(); this._finishPersist(); }
     return true;
   }
   async reset() {
+    const pending=this.runtime?.pendingTrade || this.store.getAutoTrade()?.runtime?.pendingTrade;
+    if (pending) throw new Error('A Trade may already have completed. Verify the pending Trade before resetting, to avoid repeating transfers.');
     if (this.runPromise) {
-      this.stopRequested = true;
-      for (const w of this.pauseWaiters.splice(0)) w();
-      await this._closeAllSessions().catch(() => {});
+      await this.stop();
+      await this.runPromise.catch(() => {});
     } else {
-      await this._closeAllSessions().catch(() => {});
+      await this._closeAllSessions();
     }
-
-    for (const id of this.runtime?.config?.sideAccountIds || [])
-      await this.scout?.close?.(id).catch(() => {});
-
-    if (this.runtime?.mainAccountId)
-      await this.scout?.close?.(this.runtime.mainAccountId).catch(() => {});
-
+    for (const id of this.runtime?.config?.sideAccountIds || []) await this.scout?.close?.(id).catch(() => {});
+    if (this.runtime?.mainAccountId) await this.scout?.close?.(this.runtime.mainAccountId).catch(() => {});
     this.runtime=null;
     this.stopRequested=false;
     this.pauseWaiters=[];
     this.store.saveAutoTrade({version:1,runtime:null,lastRun:null});
     this.onChanged?.();
     return true;
+  }
+  async shutdown(){
+    if(!this.runtime || !['running','paused','stopping'].includes(this.runtime.status))return;
+    this.stopRequested=true;
+    this.runtime.status='interrupted';this.runtime.paused=true;
+    this.runtime.message='Auto Trade was interrupted by app shutdown. Review the checkpoint before continuing.';
+    this._save();
+    for(const resolve of this.pauseWaiters.splice(0))resolve();
+    await this._closeAllSessions();
   }
 
   async _safeBoundary() {
@@ -1145,38 +1129,13 @@ class AutoTradeService {
     if(!Array.isArray(starters) || starters.length<5)
       throw new Error(`The starting five was not recorded for ${this._account(accountId)?.name||accountId}. No Trade was attempted.`);
     for(const starter of starters){
-      const exactPath=normPath(starter.imagePath);
-      const exactName=clean(starter.name);
-
       const matches=players.filter(player=>{
-        const playerPath=normPath(player.imagePath);
-
-        if(exactPath && !placeholderPath(exactPath) && playerPath===exactPath)
-          return true;
-
-        return Boolean(
-          exactName &&
-          player.name &&
-          namesMatch(starter.name,player.name)
-        );
+        const samePath=normPath(player.imagePath)===normPath(starter.imagePath);
+        return samePath && !placeholderPath(starter.imagePath) ||
+          starter.name && player.name && namesMatch(starter.name,player.name);
       });
-
-      if(matches.length>1){
-        const nameMatches=matches.filter(player=>
-          exactName &&
-          player.name &&
-          namesMatch(starter.name,player.name)
-        );
-
-        // Aynı isimden gerçekten birden fazla oyuncu varsa güvenli biçimde
-        // ayırt edemeyiz. Farklı oyuncuların ortak portrait'i tek başına hata
-        // sebebi değildir.
-        if(nameMatches.length>1){
-          throw new Error(
-            `A starting-five player cannot be identified uniquely on ${this._account(accountId)?.name||accountId}'s Trade roster. No offer was made.`
-          );
-        }
-      }
+      if(matches.length>1)
+        throw new Error(`A starting-five player cannot be identified uniquely on ${this._account(accountId)?.name||accountId}'s Trade roster. No offer was made.`);
     }
     return players.filter(player=>!this._protectedStarter(accountId,player));
   }
@@ -1508,7 +1467,7 @@ class AutoTradeService {
     this._log('info','Unchanged roster and Make bench verified; retrying the saved Star Card action.',this._account(accountId));
   }
 
-  async _waitMakeBench(accountId, page, requiredPlayers, {timeoutMs=120000,stableMs=1200,minWaitMs=10000}={}) {
+  async _waitMakeBench(accountId, page, requiredPlayers, {timeoutMs=120000,stableMs=1200,minWaitMs=5000}={}) {
     // Make omits unsellable, rookie and X players, so its count is not the
     // Stadium's bench count. Only players this run acquired via Scout/Trade
     // are required to appear.
@@ -1527,15 +1486,13 @@ class AutoTradeService {
         const signature=JSON.stringify(bench);
         if(signature!==lastSignature){lastSignature=signature;stableSince=Date.now();}
         const matchedCount=required.filter(p=>
-          bench.some(tile=>
-            resolveMakeBenchPlayer([p],tile) ||
-            (p?.name && tile?.name && namesMatch(p.name,tile.name))
-          )
+          bench.some(tile=>resolveMakeBenchPlayer([p],tile))
         ).length;
 
         const ready =
           required.length===0 ||
-          matchedCount>=required.length;
+          matchedCount>0 ||
+          Date.now()-started>=minWaitMs;
 
         if(
           ready &&
@@ -1584,8 +1541,7 @@ class AutoTradeService {
       (!placeholderPath(p.imagePath)||p.name) && (
       this._hasAnyRole(p,cardRoles)
       || (this._scoutPrice(accountId,p)!=null && this._scoutPrice(accountId,p)<=this.runtime.config.purchaseMaxPrice)
-      || (this.runtime.ledger||[]).some(e=>e.type==='trade-transfer'&&e.to===accountId&&e.routeToCard &&
-          (identityOf(e.player)===identityOf(p) || namesMatch(e.player?.name,p?.name)))
+      || (this.runtime.ledger||[]).some(e=>e.type==='trade-transfer'&&e.to===accountId&&identityOf(e.player)===identityOf(p)&&e.routeToCard)
     ));
     const addCandidate=p=>{
       const index=rosterCandidates.findIndex(old=>identityOf(old)===identityOf(p) ||
@@ -1604,11 +1560,7 @@ class AutoTradeService {
 
       if(
         this._hasAnyRole(candidate,cardRoles) ||
-        (price!=null && price<=this.runtime.config.purchaseMaxPrice) ||
-        expectedPlayers.some(p =>
-          identityOf(p)===identityOf(player) ||
-          namesMatch(p?.name,player?.name)
-        )
+        (price!=null && price<=this.runtime.config.purchaseMaxPrice)
       ){
         addCandidate(candidate);
       }
@@ -1619,13 +1571,9 @@ class AutoTradeService {
       const inbound=entry.type==='trade-transfer'&&entry.to===accountId&&entry.routeToCard;
       if(!acquired&&!inbound)continue;
       const candidate=this._decorate(entry.player,cardMap);
-      if(
-        inbound ||
-        this._hasAnyRole(candidate,cardRoles) ||
-        num(entry.player.price)!=null&&num(entry.player.price)<=this.runtime.config.purchaseMaxPrice
-      ){
+      if(inbound || this._hasAnyRole(candidate,cardRoles) ||
+         num(entry.player.price)!=null&&num(entry.player.price)<=this.runtime.config.purchaseMaxPrice)
         addCandidate(candidate);
-      }
     }
     for(const card of cardMap){
       if(placeholderPath(card.imagePath) && hasPortrait(card) && !alreadyMade(card) &&
@@ -1644,14 +1592,8 @@ class AutoTradeService {
       entry.to===accountId && entry.routeToCard && !alreadyMade(entry.player))
       .map(entry=>entry.player);
     const knownArrivals=[...expectedPlayers,...incoming]
-      .filter(p=>rosterCandidates.some(candidate=>
-        identityOf(candidate)===identityOf(p) ||
-        namesMatch(candidate?.name,p?.name)
-      ))
-      .filter((p,index,all)=>all.findIndex(other=>
-        identityOf(other)===identityOf(p) ||
-        namesMatch(other?.name,p?.name)
-      )===index);
+      .filter(p=>rosterCandidates.some(candidate=>identityOf(candidate)===identityOf(p)))
+      .filter((p,index,all)=>all.findIndex(other=>identityOf(other)===identityOf(p))===index);
     const bench=await this._waitMakeBench(accountId,page,knownArrivals);
     this.runtime.message=`Star Card Make · ${bench.length} bench portrait(s) read`;this._save();
     const eligible=[...rosterCandidates];
@@ -1802,23 +1744,6 @@ class AutoTradeService {
     const allSide=this._transferCandidates({players:sideBench},config.sideToMainRoleIds,sideId,true)
       .filter(p=>!this._contains(fullMain,p));
     const blocked=[...allMain,...allSide].filter(p=>!p.selectable);
-    if(!allMain.length && !allSide.length){
-      this._log(
-        'info',
-        `No eligible Trade players for ${this._account(sideId)?.name||sideId}; skipping Trade.`,
-        this._account(sideId)
-      );
-
-      await mainSession.page.getByRole('button',{name:/^Cancel$/i}).first().click().catch(()=>{});
-      await sideSession.page.getByRole('button',{name:/^Cancel$/i}).first().click().catch(()=>{});
-
-      await Promise.all([
-        this._waitHomeAfterTrade(mainId,mainSession.page),
-        this._waitHomeAfterTrade(sideId,sideSession.page)
-      ]);
-
-      return false;
-    }
     if(blocked.length)
       throw new Error(`An eligible bench player cannot be selected in Trade: ${blocked[0].name}. No offer was made.`);
     // The Trade roster includes the whole team; Stadium may display only five.
@@ -1880,20 +1805,9 @@ class AutoTradeService {
     this.runtime.pendingTrade={sideId,mainToSide,sideToMain,mainBefore:mainTk,sideBefore:sideTk,at:new Date().toISOString()};
     this.runtime.checkpoint={phase:'trade-confirm',accountId:sideId};this._save();
     await confirm.click();
-
-    await Promise.all([
-      this._waitHomeAfterTrade(mainId,mainSession.page),
-      this._waitHomeAfterTrade(sideId,sideSession.page)
-    ]);
-
-    const {mainAfter,sideAfter}=await this._verifyTransferFromHome(
-      mainId,
-      sideId,
-      mainToSide,
-      sideToMain,
-      mainSession.page,
-      sideSession.page
-    );
+    await Promise.all([this._waitHomeAfterTrade(mainId,mainSession.page),this._waitHomeAfterTrade(sideId,sideSession.page)]);
+    await this._verifyTransferOnFreshDesk(sideId,mainToSide,sideToMain);
+    const mainAfter=await this._snapshotHome(mainId,mainSession.page,false), sideAfter=await this._snapshotHome(sideId,sideSession.page,false);
     for(const p of mainToSide)this._ledger('trade-transfer',{from:mainId,to:sideId,player:p});
     for(const p of sideToMain)this._ledger('trade-transfer',{from:sideId,to:mainId,player:p,routeToCard:true});
     this._syncTradeTk(mainId,sideId,mainTk,sideTk,mainToSide,sideToMain,mainAfter,sideAfter);
@@ -1902,20 +1816,33 @@ class AutoTradeService {
     return true;
   }
 
-  async _verifyTransferFromHome(mainId,sideId,mainToSide,sideToMain,mainPage,sidePage) {
-    await Promise.all([
-      this._waitHomeAfterTrade(mainId,mainPage),
-      this._waitHomeAfterTrade(sideId,sidePage)
-    ]);
-
-    const [mainAfter,sideAfter]=await Promise.all([
-      this._snapshotHome(mainId,mainPage,false),
-      this._snapshotHome(sideId,sidePage,false)
-    ]);
-
-    // Confirm Trade + iki hesabın da Home'a dönmesi,
-    // oyuncu kimliklerinin Home ekranındaki eşleşmesinden daha güvenilir.
-    return {mainAfter,sideAfter};
+  async _verifyTransferOnFreshDesk(sideId,mainToSide,sideToMain) {
+    const mainId=this.runtime.mainAccountId;
+    const mainPage=this.sessions.get(mainId)?.session?.page;
+    const sidePage=this.sessions.get(sideId)?.session?.page;
+    if(!mainPage || !sidePage)throw new Error('Both accounts must remain open to verify the completed Trade.');
+    this.runtime.checkpoint={phase:'trade-verify',accountId:sideId,action:'read-rosters'};this._save();
+    const password=await this._createSideTradeRoom(sidePage);
+    await this._joinSideRoom(mainPage,sideId,password);
+    await this._waitTradeDesk(sidePage);
+    await this._verifyParticipants(mainPage,this._account(mainId),this._account(sideId));
+    await this._verifyParticipants(sidePage,this._account(sideId),this._account(mainId));
+    const deadline=Date.now()+60000;
+    let verified=false;
+    do{
+      const [main,side]=await Promise.all([
+        mainPage.evaluate(readOwnTradePlayers).catch(()=>null),
+        sidePage.evaluate(readOwnTradePlayers).catch(()=>null)
+      ]);
+      if(main && side && mainToSide.every(p=>resolveTradePlayer(side,p)&&!resolveTradePlayer(main,p)) &&
+         sideToMain.every(p=>resolveTradePlayer(main,p)&&!resolveTradePlayer(side,p))) {
+        verified=true;break;
+      }
+      await sleep(500);
+    }while(Date.now()<deadline);
+    if(!verified)throw new Error('Trade returned Home, but the expected player transfer could not be verified in both Trade rosters. The Trade remains pending for review.');
+    await Promise.all([mainPage,sidePage].map(page=>page.getByRole('button',{name:/^Cancel$/i}).first().click({timeout:15000})));
+    await Promise.all([this._waitHomeAfterTrade(mainId,mainPage),this._waitHomeAfterTrade(sideId,sidePage)]);
   }
 
   _syncTradeTk(mainId,sideId,mainBefore,sideBefore,mainToSide,sideToMain,mainAfter,sideAfter) {

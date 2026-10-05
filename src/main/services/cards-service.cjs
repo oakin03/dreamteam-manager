@@ -784,9 +784,9 @@ class CardsService {
 
     const seen = new Map();
     let scannedTeams = 0;
-    this._log(account, 'info', 'Cards Activate taraması başladı · ilk 2 takım sayfası.');
+    this._log(account, 'info', 'Cards Activate taraması başladı · 3 takım sayfası.');
 
-    for (let targetPage = 1; targetPage <= 2; targetPage++) {
+    for (let targetPage = 1; targetPage <= 3; targetPage++) {
       this._assertScanDeadline();
       panel = await this._waitTeamPage(page, targetPage);
       const teams = panel.teams || [];
@@ -820,11 +820,13 @@ class CardsService {
         // stars and image. The selected team gives us the team identity. The
         // old code clicked every player and waited for the detail panel, which
         // could turn a complete scan into a 30-60 minute job.
+        const isXTeamPage = targetPage === 3;
+
         for (const tile of tiles) {
           const player = {
             name: tile.name,
-            team: team.code || team.name,
-            teamName: team.name || '',
+            team: isXTeamPage ? 'X Team' : (team.code || team.name),
+            teamName: isXTeamPage ? 'X Team' : (team.name || ''),
             position: '',
             grade: tile.grade || '',
             stars: Math.max(0, Number(tile.stars || 0)),
@@ -847,11 +849,15 @@ class CardsService {
         this._log(account, 'info', `Cards Activate · ${team.code || team.name} · ${tiles.length} oyuncu.`);
       }
 
-      if (targetPage === 1) {
+      if (targetPage < 3) {
         const next = page.getByRole('button', { name: 'Next page' }).first();
-        if (!(await next.isEnabled().catch(() => false))) throw new Error('Star Cards ikinci takım sayfasına geçilemiyor.');
+
+        if (!(await next.isEnabled().catch(() => false))) {
+          throw new Error(`Star Cards ${targetPage + 1}. takım sayfasına geçilemiyor.`);
+        }
+
         await next.click({ timeout: 5000 });
-        await this._waitTeamPage(page, 2);
+        await this._waitTeamPage(page, targetPage + 1);
       }
     }
 
@@ -947,11 +953,20 @@ class CardsService {
   _mergeActivateAndInventory(activatePlayers, inventoryEntries) {
     const byKey = new Map(inventoryEntries.map(x => [x.key, x]));
     const used = new Set();
-    return activatePlayers.map(player => {
+
+    const merged = activatePlayers.map(player => {
       let inv = byKey.get(player.key) || null;
-      if (!inv) inv = resolvePlayer(inventoryEntries.filter(x => !used.has(x.key)), player);
+
+      if (!inv) {
+        inv = resolvePlayer(
+          inventoryEntries.filter(x => !used.has(x.key)),
+          player
+        );
+      }
+
       if (inv && used.has(inv.key)) inv = null;
       if (inv) used.add(inv.key);
+
       return {
         ...player,
         cardCount: Math.max(0, Number(inv?.rawEquivalent || 0)),
@@ -960,6 +975,40 @@ class CardsService {
         inventoryPosition: inv?.position || null
       };
     });
+
+    for (const inv of inventoryEntries) {
+      if (used.has(inv.key)) continue;
+
+      const levels = Object.entries(inv.levels || {})
+        .map(([level, quantity]) => [
+          Number(level),
+          Number(quantity)
+        ])
+        .filter(([level, quantity]) => level >= 1 && quantity > 0)
+        .sort((a, b) => a[0] - b[0]);
+
+      for (const [level, quantity] of levels) {
+        merged.push({
+          key: `${inv.key}|no-team-star:${level}`,
+          name: inv.name,
+          team: 'No Team',
+          teamName: 'No Team',
+          position: inv.position || '',
+          grade: inv.grade || '',
+          stars: level,
+          cardCount: quantity,
+          inventoryLevels: {
+            [level]: quantity
+          },
+          imagePath: inv.imagePath || '',
+          slug: imageSlug(inv.imagePath || '') || undefined,
+          active: true,
+          noTeam: true
+        });
+      }
+    }
+
+    return merged;
   }
 
   async refresh() {

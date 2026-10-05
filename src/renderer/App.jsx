@@ -880,13 +880,26 @@ function AutoTrade({ state, t, refresh, toast }) {
 
     roomPassword: '32958209',
 
-    visible: previous.visible ?? true
+    visible: previous.visible ?? false
   }));
   const [busy, setBusy] = useState(false);
   const running = rt && ['running', 'paused', 'stopping'].includes(rt.status);
   const selectedSides = form.sideAccountIds.filter(id => accounts.some(a => a.id === id && a.id !== mainId));
   const priceValid = /^\d+$/.test(String(form.purchaseMaxPrice).trim());
   const toggle = (key, id) => setForm(f => ({ ...f, [key]: f[key].includes(id) ? f[key].filter(x => x !== id) : [...f[key], id] }));
+  const sideAccounts = accounts.filter(a => a.id !== mainId);
+  const allSidesSelected =
+    sideAccounts.length > 0 &&
+    sideAccounts.every(a => form.sideAccountIds.includes(a.id));
+
+  const toggleAllSides = () => {
+    setForm(f => ({
+      ...f,
+      sideAccountIds: allSidesSelected
+        ? []
+        : sideAccounts.map(a => a.id)
+    }));
+  };
   const run = async () => {
     setBusy(true);
     try {
@@ -903,9 +916,23 @@ function AutoTrade({ state, t, refresh, toast }) {
   };
   const control = async action => {
     setBusy(true);
-    try { await api.autoTrade[action](); await refresh(); }
-    catch (e) { toast(e.message, 'error'); }
-    finally { setBusy(false); }
+
+    try {
+      await api.autoTrade[action]();
+      await refresh();
+    } catch (e) {
+      if (
+        /needs .* TK|has .* TK|insufficient.*TK|TK for the pending Trade/i.test(
+          String(e.message || '')
+        )
+      ) {
+        window.alert(`Auto Trade duraklatıldı.\n\n${e.message}`);
+      } else {
+        toast(e.message, 'error');
+      }
+    } finally {
+      setBusy(false);
+    }
   };
   const resetRun = async () => {
     if (!window.confirm(t.autoTradeResetConfirm)) return;
@@ -925,7 +952,21 @@ function AutoTrade({ state, t, refresh, toast }) {
     </label>)}{!roles.length && <span className="muted-text">{t.autoTradeNoRoles}</span>}</div>
   </section>;
   const fmtDelta = v => v == null ? '—' : `${v > 0 ? '+' : ''}${fmtNumber(v)} TK`;
-  const rows = rt?.results || state.autoTrade?.lastRun?.results || [];
+  const rows = useMemo(() => {
+    const source = rt?.results || state.autoTrade?.lastRun?.results || [];
+
+    return [...source].sort((a,b) => {
+      if (a.isMain && !b.isMain) return -1;
+      if (!a.isMain && b.isMain) return 1;
+
+      return String(a.accountName || '')
+        .localeCompare(
+          String(b.accountName || ''),
+          'tr',
+          { sensitivity:'base' }
+        );
+    });
+  }, [rt?.results, state.autoTrade?.lastRun?.results]);
   const main = accounts.find(a => a.id === mainId);
   return <div className="page auto-trade-page">
     <div className="page-title auto-trade-title"><div><h1>{t.autoTrade}</h1><span className="subtitle">{t.autoTradeSubtitle}</span></div>
@@ -947,7 +988,18 @@ function AutoTrade({ state, t, refresh, toast }) {
     <div className="auto-trade-grid">
       <div className="auto-trade-config-stack">
         <section className="panel auto-trade-config"><div className="auto-trade-section-head"><span>01</span><div><h3>{t.sideAccounts}</h3><small>{t.autoTradeSortedByTk}</small></div></div>
-          <div className="account-checks">{accounts.filter(a => a.id !== mainId).map(a => <label key={a.id} className={selectedSides.includes(a.id) ? 'checked' : ''}>
+          <div className="account-checks">
+            {sideAccounts.length > 0 && (
+              <button
+                type="button"
+                className="btn ghost small"
+                disabled={running}
+                onClick={toggleAllSides}
+              >
+                {allSidesSelected ? 'Seçimi kaldır' : 'Tümünü seç'}
+              </button>
+            )}
+            {sideAccounts.map(a =>  <label key={a.id} className={selectedSides.includes(a.id) ? 'checked' : ''}>
             <input type="checkbox" checked={selectedSides.includes(a.id)} disabled={running} onChange={() => toggle('sideAccountIds', a.id)} />
             <span>{a.name}</span><small>LV {profile.accounts?.[a.id]?.level ?? '—'} · {fmtTk(profile.accounts?.[a.id]?.tk)}</small>
           </label>)}{accounts.length <= 1 && <span className="auto-trade-empty">{t.autoTradeNoSides}</span>}</div>
@@ -971,7 +1023,46 @@ function AutoTrade({ state, t, refresh, toast }) {
       </aside>
     </div>
     <div className="panel table-panel auto-trade-results"><div className="panel-head"><h3>{t.liveResults}</h3><span>{rt?.ledger?.length || 0} {t.autoTradeVerifiedEvents}</span></div>
-      <table><thead><tr><th>{t.account}</th><th>TK Δ</th><th>{t.gainedPlayers}</th><th>{t.cardsMade}</th><th>{t.status}</th></tr></thead><tbody>{rows.map(r => <tr key={r.accountId} className={r.isMain ? 'main-result-row' : ''}><td><b>{r.isMain ? '★ ' : ''}{r.accountName}</b></td><td title={r.tkEstimated ? t.autoTradeTkEstimate : ''} className={(r.tkDelta || 0) > 0 ? 'positive' : (r.tkDelta || 0) < 0 ? 'negative' : ''}>{r.tkEstimated ? '≈ ' : ''}{fmtDelta(r.tkDelta)}</td><td>{fmtNumber(r.gainedPlayers || 0)}</td><td>{fmtNumber(r.cardsMade || 0)}</td><td>{r.status || '—'}</td></tr>)}</tbody></table>
+      <table><thead><tr><th>{t.account}</th><th>Mail</th><th>TK Δ</th><th>{t.gainedPlayers}</th><th>{t.cardsMade}</th><th>{t.status}</th></tr></thead>
+        <tbody>
+          {rows.map(r => {
+            const account = accounts.find(a => a.id === r.accountId);
+
+            return (
+              <tr
+                key={r.accountId}
+                className={r.isMain ? 'main-result-row' : ''}
+              >
+                <td>
+                  <b>{r.isMain ? '★ ' : ''}{r.accountName}</b>
+                </td>
+
+                <td>
+                  {account?.login || '—'}
+                </td>
+
+                <td
+                  title={r.tkEstimated ? t.autoTradeTkEstimate : ''}
+                  className={
+                    (r.tkDelta || 0) > 0
+                      ? 'positive'
+                      : (r.tkDelta || 0) < 0
+                        ? 'negative'
+                        : ''
+                  }
+                >
+                  {r.tkEstimated ? '≈ ' : ''}
+                  {fmtDelta(r.tkDelta)}
+                </td>
+
+                <td>{fmtNumber(r.gainedPlayers || 0)}</td>
+                <td>{fmtNumber(r.cardsMade || 0)}</td>
+                <td>{r.status || '—'}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
       {!rows.length && <div className="auto-trade-empty">{t.autoTradeNoRun}</div>}
     </div>
   </div>;
