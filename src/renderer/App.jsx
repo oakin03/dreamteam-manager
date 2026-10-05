@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { filterTradingRows, hasTradingSortData, sortTradingRows } from './trading-sort.mjs';
+import PlayerMarketPanel from './components/PlayerMarketPanel';
 
 const api = window.dreamteam;
 const clockSubscribers = new Set();
@@ -1034,6 +1035,22 @@ function Scout({ state, t, refresh, toast }) {
         <div className="scout-agent-area">{data?(agents.length?<div className="scout-agent-grid">{agents.map(agent=><article className={`scout-agent-card ${agent.signed?'signed':''}`} key={agent.key||agent.index} onClick={()=>setSelected({agent,accountName:account.name})}><div className="scout-agent-top"><div className="scout-agent-name"><b>{agent.name||agent.key}</b><span>{agent.team||'—'} · {agent.position||'—'}</span></div><span className={`grade-badge ${gradeToneClass(agent.grade)}`}>{agent.grade||'—'}</span></div><div className="scout-agent-price">{fmtTk(agent.price)}</div><div className="scout-agent-carddata">{agent.card?<><b><StarValue value={agent.card.stars}/> · {agent.card.team||agent.team||'—'}</b><ProgressValue progress={agent.card.progress} t={t}/>{agent.card.roles?.length>0&&<em className="inline-role-list">{agent.card.roles.map(r=><RoleBadge key={r.id} role={r} compact/>)}</em>}{agent.card.teamCritical&&<small>{agent.card.raisesTeamIfUpgraded?t.raisesTeam:t.teamNeeded}</small>}</>:<span className="muted-text">Star Card —</span>}</div><div className="scout-agent-actions"><button className="btn ghost small" onClick={e=>{e.stopPropagation();setSelected({agent,accountName:account.name})}}>{t.detail}</button><button className="btn primary small" disabled={!isOpen||!agent.canSign||isBusy||!!globalBusy||data.roster>=data.rosterMax} onClick={e=>{e.stopPropagation();if(confirm(t.signConfirm))runAccount(account.id,'sign',()=>api.scout.sign(account.id,agent.key))}}>{agent.signed?t.signed:t.buy}</button></div></article>)}</div>:<div className="scout-row-empty">{t.noScoutMatch}</div>):<div className="scout-row-empty"><span>{t.noScoutData}</span>{s.status&&s.status!=='idle'&&<small>{s.status}</small>}</div>}</div>
       </section>
     })}</div>
+
+    <PlayerMarketPanel
+      players={state.playerMarket?.players || []}
+      roles={[
+        { id: 'sellable', name: 'Satılabilir' },
+        { id: 'stock', name: 'Stok' },
+        { id: 'card', name: 'Kart' }
+      ]}
+      scanning={state.playerMarket?.scanRuntime?.status === 'scanning'}
+      scanRuntime={state.playerMarket?.scanRuntime}
+      onScan={() => api.playerMarket.scan()}
+      onStop={() => api.playerMarket.stop()}
+      onSetRole={(playerKey, roleIds) =>
+        api.playerMarket.setRole(playerKey, roleIds)
+      }
+    />
     {selected&&<ScoutPlayerDetail selected={selected} t={t} onClose={()=>setSelected(null)}/>} 
   </div>;
 }
@@ -1440,7 +1457,7 @@ function Activity({ state, t, refresh }) {
 function Settings({ state, t, refresh, toast }) { const saveLang=async v=>{try{await api.settings.update({language:v});await refresh()}catch(e){toast(e.message,'error')}};return <div className="page"><div className="page-title"><h1>{t.settings}</h1></div><div className="settings-grid"><div className="panel setting-card"><label><span>{t.language}</span><select value={state.settings.language||'auto'} onChange={e=>saveLang(e.target.value)}><option value="auto">{t.auto}</option><option value="tr">{t.turkish}</option><option value="en">{t.english}</option></select></label></div><div className="panel setting-card"><button className="btn ghost" onClick={()=>api.settings.openDataFolder()}><Icon name="folder"/> {t.dataFolder}</button></div></div></div>; }
 
 export default function App(){
-  const [state,setState]=useState({accounts:[],accountProfile:{accounts:{},effectiveApk:{},totalUsableApk:null},tradeAccount:null,tasks:[],schedules:[],settings:{},activity:[],runtime:{},scout:{},market:{},trading:{runtime:{},rows:[]},autoTrade:{runtime:null,lastRun:null},cards:{players:[],roles:[],teams:[],trackedTeams:[],scannerReady:false},rewards:{},systemLocale:'en-US'});
+  const [state,setState]=useState({accounts:[],accountProfile:{accounts:{},effectiveApk:{},totalUsableApk:null},tradeAccount:null,tasks:[],schedules:[],settings:{},activity:[],runtime:{},scout:{},market:{},playerMarket:{ players:[], scanRuntime:null},trading:{runtime:{},rows:[]},autoTrade:{runtime:null,lastRun:null},cards:{players:[],roles:[],teams:[],trackedTeams:[],scannerReady:false},rewards:{},systemLocale:'en-US'});
   const [page,setPage]=useState('home'); const [toastState,setToast]=useState(null); const [alertState,setAlertState]=useState(null); const seenActivityIds=useRef(null); const appStartedAt=useRef(Date.now());
   const hotkeyStatus=useRef(null); const hotkeyText=useRef(TEXT.en);
   const refresh=async()=>setState(await api.bootstrap()); const toast=(message,type='info')=>{setToast({message,type});setTimeout(()=>setToast(null),3500)};

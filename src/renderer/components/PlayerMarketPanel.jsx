@@ -269,14 +269,12 @@ export default function PlayerMarketPanel({
         </select>
 
         <label className="flex items-center gap-2 px-3 py-2">
-          <input
+        <input
             type="checkbox"
             checked={belowBase}
-            onChange={e =>
-              setBelowBase(e.target.checked)
-            }
-          />
-          Price < Base
+            onChange={e => setBelowBase(e.target.checked)}
+        />
+        Price &lt; Base
         </label>
 
         <input
