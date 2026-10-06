@@ -443,7 +443,131 @@ async function scan(ctx) {
   }
 }
 
+class PlayerMarketService {
+  constructor({ store, credentials, browserService, activity, onChanged }) {
+    this.store = store;
+    this.credentials = credentials;
+    this.browser = browserService;
+    this.activity = activity;
+    this.onChanged = onChanged;
+    this.runtime = {
+      status: 'idle',
+      message: '',
+      currentPage: 0,
+      totalPages: 0,
+      scannedPlayers: 0,
+      currentPlayer: null
+    };
+    this.players = [];
+    this.abortController = null;
+  }
+
+  snapshot() {
+    return {
+      players: this.players,
+      scanRuntime: this.runtime
+    };
+  }
+
+  async start() {
+    if (this.abortController) {
+      return this.snapshot();
+    }
+
+    this.abortController = new AbortController();
+
+    this.runtime = {
+      ...this.runtime,
+      status: 'scanning',
+      message: 'Tarama başlatılıyor…'
+    };
+
+    this.onChanged?.();
+
+    try {
+      const account = this.store.getPlayerMarketAccount?.();
+
+      if (!account) {
+        throw new Error('Player Market hesabı tanımlı değil.');
+      }
+
+      const result = await scan({
+        account,
+        credentials: () => this.credentials(account),
+        browser: this.browser,
+        signal: this.abortController.signal,
+        storage: {
+          load: () => this.store.getPlayerMarketData?.() || { players: {} },
+          save: data => this.store.savePlayerMarketData?.(data)
+        },
+        visibleBrowser: true,
+        forceFresh: true,
+        log: (level, message) => this.activity?.add?.({
+          level,
+          message
+        }),
+        setState: patch => {
+          this.runtime = {
+            ...this.runtime,
+            ...patch
+          };
+          this.onChanged?.();
+        }
+      });
+
+      this.players = result.players || [];
+
+      this.runtime = {
+        ...this.runtime,
+        status: 'completed',
+        message: `Tarama tamamlandı · ${this.players.length} oyuncu`
+      };
+
+      return this.snapshot();
+    } catch (error) {
+      this.runtime = {
+        ...this.runtime,
+        status: error?.name === 'AbortError' ? 'stopped' : 'error',
+        message: error?.message || String(error)
+      };
+
+      throw error;
+    } finally {
+      this.abortController = null;
+      this.onChanged?.();
+    }
+  }
+
+  async stop() {
+    this.abortController?.abort();
+    return this.snapshot();
+  }
+
+  setRole(playerKey, roleIds) {
+    const player = this.players.find(
+      item => item.key === playerKey
+    );
+
+    if (!player) {
+      throw new Error('Oyuncu bulunamadı.');
+    }
+
+    player.roleIds = Array.isArray(roleIds)
+      ? roleIds
+      : [];
+
+    this.onChanged?.();
+
+    return this.snapshot();
+  }
+
+  async shutdown() {
+    await this.stop();
+  }
+}
+
 module.exports = {
+  PlayerMarketService,
   scan,
   readPlayerList,
   readPager,

@@ -16,6 +16,7 @@ const { AccountProfileService } = require('./services/account-profile-service.cj
 const { CardsService } = require('./services/cards-service.cjs');
 const { AutoTradeService } = require('./services/auto-trade-service.cjs');
 const { MarketService } = require('./services/market-service.cjs');
+const { PlayerMarketService } = require('./services/player-market-service.cjs');
 
 let mainWindow;
 let store;
@@ -31,6 +32,7 @@ let accountProfile;
 let cards;
 let autoTrade;
 let market;
+let playerMarketService;
 let autoTradeOverlay;
 let dataDir;
 let systemLocale = 'en-US';
@@ -57,6 +59,10 @@ function snapshot({ incremental = false } = {}) {
     playerMarketAccount: {
       username: '',
       password: ''
+    },
+    playerMarket: playerMarketService?.snapshot() || {
+      players: [],
+      scanRuntime: null
     },
     tasks: registry.list(),
     schedules: store.getSchedules(),
@@ -188,6 +194,13 @@ function initServices() {
   dailyRewards = new DailyRewardService({ store, credentials, browserService, activity, engine, onChanged: emitState });
   autoTrade = new AutoTradeService({ store, credentials, browserService, scoutService: scout, cardsService: cards, accountProfile, activity, taskEngine: engine, onChanged: () => { emitState(); syncAutoTradeControls(); } });
   market = new MarketService({ store, credentials, browserService, accountProfile, activity, onChanged: emitState });
+  playerMarketService = new PlayerMarketService({
+    store,
+    credentials,
+    browserService,
+    activity,
+    onChanged: emitState
+  }); 
   scheduler.start();
   dailyRewards.start();
 }
@@ -377,6 +390,7 @@ app.on('before-quit', async (event) => {
     await trading?.stop();
     await autoTrade?.shutdown();
     await market?.shutdown();
+    await playerMarketService?.shutdown();
     await dailyRewards?.stop();
     await engine.stopAll();
     await scout.shutdown();
