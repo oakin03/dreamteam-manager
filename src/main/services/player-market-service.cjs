@@ -250,7 +250,8 @@ async function scanPage(page, ctx, previousPlayers) {
         {
           ...player,
           position: details.position || player.position,
-          base: details.base
+          base: details.base,
+          roleIds: previous?.roleIds || []
         },
         previous
       )
@@ -493,14 +494,19 @@ class PlayerMarketService {
 
       const result = await scan({
         account,
-        credentials: () => this.credentials(account),
+        credentials: () => ({
+          login: account.login,
+          password: this.credentials.decryptSecret(
+            account.passwordEncrypted
+          )
+        }),
         browser: this.browser,
         signal: this.abortController.signal,
         storage: {
           load: () => this.store.getPlayerMarketData?.() || { players: {} },
           save: data => this.store.savePlayerMarketData?.(data)
         },
-        visibleBrowser: true,
+        visibleBrowser: false,
         forceFresh: true,
         log: (level, message) => this.activity?.add?.({
           level,
@@ -553,8 +559,15 @@ class PlayerMarketService {
     }
 
     player.roleIds = Array.isArray(roleIds)
-      ? roleIds
+      ? [...new Set(roleIds)]
       : [];
+
+    const data = this.store.getPlayerMarketData();
+
+    if (data.players[playerKey]) {
+      data.players[playerKey].roleIds = player.roleIds;
+      this.store.savePlayerMarketData(data);
+    }
 
     this.onChanged?.();
 

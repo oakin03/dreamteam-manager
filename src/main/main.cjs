@@ -56,14 +56,34 @@ function snapshot({ incremental = false } = {}) {
   const state = {
     accounts: store.getAccounts().map(sanitizeAccount),
     tradeAccount: sanitizeAccount(store.getTradeAccount()),
-    playerMarketAccount: {
-      username: '',
-      password: ''
-    },
+    playerMarketAccount: (() => {
+      const account = store.getPlayerMarketAccount();
+
+      if (!account) {
+        return null;
+      }
+
+      return {
+        id: account.id,
+        name: account.name,
+        login: account.login
+      };
+    })(),
     playerMarket: playerMarketService?.snapshot() || {
       players: [],
       scanRuntime: null
     },
+    playerMarketAccount: (() => {
+      const account = store.getPlayerMarketAccount();
+
+      if (!account) return null;
+
+      return {
+        id: account.id,
+        name: account.name,
+        login: account.login
+      };
+    })(),
     tasks: registry.list(),
     schedules: store.getSchedules(),
     settings: store.getSettings(),
@@ -352,6 +372,44 @@ function registerIpc() {
   });
   ipcMain.handle('settings:open-data-folder', async () => shell.openPath(dataDir));
   ipcMain.handle('activity:clear', async () => { activity.clear(); return true; });
+  ipcMain.handle(
+    'player-market:save-account',
+    async (_event, payload) => {
+      const old = store.getPlayerMarketAccount();
+
+      const account = {
+        id: old?.id || 'player-market-account',
+        name: String(
+          payload.name || 'Player Market Account'
+        ).trim(),
+        login: String(payload.login || '').trim(),
+        passwordEncrypted: payload.password
+          ? credentials.encryptSecret(
+              String(payload.password)
+            )
+          : old?.passwordEncrypted,
+        updatedAt: new Date().toISOString()
+      };
+
+      if (
+        !account.login ||
+        !account.passwordEncrypted
+      ) {
+        throw new Error(
+          'Player Market hesap kullanıcı adı ve şifre gerekli.'
+        );
+      }
+
+      store.savePlayerMarketAccount(account);
+      emitState();
+
+      return {
+        id: account.id,
+        name: account.name,
+        login: account.login
+      };
+    }
+  );
   ipcMain.handle('player-market:get', async () => {
     return playerMarketService.snapshot();
   });

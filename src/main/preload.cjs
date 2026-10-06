@@ -16,6 +16,12 @@ contextBridge.exposeInMainWorld('dreamteam', {
     get: () =>
       ipcRenderer.invoke('player-market:get'),
 
+    saveAccount: (payload) =>
+      ipcRenderer.invoke(
+        'player-market:save-account',
+        payload
+      ),
+
     scan: () =>
       ipcRenderer.invoke('player-market:scan'),
 

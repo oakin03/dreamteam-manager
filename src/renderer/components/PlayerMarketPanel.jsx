@@ -22,6 +22,8 @@ export default function PlayerMarketPanel({
   roles = ROLE_OPTIONS,
   scanning = false,
   scanRuntime,
+  account,
+  onSaveAccount,
   onScan,
   onStop,
   onSetRole
@@ -33,6 +35,14 @@ export default function PlayerMarketPanel({
   const [belowBase, setBelowBase] = useState(false);
   const [nearBase, setNearBase] = useState('');
   const [sort, setSort] = useState('name');
+  const [accountName, setAccountName] = useState(
+    account?.name || ''
+  );
+  const [accountLogin, setAccountLogin] = useState(
+    account?.login || ''
+  );
+  const [accountPassword, setAccountPassword] =
+    useState('');
 
   const filtered = useMemo(() => {
     let result = players.filter(player => {
@@ -167,7 +177,59 @@ export default function PlayerMarketPanel({
             {filtered.length} / {players.length} oyuncu
           </div>
         </div>
+      <div className="rounded-xl border p-4 space-y-3">
+        <h2 className="font-bold">
+          Player Market Hesabı
+        </h2>
 
+        <div className="grid grid-cols-3 gap-2">
+          <input
+            value={accountName}
+            onChange={e =>
+              setAccountName(e.target.value)
+            }
+            placeholder="Hesap adı"
+            className="px-3 py-2 rounded-lg"
+          />
+
+          <input
+            value={accountLogin}
+            onChange={e =>
+              setAccountLogin(e.target.value)
+            }
+            placeholder="Kullanıcı adı"
+            className="px-3 py-2 rounded-lg"
+          />
+
+          <input
+            type="password"
+            value={accountPassword}
+            onChange={e =>
+              setAccountPassword(e.target.value)
+            }
+            placeholder={
+              account
+                ? 'Şifreyi değiştirmek için gir'
+                : 'Şifre'
+            }
+            className="px-3 py-2 rounded-lg"
+          />
+        </div>
+
+        <button
+          type="button"
+          onClick={() =>
+            onSaveAccount({
+              name: accountName,
+              login: accountLogin,
+              password: accountPassword
+            })
+          }
+          className="px-4 py-2 rounded-lg"
+        >
+          Hesabı Kaydet
+        </button>
+      </div>
         <div className="flex gap-2">
           {!scanning ? (
             <button

@@ -43,7 +43,16 @@ class AppStore {
       cardRoles: path.join(baseDir, 'card-roles.json'),
       cardMetadata: path.join(baseDir, 'card-metadata.json'),
       autoTrade: path.join(baseDir, 'auto-trade.json'),
-      dailyRewards: path.join(baseDir, 'daily-rewards.json')
+      dailyRewards: path.join(baseDir, 'daily-rewards.json'),
+      playerMarketData: path.join(baseDir, 'player-market.json'),
+      playerMarketAccount: path.join(
+        baseDir,
+        'player-market-account.json'
+      ),
+      playerMarketData: path.join(
+        baseDir,
+        'player-market.json'
+      ),
     };
 
     const existing = readJson(this.files.settings, {});
@@ -83,6 +92,28 @@ class AppStore {
   getActivity() { return this._get('activity', []); }
   saveActivity(v) { this._save('activity', v); }
   getTradeAccount() { return this._get('tradeAccount', null); }
+  getPlayerMarketAccount() {
+    return this._get('playerMarketAccount', null);
+  }
+
+  savePlayerMarketAccount(v) {
+    this._save('playerMarketAccount', v);
+  }
+
+  getPlayerMarketData() {
+    return this._get(
+      'playerMarketData',
+      {
+        version: 1,
+        updatedAt: null,
+        players: {}
+      }
+    );
+  }
+
+  savePlayerMarketData(v) {
+    this._save('playerMarketData', v);
+  }
   saveTradeAccount(v) { this._save('tradeAccount', v); }
   getTradingRows() { return this._get('tradingRows', []); }
   saveTradingRows(v) { this._save('tradingRows', v); }

@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { filterTradingRows, hasTradingSortData, sortTradingRows } from './trading-sort.mjs';
-import PlayerMarketPanel from './components/PlayerMarketPanel';
 
 const api = window.dreamteam;
 const clockSubscribers = new Set();
@@ -1036,21 +1035,6 @@ function Scout({ state, t, refresh, toast }) {
       </section>
     })}</div>
 
-    <PlayerMarketPanel
-      players={state.playerMarket?.players || []}
-      roles={[
-        { id: 'sellable', name: 'Satılabilir' },
-        { id: 'stock', name: 'Stok' },
-        { id: 'card', name: 'Kart' }
-      ]}
-      scanning={state.playerMarket?.scanRuntime?.status === 'scanning'}
-      scanRuntime={state.playerMarket?.scanRuntime}
-      onScan={() => api.playerMarket.scan()}
-      onStop={() => api.playerMarket.stop()}
-      onSetRole={(playerKey, roleIds) =>
-        api.playerMarket.setRole(playerKey, roleIds)
-      }
-    />
     {selected&&<ScoutPlayerDetail selected={selected} t={t} onClose={()=>setSelected(null)}/>} 
   </div>;
 }
@@ -1488,6 +1472,30 @@ export default function App(){
   const lang=state.settings.language==='tr'||state.settings.language==='en'?state.settings.language:String(state.systemLocale||'').toLowerCase().startsWith('tr')?'tr':'en'; const t=TEXT[lang];
   hotkeyStatus.current=state.autoTrade?.runtime?.status;
   hotkeyText.current=t;
-  const nav=[['home','home',t.home],['accounts','accounts',t.accounts],['autoplay','play',t.autoplay],['autotrade','trade',t.autoTrade],['scout','scout',t.scout],['market','market',t.market],['trade','trade',t.trade],['cards','cards',t.cards],['activity','activity',t.activity],['settings','settings',t.settings]];
-  return <div className="shell"><aside className="sidebar"><div className="brand"><div>DT</div><b>DreamTeam<span>Manager</span></b></div><nav>{nav.map(([id,icon,label])=><button key={id} className={page===id?'active':''} onClick={()=>setPage(id)}><Icon name={icon}/><span>{label}</span></button>)}</nav></aside><main>{page==='home'&&<Home state={state} t={t} go={setPage}/>} {page==='accounts'&&<Accounts state={state} t={t} refresh={refresh} toast={toast}/>} {page==='autoplay'&&<AutoPlay state={state} t={t} refresh={refresh} toast={toast}/>} {page==='autotrade'&&<AutoTrade state={state} t={t} refresh={refresh} toast={toast}/>} {page==='scout'&&<Scout state={state} t={t} refresh={refresh} toast={toast}/>} {page==='market'&&<Market state={state} t={t} refresh={refresh} toast={toast}/>} {page==='trade'&&<TradingHall state={state} t={t} refresh={refresh} toast={toast}/>} {page==='cards'&&<Cards state={state} t={t} refresh={refresh} toast={toast}/>} {page==='activity'&&<Activity state={state} t={t} refresh={refresh}/>} {page==='settings'&&<Settings state={state} t={t} refresh={refresh} toast={toast}/>}</main>{toastState&&<div className={`toast ${toastState.type}`}>{toastState.message}</div>}{alertState&&<Modal title={t.autoPlayStopped} onClose={()=>setAlertState(null)} width={520}><div style={{display:'grid',gap:10,fontSize:12,color:'#445067'}}><b style={{fontSize:14,color:'#b13b30'}}>{alertState.accountName||t.account}</b><span>{t.salaryCapWarning}</span><div style={{padding:'10px 12px',border:'1px solid #f2d0cc',borderRadius:9,background:'#fff7f5',color:'#8f3128',fontWeight:700}}>{String(alertState.message||'').replace(/^Quick Play stopped:\s*/i,'')}</div><div className="modal-actions"><button className="btn primary" onClick={()=>setAlertState(null)}>{t.close}</button></div></div></Modal>}</div>;
+  const nav=[['home','home',t.home],['accounts','accounts',t.accounts],['autoplay','play',t.autoplay],['autotrade','trade',t.autoTrade],['scout','scout',t.scout],['playerMarket','market','Oyuncu Pazarı'],['market','market',t.market],['trade','trade',t.trade],['cards','cards',t.cards],['activity','activity',t.activity],['settings','settings',t.settings]];
+  return <div className="shell"><aside className="sidebar"><div className="brand"><div>DT</div><b>DreamTeam<span>Manager</span></b></div><nav>{nav.map(([id,icon,label])=><button key={id} className={page===id?'active':''} onClick={()=>setPage(id)}><Icon name={icon}/><span>{label}</span></button>)}</nav></aside><main>{page==='home'&&<Home state={state} t={t} go={setPage}/>} {page==='accounts'&&<Accounts state={state} t={t} refresh={refresh} toast={toast}/>}
+  {page==='playerMarket'&&(
+    <PlayerMarketPanel
+      players={state.playerMarket?.players || []}
+      roles={[
+        { id:'sellable', name:'Satılabilir' },
+        { id:'stock', name:'Stok' },
+        { id:'card', name:'Kart' }
+      ]}
+      scanning={
+        state.playerMarket?.scanRuntime?.status === 'scanning'
+      }
+      scanRuntime={state.playerMarket?.scanRuntime}
+      account={state.playerMarketAccount}
+      onSaveAccount={payload =>
+        api.playerMarket.saveAccount(payload)
+      }
+      onScan={() => api.playerMarket.scan()}
+      onStop={() => api.playerMarket.stop()}
+      onSetRole={(playerKey, roleIds) =>
+        api.playerMarket.setRole(playerKey, roleIds)
+      }
+    />
+  )}
+  {page==='autoplay'&&<AutoPlay state={state} t={t} refresh={refresh} toast={toast}/>} {page==='autotrade'&&<AutoTrade state={state} t={t} refresh={refresh} toast={toast}/>} {page==='scout'&&<Scout state={state} t={t} refresh={refresh} toast={toast}/>} {page==='market'&&<Market state={state} t={t} refresh={refresh} toast={toast}/>} {page==='trade'&&<TradingHall state={state} t={t} refresh={refresh} toast={toast}/>} {page==='cards'&&<Cards state={state} t={t} refresh={refresh} toast={toast}/>} {page==='activity'&&<Activity state={state} t={t} refresh={refresh}/>} {page==='settings'&&<Settings state={state} t={t} refresh={refresh} toast={toast}/>}</main>{toastState&&<div className={`toast ${toastState.type}`}>{toastState.message}</div>}{alertState&&<Modal title={t.autoPlayStopped} onClose={()=>setAlertState(null)} width={520}><div style={{display:'grid',gap:10,fontSize:12,color:'#445067'}}><b style={{fontSize:14,color:'#b13b30'}}>{alertState.accountName||t.account}</b><span>{t.salaryCapWarning}</span><div style={{padding:'10px 12px',border:'1px solid #f2d0cc',borderRadius:9,background:'#fff7f5',color:'#8f3128',fontWeight:700}}>{String(alertState.message||'').replace(/^Quick Play stopped:\s*/i,'')}</div><div className="modal-actions"><button className="btn primary" onClick={()=>setAlertState(null)}>{t.close}</button></div></div></Modal>}</div>;
 }
