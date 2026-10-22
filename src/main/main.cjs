@@ -48,6 +48,9 @@ let draft;
 let pvp;
 let buy;
 let tower;
+let towerDone = null;
+let autoBuyDone = null;
+let pvpDone = null;
 let lastBuyRevision = -1;
 let lastDraftRevision = -1;
 let lastPlayersKey = null;
@@ -177,11 +180,59 @@ async function pauseTasksFor(accountIds, taskName, prefix) {
   };
 }
 
+// A scheduled task stops every service working on its accounts — Auto Trade, Auto Buy,
+// Tower, PVP — and starts them again afterwards (Auto Play is handled by the scheduler).
+// Each stopped service first finishes, which also gives back the Auto Play it had
+// paused, so the scheduler then stops that Auto Play too and restores it in order.
+async function pauseServicesFor(accountIds, taskName) {
+  const ids = new Set(accountIds);
+  const overlap = list => (list || []).some(id => ids.has(id));
+  const resume = [];
+  const note = (level, code, service, extra = {}) => activity.add({ level, accountId: null, accountName: '', taskName: 'Schedule', code, params: { service, task: taskName, ...extra }, message: `${service} · ${code}` });
+  const at = autoTrade.snapshot().run;
+  if (at && ['running', 'paused', 'awaitingListing', 'stopping'].includes(at.status) && overlap(at.config?.accountIds)) {
+    await autoTrade.stop();
+    resume.push(['Auto Trade', () => autoTrade.continue()]);
+  }
+  const ab = buy.snapshot();
+  if (ab.auto?.status === 'running' && overlap(ab.config?.accountOrder)) {
+    const options = { accountIds: ab.config.accountOrder, intervalSec: ab.config.intervalSec };
+    buy.stopAuto();
+    await (autoBuyDone || buy.done)?.catch(() => {});
+    resume.push(['Auto Buy', () => startAutoBuy(options)]);
+  }
+  const tw = tower.snapshot();
+  if (tw.running) {
+    const active = Object.values(tw.run?.accounts || {}).filter(r => !['done', 'finished', 'stopped', 'error', 'salaryCap'].includes(r.status)).map(r => r.accountId);
+    if (overlap(active)) {
+      tower.stop();
+      await towerDone?.catch(() => {});
+      resume.push(['Kule', () => startTower(active)]);
+    }
+  }
+  const pv = pvp.snapshot();
+  if (pv.running) {
+    const active = Object.values(pv.run?.accounts || {}).filter(r => !['done', 'inactive', 'error', 'stopped'].includes(r.status)).map(r => r.accountId);
+    if (overlap(active)) {
+      pvp.stop();
+      await pvpDone?.catch(() => {});
+      resume.push(['PVP', () => startPvpManual(active)]);
+    }
+  }
+  for (const [service] of resume) note('info', 'sc.servicePaused', service);
+  return async () => {
+    for (const [service, start] of resume) {
+      try { await start(); note('success', 'sc.serviceResumed', service); }
+      catch (error) { note('error', 'sc.serviceResumeFailed', service, { error: error.message }); }
+    }
+  };
+}
+
 async function startPvpManual(accountIds) {
   if (!accountIds.length) throw new Error('Select at least one account.');
   if (pvp.snapshot().running) throw new Error('PVP is already running.');
   const resume = await pauseTasksFor(accountIds, 'PVP', 'pvp');
-  pvp.runAndWait(accountIds, { source: 'manual' }).catch(() => {}).finally(resume);
+  pvpDone = pvp.runAndWait(accountIds, { source: 'manual' }).catch(() => {}).finally(resume);
   return pvp.snapshot();
 }
 
@@ -189,7 +240,7 @@ async function startTower(accountIds) {
   if (!accountIds.length) throw new Error('Select at least one account.');
   if (tower.snapshot().running) throw new Error('Tower is already running.');
   const resume = await pauseTasksFor(accountIds, 'Tower', 'tw');
-  tower.runAndWait(accountIds).catch(() => {}).finally(resume);
+  towerDone = tower.runAndWait(accountIds).catch(() => {}).finally(resume);
   return tower.snapshot();
 }
 
@@ -199,7 +250,7 @@ async function startAutoBuy(options) {
   const resume = await pauseTasksFor(ids, 'Auto Buy', 'ab');
   try {
     const snap = await buy.startAuto(options);
-    buy.done.finally(resume);
+    autoBuyDone = buy.done.finally(resume);
     return snap;
   } catch (error) {
     await resume();
@@ -281,7 +332,7 @@ function initServices() {
     beforeRun: ({ account, signal }) => dailyRoutine.runIfDue(account, { signal }),
     beforeRunNextAt: accountId => dailyRoutine.nextDueAt(accountId)
   });
-  scheduler = new SchedulerService({ store, engine, activity, onChanged: emitState });
+  scheduler = new SchedulerService({ store, engine, activity, onChanged: emitState, pauseServices: (ids, name) => pauseServicesFor(ids, name) });
   scout = new ScoutService({ store, credentials, browserService, activity, cardsService: cards, accountProfile, onChanged: emitState });
   trading = new TradingHallService({ store, credentials, browserService, activity, onChanged: emitState });
   dailyRewards = new DailyRewardService({ store, credentials, browserService, activity, engine, onChanged: emitState });

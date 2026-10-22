@@ -24,7 +24,8 @@ function sleep(ms, signal) {
 // task until it completes, then start the stopped tasks again. Auto Play is
 // not scheduled; it is started and stopped by hand.
 class SchedulerService {
-  constructor({ store, engine, activity, onChanged }) {
+  constructor({ store, engine, activity, onChanged, pauseServices = null }) {
+    this.pauseServices = pauseServices; // (accountIds, taskName) → async resume()
     this.store = store;
     this.engine = engine;
     this.activity = activity;
@@ -137,7 +138,10 @@ class SchedulerService {
     const accounts = this.store.getAccounts().filter(a => schedule.accountIds.includes(a.id));
     const resume = [];
     let result = 'completed';
+    let resumeServices = null;
     try {
+      // Other services on these accounts (Auto Trade, Auto Buy, Tower, PVP) stop first.
+      if (this.pauseServices) resumeServices = await this.pauseServices(accounts.map(a => a.id), schedule.taskName).catch(() => null);
       for (const account of accounts) {
         const worker = this.engine.workers.get(account.id);
         const prepared = this.engine.prepared.get(account.id);
@@ -176,6 +180,7 @@ class SchedulerService {
       this.controllers.delete(schedule.id);
       this._update(schedule.id, { phase: 'restoring', message: resume.length ? `Starting ${resume.length} task(s) again…` : 'Finishing…' });
       await this._restore(schedule, resume);
+      if (resumeServices) await resumeServices().catch(() => {});
       this._update(schedule.id, { phase: 'done', completed: true, completedAt: new Date().toISOString(), result, message: signal.aborted ? 'Cancelled' : 'Completed' });
     }
   }

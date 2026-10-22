@@ -121,3 +121,16 @@ test('old Auto Play schedules are switched off and never run', async () => {
   assert.equal(schedule().enabled, false);
   assert.ok(logs.some(l => l.code === 'sc.autoplayDisabled'));
 });
+
+test('other services on the accounts stop before the task (and their Auto Play is caught) and start again after it', async () => {
+  const { scheduler, engine, steps, schedule } = setup({ workers: {} });
+  // Stopping Auto Buy gives back the Auto Play it had paused on account a.
+  scheduler.pauseServices = async ids => {
+    steps.push(`pauseServices:${ids.join(',')}`);
+    engine.workers.set('a', quickPlay());
+    return async () => { steps.push('resumeServices'); };
+  };
+  scheduler.registerBuiltin('tournament-register', async () => { steps.push('run'); });
+  await scheduler.runTaskSchedule(schedule());
+  assert.deepEqual(steps, ['pauseServices:a,b', 'stop:a', 'run', 'start:a:task1-quick-play:{"mode":"x"}:true', 'resumeServices']);
+});
