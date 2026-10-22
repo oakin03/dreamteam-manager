@@ -120,3 +120,27 @@ test('Auto Buy: buys only matching listings, follows account priority, parks at 
   assert.equal(data().bought.length, 2);
   assert.ok(logs.some(l => l.code === 'ab.start'));
 }, { timeout: 10000 });
+
+test('Auto Buy: an account that already owns the player passes it to the next one; if nobody can buy, warn once and keep scanning', async () => {
+  const game = fakeGame({
+    users: { 'u-a': { apk: 100, tix: 0, owned: ['p1', 'p2'] }, 'u-b': { apk: 100, tix: 0, owned: ['p2'] } },
+    listings: [L('t1', 'p1', 'Jay Huff', 20, 40), L('t2', 'p2', 'Ryan Dunn', 20, 40)]
+  });
+  const warned = [];
+  const { svc, logs, data } = service(game, [['a', 'Trophy3'], ['b', 'Trophy4']]);
+  svc.onAttention = (k, t) => warned.push([k, t]);
+  svc.addWatch([{ id: 'p1', name: 'Jay Huff' }, { id: 'p2', name: 'Ryan Dunn' }]);
+  for (const w of data().watch) svc.updateWatch(w.id, { maxPrice: 20, maxSalary: 50, currency: 'APK' });
+  await svc.startAuto({ accountIds: ['a', 'b'], intervalSec: 3 });
+  await new Promise(r => setTimeout(r, 3500)); // two scans
+  svc.stopAuto();
+  await svc.done;
+  assert.equal(game.st.listings.find(l => l.id === 't1').status, 'SOLD', 'Trophy3 owns Jay Huff → Trophy4 bought him');
+  assert.equal(game.st.users['u-b'].apk, 80);
+  assert.equal(game.st.listings.find(l => l.id === 't2').status, 'LISTED', 'both own Ryan Dunn');
+  const warns = logs.filter(l => l.code === 'ab.cannotBuy');
+  assert.equal(warns.length, 1, 'warned once, not every scan');
+  assert.equal(warns[0].params.reasonTr, 'kadroda var');
+  assert.deepEqual(warned.map(w => w[0]), ['buyCannot']);
+  assert.equal(svc.snapshot().auto.status, 'stopped', 'scanning went on until stopped');
+}, { timeout: 15000 });

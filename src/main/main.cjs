@@ -138,8 +138,8 @@ function autoTradeAttention(kind, text) {
     }
     if (Notification.isSupported()) {
       const tr = (store?.getSettings()?.language || 'tr') !== 'en';
-      const titles = { error: tr ? 'Auto Trade durdu' : 'Auto Trade stopped', listing: tr ? 'Auto Trade: pazara listeleme' : 'Auto Trade: market listing', draftTurn: tr ? 'Draft: sıra sende' : 'Draft: your turn', done: tr ? 'Auto Trade bitti' : 'Auto Trade finished', conflict: tr ? 'Auto Trade: hesaplar kullanımda' : 'Auto Trade: accounts in use', buyNoFunds: tr ? 'Auto Buy durdu' : 'Auto Buy stopped', buyError: tr ? 'Auto Buy durdu' : 'Auto Buy stopped' };
-      const bodies = { listing: tr ? `${text} kadrosu doldu · hangi oyuncuların listeleneceğini seç` : `${text}'s roster is full · choose players to list`, done: tr ? 'Tüm hesaplar tamamlandı' : 'All accounts are done', draftTurn: tr ? `${text} seçim yapacak · 30 saniye` : `${text} picks now · 30 seconds`, buyNoFunds: tr ? `Hesapların ${text} miktarı yetersiz` : `The accounts do not have enough ${text}` };
+      const titles = { error: tr ? 'Auto Trade durdu' : 'Auto Trade stopped', listing: tr ? 'Auto Trade: pazara listeleme' : 'Auto Trade: market listing', draftTurn: tr ? 'Draft: sıra sende' : 'Draft: your turn', done: tr ? 'Auto Trade bitti' : 'Auto Trade finished', conflict: tr ? 'Auto Trade: hesaplar kullanımda' : 'Auto Trade: accounts in use', buyNoFunds: tr ? 'Auto Buy durdu' : 'Auto Buy stopped', buyCannot: tr ? 'Auto Buy: oyuncu alınamadı' : 'Auto Buy: could not buy', buyError: tr ? 'Auto Buy durdu' : 'Auto Buy stopped' };
+      const bodies = { listing: tr ? `${text} kadrosu doldu · hangi oyuncuların listeleneceğini seç` : `${text}'s roster is full · choose players to list`, done: tr ? 'Tüm hesaplar tamamlandı' : 'All accounts are done', draftTurn: tr ? `${text} seçim yapacak · 30 saniye` : `${text} picks now · 30 seconds`, buyNoFunds: tr ? `Hesapların ${text} miktarı yetersiz` : `The accounts do not have enough ${text}`, buyCannot: tr ? `${text} · hiçbir hesap alamadı (kadroda var / bakiye yetersiz) · tarama sürüyor` : `${text} · no account could buy it (already owned / not enough funds) · still scanning` };
       const n = new Notification({ title: titles[kind] || 'Auto Trade', body: bodies[kind] || String(text || '') });
       n.on('click', () => { if (mainWindow && !mainWindow.isDestroyed()) { mainWindow.show(); mainWindow.focus(); } });
       n.show();
@@ -413,7 +413,7 @@ function registerIpc() {
   ipcMain.handle('market:scan', async (_event, accountIds) => market.scan(accountIds));
   ipcMain.handle('market:claim', async (_event, accountIds) => market.claim(accountIds));
   ipcMain.handle('market:load-relist', async (_event, accountIds) => market.loadRelist(accountIds));
-  ipcMain.handle('market:relist', async (_event, items) => market.relistPlayers(items));
+  ipcMain.handle('market:relist', async (_event, items, options) => market.relistPlayers(items, options || {}));
   ipcMain.handle('market:clear-relist', async () => { market.clearRelist(); return true; });
   ipcMain.handle('market:stop', async () => market.stop());
 

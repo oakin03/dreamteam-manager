@@ -12,6 +12,7 @@ const TEXT = {
     watch: 'İzleme listesi', watchHint: 'Bir oyuncu ancak Maaş ≤, Fiyat ≤ ve para birimi koşullarının hepsini sağlarsa alınır. Oyuncular sayfasından tek tek ya da toplu eklenebilir.',
     add: 'Oyuncu ekle…', player: 'Oyuncu', value: 'Değer', base: 'Base', maxSalary: 'Maaş ≤', maxPrice: 'Fiyat ≤', currency: 'Para birimi', active: 'Aktif', incomplete: 'Maaş ≤ ve Fiyat ≤ girilmeli', emptyWatch: 'Liste boş. Oyuncular sayfasından ya da yukarıdaki kutudan oyuncu ekle.', clearAll: 'Listeyi temizle', confirmClear: 'İzleme listesindeki tüm oyuncular silinsin mi?',
     accounts: 'Hesap önceliği', accountsHint: 'Alım 1. hesaptan başlar; parası bitince sıradakine geçilir. Oklarla sırala, kutuyla dahil et.', include: 'Dahil', apk: 'APK', tix: 'TIX',
+    cannotBuy: '{name} ({price} {cur}) hiçbir hesapla alınamadı · {why} · tarama sürüyor',
     warnRegister: 'Başlatınca seçili hesaplarda çalışan Auto Play durdurulur, Auto Buy bitince yeniden başlatılır. Hesap aynı anda tarayıcıda açıksa o oturum düşebilir.'
   },
   en: {
@@ -22,6 +23,7 @@ const TEXT = {
     watch: 'Watch list', watchHint: 'A player is bought only when Salary ≤, Price ≤ and the currency all hold. Add players one by one or in bulk from the Players page.',
     add: 'Add a player…', player: 'Player', value: 'Value', base: 'Base', maxSalary: 'Salary ≤', maxPrice: 'Price ≤', currency: 'Currency', active: 'Active', incomplete: 'Fill in Salary ≤ and Price ≤', emptyWatch: 'The list is empty. Add players from the Players page or the box above.', clearAll: 'Clear list', confirmClear: 'Remove every player from the watch list?',
     accounts: 'Account priority', accountsHint: 'Buying starts with account 1; when it runs out of funds the next one is used. Sort with the arrows, include with the box.', include: 'Use', apk: 'APK', tix: 'TIX',
+    cannotBuy: 'No account could buy {name} ({price} {cur}) · {why} · still scanning',
     warnRegister: 'On start, Auto Play running on the selected accounts is stopped and started again when Auto Buy ends. If an account is open in a browser at the same time, that session may be signed out.'
   }
 };
@@ -77,6 +79,7 @@ export default function AutoBuyPage({ state, t, toast }) {
       {auto.spent && <span className="muted-text">{fill(x.spent, { apk: num(auto.spent.APK), tix: num(auto.spent.TIX) })}</span>}
       {auto.status === 'noFunds' && <em className="ab-warn">{fill(x.noFunds, { cur: auto.message || 'APK' })}</em>}
       {auto.status === 'error' && <em className="ab-warn">{auto.message}</em>}
+      {auto.lastWarning && <em className="ab-warn" title={new Date(auto.lastWarning.at).toLocaleTimeString()}>⚠ {fill(x.cannotBuy, { name: auto.lastWarning.name, price: num(auto.lastWarning.price), cur: auto.lastWarning.currency, why: t.lang === 'tr' ? auto.lastWarning.reasonTr : auto.lastWarning.reasonEn })}</em>}
     </div>
 
     <div className="ab-grid">

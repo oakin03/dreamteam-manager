@@ -263,3 +263,13 @@ test("base as sellable: a team player signed under tomorrow's Base (5% discount)
   await finish(run2.engine);
   assert.deepEqual(run2.world.users.M.made, ['teamDisc']);
 });
+
+test("trade where main gives nothing: no empty selection is sent, so a late one cannot reset the side's acceptance", async () => {
+  const { world, engine } = setup({ M: { funds: 50000, lists: [[]] }, A: { funds: 90000, lists: [[player('card1', 500)]] } }, { accounts: ['M', 'A'], roles: { card1: 'card' } });
+  world.options.slowGuestSelectMs = 400;
+  await engine.start({ accountIds: ['M', 'A'], sideToMainRoleIds: ['card'], mainToSideRoleIds: ['sellable'], maxPrice: 100 });
+  const run = await finish(engine);
+  assert.equal(run.status, 'done', JSON.stringify(run.error));
+  assert.ok(world.users.M.made.includes('card1'));
+  assert.equal(world.calls.filter(c => c.event === 'selectTradePlayers' && c.user === 'M').length, 0);
+});

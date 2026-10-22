@@ -119,7 +119,8 @@ class MarketService {
   }
 
   // ---------- plumbing ----------
-  async _runJob(kind, accountIds, perAccount, { onDone } = {}) {
+  // `concurrency`: how many accounts work at the same time (the relist setting).
+  async _runJob(kind, accountIds, perAccount, { onDone, concurrency = null } = {}) {
     if (this.job) throw new Error('Another Market operation is running. Wait for it or press Stop.');
     const accounts = this.store.getAccounts().filter(a => accountIds.includes(a.id));
     if (!accounts.length) throw new Error('Select at least one account.');
@@ -129,7 +130,8 @@ class MarketService {
     const results = new Map();
     try {
       let next = 0;
-      await Promise.all(Array.from({ length: Math.min(this.concurrency, accounts.length) }, async () => {
+      const limit = Math.max(1, Math.floor(Number(concurrency)) || this.concurrency);
+      await Promise.all(Array.from({ length: Math.min(limit, accounts.length) }, async () => {
         while (next < accounts.length) {
           const account = accounts[next++];
           if (controller.signal.aborted) return;
@@ -303,7 +305,7 @@ class MarketService {
   }
 
   // items: [{ ticketId, price, currency: 'APK'|'TIX' }] from the loaded rows.
-  async relistPlayers(items = []) {
+  async relistPlayers(items = [], { concurrency = null } = {}) {
     const wanted = new Map();
     for (const item of items) {
       const row = this.relist.rows[item.ticketId];
@@ -342,6 +344,7 @@ class MarketService {
       if (!signal.aborted) await this._scanListings(account, conn, signal).catch(() => {});
       this.set(account.id, { status: 'done', step: 'relisted', stepParams: { done, total: list.length } });
     }, {
+      concurrency,
       onDone: async results => {
         for (const [accountId, result] of results) {
           if (!result?.error) continue;
@@ -413,7 +416,9 @@ class MarketService {
         this.log(null, 'info', 'No listings expired at the last 19:10 · nothing to relist.', 'mk.relistNothingRecent');
         return this.snapshot();
       }
-      return await this.relistPlayers(recent.map(row => ({ ticketId: row.ticketId, price: row.price, currency: row.currency })));
+      // Same "accounts at once" as the Market page (default: every account).
+      const parallel = Number(this.store.getSettings?.()?.marketRelistParallel) || this.store.getAccounts().length;
+      return await this.relistPlayers(recent.map(row => ({ ticketId: row.ticketId, price: row.price, currency: row.currency })), { concurrency: parallel });
     } finally {
       signal?.removeEventListener('abort', onAbort);
     }

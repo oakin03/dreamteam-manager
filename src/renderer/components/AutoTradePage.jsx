@@ -202,7 +202,7 @@ export default function AutoTradePage({ state, t, toast, msgText, Modal, refresh
       <ListingPanel run={run} x={x} defaults={at.listDefaults} toast={toast} playerIndex={playerIndex} />
     </>}
 
-    {pre && <Modal title={x.preTitle} onClose={() => setPre(null)} width={860}>
+    {pre && <Modal title={x.preTitle} onClose={() => setPre(null)} width={1040}>
       {pre.loading ? <p>{x.checking}</p> : <Preflight pre={pre} x={x} decisions={decisions} setDecisions={setDecisions} onCancel={() => setPre(null)} onStart={startNow} playerIndex={playerIndex} />}
     </Modal>}
     {run?.status === 'awaitingListing' && run.listingRequest && <ListingModal req={run.listingRequest} x={x} Modal={Modal} playerIndex={playerIndex} />}
@@ -249,7 +249,7 @@ function Preflight({ pre, x, decisions, setDecisions, onCancel, onStart, playerI
     {pre.conflicts.length > 0 && <div className="at2-conflicts"><b>{x.conflictsTitle}</b><ul>{pre.conflicts.map((c, i) => <li key={i}>{x.conflict[c.kind] || c.kind}{c.name ? ` · ${c.name}` : ''}{c.accounts ? ` · ${c.accounts.join(', ')}` : ''}{c.startAt ? ` · ${new Date(c.startAt).toLocaleString()}` : ''}</li>)}</ul></div>}
     {withBench.length ? <><b>{x.benchTitle}</b><small className="muted-text">{x.benchHint}</small>
       {withBench.map(a => <div key={a.id} className="at2-bench"><h5>{a.name} · {num(a.funds)} TK</h5>
-        <table><tbody>{a.bench.map(p => {
+        <table className="at2-bench-table"><colgroup><col className="c-name" /><col className="c-num" /><col className="c-num" /><col className="c-num" /><col className="c-role" /><col className="c-dir" /><col className="c-act" /></colgroup><tbody>{a.bench.map(p => {
           const d = decisions[a.id]?.[p.id] || { action: 'none' };
           return <tr key={p.id}><td><b>{p.name}</b> <span className="muted-text">{p.position} · {p.rating}</span>{isAtBase(moneyOf(p, playerIndex)) && <span className="base-badge">BASE</span>}</td><Money r={p} playerIndex={playerIndex} x={x} /><td>{p.roles.join(', ') || '—'}</td>
             <td>{p.block ? <span className="pill muted"><i />{x.blocked[p.block]}</span> : <span className={`muted-text ${p.dir ? '' : 'bad-text'}`}>{p.dir === 'main' ? x.fitsMain : p.dir === 'side' ? x.fitsSide : x.fitsNone}</span>}</td>

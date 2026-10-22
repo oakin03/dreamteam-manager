@@ -79,6 +79,8 @@ function createWorld(users) {
       }
       case 'selectTradePlayers': {
         const room = world.rooms.get(p.roomId);
+        // Like the live game under load: a guest selection may be processed late.
+        if (world.options.slowGuestSelectMs && s.userId !== room.hostId && !p.__late) { setTimeout(() => handle(s, event, { ...p, __late: true }, reply, push), world.options.slowGuestSelectMs); return; }
         if (s.userId === room.hostId) room.hostSel = p.selected; else room.guestSel = p.selected;
         room.hostAcc = room.guestAcc = false;
         broadcast(room, 'acceptTradeUpdate', { roomId: room.roomId, hostAccepted: false, guestAccepted: false });

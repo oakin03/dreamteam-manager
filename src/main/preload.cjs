@@ -65,7 +65,7 @@ contextBridge.exposeInMainWorld('dreamteam', {
     scan: (accountIds) => ipcRenderer.invoke('market:scan', accountIds),
     claim: (accountIds) => ipcRenderer.invoke('market:claim', accountIds),
     loadRelist: (accountIds) => ipcRenderer.invoke('market:load-relist', accountIds),
-    relist: (items) => ipcRenderer.invoke('market:relist', items),
+    relist: (items, options) => ipcRenderer.invoke('market:relist', items, options),
     clearRelist: () => ipcRenderer.invoke('market:clear-relist'),
     stop: () => ipcRenderer.invoke('market:stop')
   },

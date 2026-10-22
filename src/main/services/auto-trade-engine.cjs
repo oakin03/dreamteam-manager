@@ -20,6 +20,9 @@ const DEFAULTS = {
 const LIST_DEFAULTS = { sellable: { price: 20, currency: 'APK' }, stock: { price: 99999, currency: 'TIX' } };
 const MAX_TRADE_ROUNDS = 12;
 
+const ACCEPT_WAIT_MS = 7000;
+const ACCEPT_TRIES = 3;
+
 class UserFixError extends Error { constructor(message, code, params) { super(message); this.userFix = true; this.code = code; this.params = params || {}; } }
 
 class AutoTradeEngine {
@@ -698,17 +701,29 @@ class AutoTradeEngine {
       const sideSel = pick(room.hostPlayers, plan.sideGives);
       const mainSel = pick(room.guestPlayers, plan.mainGives);
       if ([...sideSel, ...mainSel].some(x => !x)) return { success: false, message: 'A selected player is not offered in the trade room.' };
-      const selected = main.expect('tradeSelectionUpdate', d => d?.roomId === roomId
-        && sameIds(d.hostSelectedPlayers, sideSel) && sameIds(d.guestSelectedPlayers, mainSel));
-      side.select(roomId, sideSel);
-      await sleep(250, signal);
-      main.select(roomId, mainSel);
-      if (sideSel.length || mainSel.length) await selected;
-      const both = main.expect('acceptTradeUpdate', d => d?.hostAccepted && d?.guestAccepted);
-      side.accept(roomId);
-      await sleep(250, signal);
-      main.accept(roomId);
-      await both;
+      // Every selection resets both acceptances. An empty selection is not sent (the
+      // room starts empty): sending main's empty list after the side had already
+      // matched let it reset the side's acceptance later, so "accepted by both" never
+      // came (Trophy7 / Trophy5, 2026-10-22). Each selection waits for its own update.
+      if (sideSel.length) {
+        const upd = main.expect('tradeSelectionUpdate', d => d?.roomId === roomId && sameIds(d.hostSelectedPlayers, sideSel));
+        side.select(roomId, sideSel);
+        await upd;
+      }
+      if (mainSel.length) {
+        const upd = main.expect('tradeSelectionUpdate', d => d?.roomId === roomId && sameIds(d.hostSelectedPlayers, sideSel) && sameIds(d.guestSelectedPlayers, mainSel));
+        main.select(roomId, mainSel);
+        await upd;
+      }
+      await sleep(300, signal);
+      // Accept from both sides; if the game did not register both, accept again.
+      for (let attempt = 1; ; attempt++) {
+        const both = main.expect('acceptTradeUpdate', d => d?.hostAccepted && d?.guestAccepted, ACCEPT_WAIT_MS);
+        side.accept(roomId);
+        await sleep(250, signal);
+        main.accept(roomId);
+        try { await both; break; } catch (error) { if (attempt >= ACCEPT_TRIES) throw error; }
+      }
       const resultP = main.expect('tradeResult', () => true);
       main.confirm(roomId, sideSel, mainSel);
       const result = await resultP;

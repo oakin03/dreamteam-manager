@@ -373,6 +373,9 @@ class BuyService {
           if (failedTickets.has(ticket.id)) continue;
           const price = Number(ticket.price);
           const tried = new Set();
+          const reasons = new Set();
+          let bought = false;
+          let gone = false;
           for (;;) {
             const accountId = pickAccount(order, balances, row.currency, price, tried);
             if (!accountId) break;
@@ -383,12 +386,28 @@ class BuyService {
             if (r.ok) {
               this.auto.bought += 1;
               this.auto.spent[row.currency] += price;
+              bought = true;
               break;
             }
             // Someone else was faster / the listing is gone: never retry this ticket.
-            if (/not found|no longer|already sold|not available|sold/i.test(r.message || '')) { failedTickets.add(ticket.id); break; }
-            // "already own this player", roster full, not enough funds: the next account may still buy it.
+            if (/not found|no longer|already sold|not available|sold/i.test(r.message || '')) { gone = true; break; }
+            // "already own this player", not enough funds, roster full: try the next account.
+            reasons.add(/already own/i.test(r.message || '') ? 'owned' : /insufficient|not enough|balance|fund/i.test(r.message || '') ? 'funds' : 'other');
           }
+          if (bought) continue;
+          failedTickets.add(ticket.id);
+          if (gone) continue;
+          // No account could buy it (they already own the player and/or cannot pay):
+          // warn right away, keep scanning for the other players. Once per listing.
+          if (!tried.size) reasons.add('funds');
+          const why = [...reasons].join('+');
+          const words = { owned: ['kadroda var', 'already owned'], funds: ['bakiye yetersiz', 'not enough funds'], other: ['diğer', 'other'] };
+          const reasonTr = [...reasons].map(r => words[r][0]).join(' + ');
+          const reasonEn = [...reasons].map(r => words[r][1]).join(' + ');
+          this.auto.lastWarning = { name: row.name, price, currency: row.currency, reason: why, reasonTr, reasonEn, at: new Date(this.now()).toISOString() };
+          this._log('error', 'ab.cannotBuy', { name: row.name, price, currency: row.currency, reason: why, reasonTr, reasonEn, tried: tried.size }, `No account could buy ${row.name} (${price} ${row.currency}) · ${why}`);
+          this.onAttention?.('buyCannot', `${row.name} · ${price} ${row.currency}`);
+          this.onChanged();
           if (!tried.size) break; // nobody can pay this or a pricier listing
         }
         this.auto.balances = { ...balances };
