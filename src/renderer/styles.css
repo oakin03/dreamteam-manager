@@ -401,4 +401,8 @@ html,body,#root{height:100%}body{overflow:hidden}
 /* Wide tables widen the page, so the horizontal scrollbar is the page's (always at the
    bottom of the window) instead of one hidden under a long table. Tables with their own
    height limit keep their inner scrolling. */
-.panel.table-panel:not(.trading-table):not(.listing-table){overflow:visible;width:max-content;min-width:100%}
+.page>.panel.table-panel:not(.trading-table):not(.listing-table):not(.cards-table):not(.player-list-table):not(.pl-table){overflow:visible;width:max-content;min-width:100%}
+/* Auto Buy: the watch list and the account priority stack below ~1500px so the
+   watch table keeps its full width; slimmer number inputs in that table. */
+@media(max-width:1500px){.ab-grid{grid-template-columns:1fr}.ab-accounts{max-width:640px}}
+.autobuy-page .price-input{width:92px}
