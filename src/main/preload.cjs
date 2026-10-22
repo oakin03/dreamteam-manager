@@ -23,6 +23,10 @@ contextBridge.exposeInMainWorld('dreamteam', {
     startAuto: (options) => ipcRenderer.invoke('buy:start-auto', options),
     stopAuto: () => ipcRenderer.invoke('buy:stop-auto')
   },
+  tower: {
+    start: (accountIds) => ipcRenderer.invoke('tower:start', accountIds),
+    stop: (accountIds) => ipcRenderer.invoke('tower:stop', accountIds)
+  },
   pvp: {
     start: (accountIds) => ipcRenderer.invoke('pvp:start', accountIds),
     stop: () => ipcRenderer.invoke('pvp:stop'),

@@ -25,6 +25,7 @@ const { TournamentService } = require('./services/tournament-service.cjs');
 const { DailyRoutineService } = require('./services/daily-routine-service.cjs');
 const { PvpService } = require('./services/pvp-service.cjs');
 const { BuyService } = require('./services/buy-service.cjs');
+const { TowerService } = require('./services/tower-service.cjs');
 const { EquipmentService } = require('./services/equipment-service.cjs');
 
 let mainWindow;
@@ -46,6 +47,7 @@ let players;
 let draft;
 let pvp;
 let buy;
+let tower;
 let lastBuyRevision = -1;
 let lastDraftRevision = -1;
 let lastPlayersKey = null;
@@ -91,6 +93,7 @@ function snapshot({ incremental = false } = {}) {
     tournament: tournament?.snapshot() || { runtime: { status: 'idle' }, accounts: {}, events: [] },
     dailyRoutine: dailyRoutine?.snapshot() || { selected: [], accounts: {} },
     pvp: pvp?.snapshot() || { running: false, run: null, lastReport: null },
+    tower: tower?.snapshot() || { running: false, run: null, lastReport: null },
     systemLocale,
     dataDir,
     taskDir: taskDir()
@@ -180,6 +183,14 @@ async function startPvpManual(accountIds) {
   const resume = await pauseTasksFor(accountIds, 'PVP', 'pvp');
   pvp.runAndWait(accountIds, { source: 'manual' }).catch(() => {}).finally(resume);
   return pvp.snapshot();
+}
+
+async function startTower(accountIds) {
+  if (!accountIds.length) throw new Error('Select at least one account.');
+  if (tower.snapshot().running) throw new Error('Tower is already running.');
+  const resume = await pauseTasksFor(accountIds, 'Tower', 'tw');
+  tower.runAndWait(accountIds).catch(() => {}).finally(resume);
+  return tower.snapshot();
 }
 
 async function startAutoBuy(options) {
@@ -277,6 +288,7 @@ function initServices() {
   autoTrade = new AutoTradeEngine({ store, credentials, activity, sessions: gameSessions, accountProfile, onChanged: emitState, onAttention: autoTradeAttention, onScout: (id, reply) => scout.showSocketScout?.(id, reply), onCycleEnd: () => cards.refresh() });
   market = new MarketService({ store, activity, accountProfile, sessions: gameSessions, onChanged: emitState });
   players = new PlayersService({ store, activity, onChanged: emitState });
+  tower = new TowerService({ store, activity, sessions: gameSessions, onChanged: emitState });
   buy = new BuyService({ store, activity, sessions: gameSessions, accountProfile, onChanged: emitState, onAttention: autoTradeAttention });
   pvp = new PvpService({ store, activity, sessions: gameSessions, onChanged: emitState });
   draft = new DraftService({ store, activity, sessions: gameSessions, accountProfile, onChanged: emitState, onAttention: autoTradeAttention });
@@ -509,6 +521,8 @@ function registerIpc() {
   ipcMain.handle('buy:set-config', async (_event, patch) => buy.setConfig(patch || {}));
   ipcMain.handle('buy:start-auto', async (_event, options) => startAutoBuy(options || {}));
   ipcMain.handle('buy:stop-auto', async () => buy.stopAuto());
+  ipcMain.handle('tower:start', async (_event, accountIds) => startTower(Array.isArray(accountIds) ? accountIds : []));
+  ipcMain.handle('tower:stop', async (_event, accountIds) => tower.stop(Array.isArray(accountIds) && accountIds.length ? accountIds : null));
   ipcMain.handle('pvp:stop', async () => { pvp.stop(); return pvp.snapshot(); });
   ipcMain.handle('pvp:status', async (_event, accountIds) => pvp.status(Array.isArray(accountIds) ? accountIds : store.getAccounts().map(a => a.id)));
   ipcMain.handle('pvp:start', async (_event, accountIds) => startPvpManual(Array.isArray(accountIds) ? accountIds : []));
@@ -543,6 +557,7 @@ app.on('before-quit', async (event) => {
       () => players?.stop(),
       () => draft?.shutdown(),
       () => pvp?.stop(),
+      () => tower?.stop(),
       () => buy?.shutdown(),
       () => tournament?.shutdown(),
       () => equipment?.shutdown(),

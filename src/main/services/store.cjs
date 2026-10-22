@@ -53,6 +53,7 @@ class AppStore {
       draftData: path.join(baseDir, 'draft.json'),
       pvpReport: path.join(baseDir, 'pvp-report.json'),
       buyData: path.join(baseDir, 'buy.json'),
+      towerReport: path.join(baseDir, 'tower-report.json'),
       playerMarketData: path.join(baseDir, 'player-market.json'),
       playerMarketAccount: path.join(
         baseDir,
@@ -160,6 +161,8 @@ class AppStore {
   getAutoTrade2() { return this._get('autoTrade2', null); }
   getPlayersData() { return this._get('playersData', null); }
   savePlayersData(v) { this._save('playersData', v); }
+  getTowerReport() { return this._get('towerReport', null); }
+  saveTowerReport(v) { this._save('towerReport', v); }
   getBuyData() { return this._get('buyData', null); }
   saveBuyData(v) { this._saveDeferred('buyData', v); }
   getPvpReport() { return this._get('pvpReport', null); }
