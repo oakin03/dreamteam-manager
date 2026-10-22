@@ -66,12 +66,26 @@ function readStadiumTelemetry() {
     }
   }
 
-  // Fallback for minor Stadium markup changes. Still only accept the explicit Lv label.
-  if (level == null) {
-    const bodyText = text(document.body);
-    const lv = bodyText.match(/\bLv\.?\s*(\d{1,3})\b/i);
-    const parsed = lv ? Number(lv[1]) : null;
-    if (Number.isInteger(parsed) && parsed >= 1 && parsed <= 100) level = parsed;
+  // The current Stadium header has no "Experience" label: the team name,
+  // "Lv.37", "88107 / 136551" and "65%" sit in separate elements whose
+  // parent text runs together ("Trophy2Lv.3788107 / 13655165%"), so read the
+  // exact elements instead of searching the joined text.
+  if (level == null || expCurrent == null) {
+    const lvNode = [...document.querySelectorAll('span,div')].find(n => /^Lv\.?\s*\d{1,3}$/i.test(text(n)));
+    const parsed = lvNode ? Number(text(lvNode).match(/(\d{1,3})$/)[1]) : null;
+    if (level == null && Number.isInteger(parsed) && parsed >= 1 && parsed <= 100) level = parsed;
+    let root = lvNode?.parentElement;
+    for (let i = 0; root && i < 4 && expCurrent == null; i++, root = root.parentElement) {
+      const parts = [...root.querySelectorAll('span,div')].map(text);
+      const xp = parts.find(v => /^\d[\d.,]*\s*\/\s*\d[\d.,]*$/.test(v));
+      if (xp) {
+        const [cur, max] = xp.split('/');
+        expCurrent = numberFrom(cur);
+        expMax = numberFrom(max);
+        const pct = parts.find(v => /^\d{1,3}\s*%$/.test(v));
+        if (pct) expPercent = Number(pct.replace('%', ''));
+      }
+    }
   }
 
   let teamName = null;
@@ -116,10 +130,64 @@ function readStadiumTelemetry() {
   };
 }
 
+// The game page receives `userBasicInfo` on its main socket right before it
+// renders the Stadium numbers (autoPKTickets = APK, ticket = TIX).
+function parseUserBasicInfo(payload) {
+  if (typeof payload !== 'string' || !payload.startsWith('42["userBasicInfo"')) return null;
+  try {
+    const data = JSON.parse(payload.slice(2))[1];
+    const apk = Number(data?.autoPKTickets);
+    const tix = Number(data?.ticket);
+    const level = Number(data?.level);
+    if (!data?.success || !Number.isFinite(apk)) return null;
+    const expCurrent = Number(data?.experience);
+    const expMax = Number(data?.nextLvl);
+    return {
+      apk, tix: Number.isFinite(tix) ? tix : null,
+      level: Number.isInteger(level) && level >= 1 && level <= 100 ? level : null,
+      // Stadium shows "experience / nextLvl" and the percentage of the two.
+      expCurrent: Number.isFinite(expCurrent) ? expCurrent : null,
+      expMax: Number.isFinite(expMax) && expMax > 0 ? expMax : null
+    };
+  } catch {
+    return null;
+  }
+}
+
+// Non-main accounts below 20 cannot be used, 20-49 count fully and larger
+// balances lose the 3% transfer fee. Applies to APK and TIX alike.
+function usableAmount(value, isMain) {
+  const amount = Math.max(0, Number(value || 0));
+  if (isMain) return amount;
+  if (amount < 20) return 0;
+  if (amount < 50) return amount;
+  return amount * 0.97;
+}
+
+// Returning to Stadium renders the Auto PK label before its number, so the
+// widget briefly reads as zero. A DOM value is stored only once it matches a
+// userBasicInfo the page received during this capture, or stays unchanged
+// for stableMs (and agrees with the last known userBasicInfo, if any).
+const BASIC_INFO_FRESH_MS = 3000;
+const UNVERIFIED_LOG_INTERVAL_MS = 60000;
+
 class AccountProfileService {
-  constructor({ store, onChanged }) {
+  constructor({ store, onChanged, activity = null }) {
     this.store = store;
     this.onChanged = onChanged;
+    this.activity = activity;
+    this.basicInfoFor = null;
+    this.unverifiedLoggedAt = new Map();
+  }
+
+  _log(accountId, level, message, code = null, params = null) {
+    if (!this.activity) return;
+    const account = this.store.getAccounts().find(a => a.id === accountId);
+    this.activity.add({ level, accountId, accountName: account?.name || '', taskName: 'Stadium', message, code, params });
+  }
+
+  setBasicInfoSource(fn) {
+    this.basicInfoFor = typeof fn === 'function' ? fn : null;
   }
 
   _state() {
@@ -145,20 +213,24 @@ class AccountProfileService {
     const validIds = new Set(accounts.map(a => a.id));
     const mainAccountId = validIds.has(state.mainAccountId) ? state.mainAccountId : null;
     let totalUsableApk = mainAccountId ? 0 : null;
+    let totalUsableTix = mainAccountId ? 0 : null;
     const effectiveApk = {};
+    const effectiveTix = {};
 
     for (const account of accounts) {
-      const apk = Math.max(0, Number(state.accounts?.[account.id]?.apk || 0));
-      let effective = 0;
-      if (account.id === mainAccountId) effective = apk;
-      else if (apk < 20) effective = 0;
-      else if (apk < 50) effective = apk;
-      else effective = apk * 0.97;
-      effectiveApk[account.id] = effective;
-      if (totalUsableApk != null) totalUsableApk += effective;
+      const stats = state.accounts?.[account.id];
+      const isMain = account.id === mainAccountId;
+      effectiveApk[account.id] = usableAmount(stats?.apk, isMain);
+      effectiveTix[account.id] = usableAmount(stats?.tix, isMain);
+      if (totalUsableApk != null) totalUsableApk += effectiveApk[account.id];
+      if (totalUsableTix != null) totalUsableTix += effectiveTix[account.id];
     }
 
-    return { ...state, mainAccountId, effectiveApk, totalUsableApk: totalUsableApk == null ? null : Math.floor(totalUsableApk) };
+    return {
+      ...state, mainAccountId, effectiveApk, effectiveTix,
+      totalUsableApk: totalUsableApk == null ? null : Math.floor(totalUsableApk),
+      totalUsableTix: totalUsableTix == null ? null : Math.floor(totalUsableTix)
+    };
   }
 
   setMainAccount(accountId) {
@@ -204,21 +276,64 @@ class AccountProfileService {
     return state.accounts[accountId];
   }
 
-  async captureStadium(accountId, page, { apkTimeoutMs = 3000 } = {}) {
+  // Returns the stored stats, or null when no trustworthy value was seen in
+  // time; the stored APK/TIX are then left untouched.
+  async captureStadium(accountId, page, { timeoutMs = 8000, stableMs = 3000 } = {}) {
     if (!accountId || !page) return null;
-    let data = null;
-    const deadline = Date.now() + apkTimeoutMs;
-    for (let attempt = 0; ; attempt++) {
-      data = await page.evaluate(readStadiumTelemetry).catch(() => null);
-      if (data?.apk != null) break;
-      if (!data?.stadiumReady && attempt >= 3) break;
-      if (Date.now() >= deadline) break;
+    const startedAt = Date.now();
+    const deadline = startedAt + timeoutMs;
+    let stableKey = null;
+    let stableFrom = 0;
+    let lastSeen = null;
+    for (;;) {
+      const data = await page.evaluate(readStadiumTelemetry).catch(() => null);
+      // No Auto PK label means this may still be loading or a different page.
+      if (data?.stadiumReady && data.apk != null) {
+        lastSeen = data;
+        const key = `${data.apk}|${data.tix}`;
+        if (key !== stableKey) { stableKey = key; stableFrom = Date.now(); }
+        const info = this.basicInfoFor?.(page) || null;
+        const matches = Boolean(info) && data.apk === info.apk && (info.tix == null || data.tix === info.tix);
+        const fresh = Boolean(info) && info.at >= startedAt - BASIC_INFO_FRESH_MS;
+        const stable = Date.now() - stableFrom >= stableMs;
+        if ((fresh && matches) || (stable && (!info || matches))) {
+          const { stadiumReady, ...profile } = data;
+          // The Stadium "Lv" text no longer reads; the game's own message has it.
+          if (profile.level == null && info?.level != null) profile.level = info.level;
+          if (profile.expCurrent == null && info?.expCurrent != null && info.expMax) {
+            profile.expCurrent = info.expCurrent;
+            profile.expMax = info.expMax;
+            profile.expPercent = Math.floor((info.expCurrent / info.expMax) * 100);
+          }
+          const before = this._state().accounts[accountId] || {};
+          const saved = this.merge(accountId, profile);
+          this._logBalanceChange(accountId, before, saved, fresh && matches ? 'confirmed by the game' : 'stable on screen');
+          return saved;
+        }
+      }
+      if (Date.now() >= deadline) {
+        this._logUnverified(accountId, lastSeen);
+        return null;
+      }
       await new Promise(resolve => setTimeout(resolve, 250));
     }
-    if (!data) return null;
-    const { stadiumReady, ...profile } = data;
-    // No Auto PK label means this may still be loading or a different page.
-    return this.merge(accountId, profile);
+  }
+
+  _logBalanceChange(accountId, before, after, how) {
+    if (!after) return;
+    const changes = [['APK', 'apk'], ['TIX', 'tix'], ['TK', 'tk'], ['LV', 'level']]
+      .filter(([, key]) => after[key] != null && !Object.is(before[key], after[key]))
+      .map(([label, key]) => `${label} ${before[key] ?? '—'} → ${after[key]}`);
+    if (changes.length) this._log(accountId, 'info', `Stadium balance updated (${how}) · ${changes.join(' · ')}.`, 'st.updated', { changes: changes.join(' · ') });
+  }
+
+  _logUnverified(accountId, seen) {
+    const now = Date.now();
+    if (now - (this.unverifiedLoggedAt.get(accountId) || 0) < UNVERIFIED_LOG_INTERVAL_MS) return;
+    this.unverifiedLoggedAt.set(accountId, now);
+    const stored = this._state().accounts[accountId] || {};
+    const shown = seen ? `screen showed APK ${seen.apk} · TIX ${seen.tix ?? '—'}` : 'Stadium numbers were not visible';
+    this._log(accountId, 'warning', `Stadium APK/TIX could not be confirmed (${shown}) · kept APK ${stored.apk ?? '—'} · TIX ${stored.tix ?? '—'}.`, 'st.unverified', { apk: stored.apk ?? '—', tix: stored.tix ?? '—' });
   }
 
   updateFromScout(accountId, scoutData) {
@@ -232,4 +347,4 @@ class AccountProfileService {
   }
 }
 
-module.exports = { AccountProfileService, readStadiumTelemetry, normalizeNumber, normalizeLevel };
+module.exports = { AccountProfileService, readStadiumTelemetry, parseUserBasicInfo, usableAmount, normalizeNumber, normalizeLevel };

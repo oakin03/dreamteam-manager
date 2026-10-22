@@ -6,18 +6,19 @@ const ROLE_OPTIONS = [
   { id: 'card', label: 'Kart' }
 ];
 
-const SORT_OPTIONS = [
-  ['name', 'Oyuncu adı'],
+const sortOptions = t => [
+  ['name', t.pmSortName],
   ['price-asc', 'Price ↑'],
   ['price-desc', 'Price ↓'],
-  ['base-gap-lowest', 'Base’e en yakın'],
-  ['base-gap-highest', 'Base’den en uzak'],
-  ['change-up', 'En çok yükselen'],
-  ['change-down', 'En çok düşen'],
-  ['change-largest', 'En büyük değişim']
+  ['base-gap-lowest', t.pmSortBaseNear],
+  ['base-gap-highest', t.pmSortBaseFar],
+  ['change-up', t.pmSortUp],
+  ['change-down', t.pmSortDown],
+  ['change-largest', t.pmSortLargest]
 ];
 
 export default function PlayerMarketPanel({
+  t = {},
   players = [],
   roles = ROLE_OPTIONS,
   scanning = false,
@@ -170,7 +171,7 @@ export default function PlayerMarketPanel({
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-lg font-bold">
-            Oyuncu Listesi
+            {t.pmList}
           </h2>
 
           <div className="text-xs text-slate-500">
@@ -179,7 +180,7 @@ export default function PlayerMarketPanel({
         </div>
       <div className="rounded-xl border p-4 space-y-3">
         <h2 className="font-bold">
-          Player Market Hesabı
+          {t.pmAccount}
         </h2>
 
         <div className="grid grid-cols-3 gap-2">
@@ -188,7 +189,7 @@ export default function PlayerMarketPanel({
             onChange={e =>
               setAccountName(e.target.value)
             }
-            placeholder="Hesap adı"
+            placeholder={t.pmAccountName}
             className="px-3 py-2 rounded-lg"
           />
 
@@ -197,7 +198,7 @@ export default function PlayerMarketPanel({
             onChange={e =>
               setAccountLogin(e.target.value)
             }
-            placeholder="Kullanıcı adı"
+            placeholder={t.pmLogin}
             className="px-3 py-2 rounded-lg"
           />
 
@@ -209,8 +210,8 @@ export default function PlayerMarketPanel({
             }
             placeholder={
               account
-                ? 'Şifreyi değiştirmek için gir'
-                : 'Şifre'
+                ? t.pmPasswordChange
+                : t.pmPassword
             }
             className="px-3 py-2 rounded-lg"
           />
@@ -227,7 +228,7 @@ export default function PlayerMarketPanel({
           }
           className="px-4 py-2 rounded-lg"
         >
-          Hesabı Kaydet
+          {t.pmSaveAccount}
         </button>
       </div>
         <div className="flex gap-2">
@@ -237,7 +238,7 @@ export default function PlayerMarketPanel({
               onClick={onScan}
               className="px-4 py-2 rounded-lg"
             >
-              Taramayı Başlat
+              {t.pmStartScan}
             </button>
           ) : (
             <button
@@ -245,7 +246,7 @@ export default function PlayerMarketPanel({
               onClick={onStop}
               className="px-4 py-2 rounded-lg"
             >
-              Durdur
+              {t.stop}
             </button>
           )}
         </div>
@@ -255,12 +256,12 @@ export default function PlayerMarketPanel({
         <div className="rounded-lg border p-3 text-sm">
           <div>
             {scanRuntime?.message ||
-              'Oyuncular taranıyor…'}
+              t.pmScanning}
           </div>
 
           {scanRuntime?.totalPages && (
             <div className="text-xs mt-1">
-              Sayfa: {scanRuntime.currentPage || 0}
+              {t.pmPage}: {scanRuntime.currentPage || 0}
               {' / '}
               {scanRuntime.totalPages}
             </div>
@@ -268,7 +269,7 @@ export default function PlayerMarketPanel({
 
           {scanRuntime?.currentPlayer && (
             <div className="text-xs mt-1">
-              Oyuncu: {scanRuntime.currentPlayer}
+              {t.pmPlayer}: {scanRuntime.currentPlayer}
             </div>
           )}
         </div>
@@ -278,7 +279,7 @@ export default function PlayerMarketPanel({
         <input
           value={name}
           onChange={e => setName(e.target.value)}
-          placeholder="Oyuncu ara..."
+          placeholder={t.pmSearch}
           className="px-3 py-2 rounded-lg"
         />
 
@@ -287,7 +288,7 @@ export default function PlayerMarketPanel({
           onChange={e => setRole(e.target.value)}
           className="px-3 py-2 rounded-lg"
         >
-          <option value="all">Tüm roller</option>
+          <option value="all">{t.pmAllRoles}</option>
 
           {roles.map(item => (
             <option
@@ -304,7 +305,7 @@ export default function PlayerMarketPanel({
           onChange={e => setPosition(e.target.value)}
           className="px-3 py-2 rounded-lg"
         >
-          <option value="all">Tüm pozisyonlar</option>
+          <option value="all">{t.pmAllPositions}</option>
           <option value="PG">PG</option>
           <option value="SG">SG</option>
           <option value="SF">SF</option>
@@ -321,7 +322,7 @@ export default function PlayerMarketPanel({
           onChange={e => setRating(e.target.value)}
           className="px-3 py-2 rounded-lg"
         >
-          <option value="all">Tüm ratingler</option>
+          <option value="all">{t.pmAllRatings}</option>
           <option value="S+">S+</option>
           <option value="S">S</option>
           <option value="A+">A+</option>
@@ -345,7 +346,7 @@ export default function PlayerMarketPanel({
           type="number"
           min="0"
           step="0.1"
-          placeholder="Base'e % kaç yakın?"
+          placeholder={t.pmNearBase}
           className="px-3 py-2 rounded-lg"
         />
 
@@ -354,7 +355,7 @@ export default function PlayerMarketPanel({
           onChange={e => setSort(e.target.value)}
           className="px-3 py-2 rounded-lg"
         >
-          {SORT_OPTIONS.map(([value, label]) => (
+          {sortOptions(t).map(([value, label]) => (
             <option
               key={value}
               value={value}
@@ -369,14 +370,14 @@ export default function PlayerMarketPanel({
         <table className="w-full text-sm">
           <thead>
             <tr>
-              <th>Oyuncu</th>
+              <th>{t.pmColPlayer}</th>
               <th>Position</th>
               <th>Rating</th>
               <th>Price</th>
               <th>Base</th>
-              <th>Fark</th>
-              <th>Değişim</th>
-              <th>Rol</th>
+              <th>{t.pmColDiff}</th>
+              <th>{t.pmColChange}</th>
+              <th>{t.pmColRole}</th>
             </tr>
           </thead>
 
@@ -447,7 +448,7 @@ export default function PlayerMarketPanel({
                     }
                   >
                     <option value="">
-                      Rol yok
+                      {t.pmNoRole}
                     </option>
 
                     {roles.map(item => (

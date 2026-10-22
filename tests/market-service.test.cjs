@@ -1,325 +1,237 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const { MarketService, readMarketView, clickMarketPager } = require('../src/main/services/market-service.cjs');
+const { EventEmitter } = require('node:events');
+const { MarketService, listingRow } = require('../src/main/services/market-service.cjs');
 
-function service() {
-  const account = { id: 'a', name: 'Main', login: 'login', passwordEncrypted: 'secret' };
-  const events = [];
-  const merged = [];
-  const browser = {
-    featureNames: () => [], lockFeature: () => {}, unlockFeature: () => {},
-    release: async () => {}, authenticate: async () => ({ owner: 'market:a', session: { page: {} } })
+const USER = 'u1';
+function ticket(id, status, { price = 20, mode = 'APK_TICKET', playerId = `p-${id}`, name = `Player ${id}` } = {}) {
+  return { id, playerId, price, paymentMode: mode, signedSalary: 48, status, createdAt: '2026-10-01T00:00:00Z',
+    player: { id: playerId, name, visualName: name, rating: 'd-', position: 'SG', baseSalary: 50, newBaseSalary: 48 } };
+}
+
+// Fake /socket/ game server for one user. `opts` shape the replies.
+function fakeGame(tickets, opts = {}) {
+  const calls = [];
+  const state = { tickets: [...tickets], roster: new Set(opts.roster || []), cooldownOnce: new Set(opts.cooldownOnce || []), dropAuthOnce: new Set(opts.dropAuthOnce || []), registers: 0 };
+  const WRITES = new Set(['market:settleTicket', 'market:cancelPlayerListing', 'market:sellPlayer']);
+  const createSocket = () => {
+    const s = new EventEmitter();
+    s.close = () => { s.closed = true; };
+    s.off = s.removeListener;
+    const emit = EventEmitter.prototype.emit.bind(s);
+    const reply = (event, data) => setTimeout(() => !s.closed && emit(event, data), 1);
+    s.registered = false;
+    s.emit = (event, payload) => {
+      calls.push({ event, payload });
+      // Like the game: writes only work on a socket registered as the user.
+      if (event === 'register') { s.registered = payload?.userId === USER; state.registers++; return reply('registrationSuccess'); }
+      if (WRITES.has(event) && state.dropAuthOnce.has(event)) { state.dropAuthOnce.delete(event); s.registered = false; }
+      if (WRITES.has(event) && !s.registered) return reply(replyName(event), { success: false, type: 'player', message: 'Authentication required' });
+      if (state.cooldownOnce.has(event)) { state.cooldownOnce.delete(event); return reply(replyName(event), { success: false, message: 'Please wait 1 seconds before trying again.', retryAfter: 1 }); }
+      if (event === 'market:getMyPlayerListings') {
+        const start = (payload.page - 1) * 8;
+        return reply('market:myPlayerListingsData', { tickets: state.tickets.slice(start, start + 8), total: state.tickets.length });
+      }
+      if (event === 'market:settleTicket') {
+        const t = state.tickets.find(x => x.id === payload.ticketId);
+        state.tickets = state.tickets.filter(x => x !== t);
+        return reply('market:settleResult', { success: true, type: 'PLAYER', paymentMode: t.paymentMode, payout: Math.floor(t.price * 0.85), fee: t.price - Math.floor(t.price * 0.85) });
+      }
+      if (event === 'market:cancelPlayerListing') {
+        const t = state.tickets.find(x => x.id === payload.ticketId);
+        if (state.roster.has(t.playerId)) return reply('cancelResult', { success: false, type: 'player', message: 'You already own this player.' });
+        state.tickets = state.tickets.filter(x => x !== t);
+        state.roster.add(t.playerId);
+        return reply('cancelResult', { success: true, type: 'player', playerId: t.playerId });
+      }
+      if (event === 'market:sellPlayer') {
+        if (opts.sellFails?.includes(payload.playerId)) return reply('market:sellResult', { success: false, message: 'Salary cap exceeded' });
+        state.roster.delete(payload.playerId);
+        state.tickets.unshift(ticket(`new-${payload.playerId}`, 'LISTED', { price: payload.price, mode: payload.paymentMode, playerId: payload.playerId }));
+        return reply('market:sellResult', { type: 'player', success: true, playerId: payload.playerId, promoted: null });
+      }
+      if (event === 'getUserBasicInfo') return reply('userBasicInfo', { success: true, autoPKTickets: 120, ticket: 7, funds: 5000, level: 39 });
+      return true;
+    };
+    setTimeout(() => emit('connect'), 1);
+    return s;
   };
+  return { createSocket, calls, state };
+}
+const replyName = event => ({ 'market:settleTicket': 'market:settleResult', 'market:cancelPlayerListing': 'cancelResult', 'market:sellPlayer': 'market:sellResult' })[event];
+
+function service(game) {
+  const logs = [];
+  const merges = [];
+  const account = { id: 'a1', name: 'Trophy' };
   const s = new MarketService({
-    store: { getAccounts: () => [account] }, credentials: { decryptSecret: () => 'password' },
-    browserService: browser, accountProfile: { merge: (id, data) => merged.push([id, data]) },
-    activity: { add: entry => events.push(entry) }, onChanged: () => {}
+    store: { getAccounts: () => [account] }, activity: { add: e => logs.push(e) },
+    accountProfile: { merge: (id, d) => merges.push([id, d]) }, onChanged: () => {},
+    sessions: { get: async () => ({ userId: USER, cookieHeader: 'session=x' }) },
+    createSocket: game.createSocket, minRetryMs: 0
   });
-  return { s, browser, merged, events, account };
+  return { s, logs, merges };
 }
 
-function element(tagName, textContent, attrs = {}) {
-  return { tagName, textContent, children: [], getAttribute: name => attrs[name] ?? null,
-    hasAttribute: name => Object.hasOwn(attrs, name) };
-}
-
-function mockCard({ name, fullName, salary, status, price, currency }) {
-  const labels = ['Salary', 'Status'].map((label, i) => {
-    const value = i ? status : String(salary);
-    const item = element('DIV', label);
-    const sibling = element('DIV', value);
-    item.parentElement = { children: [item, sibling] };
-    return item;
+test('listingRow maps a My Listings ticket', () => {
+  assert.deepEqual(listingRow(ticket('t1', 'EXPIRED', { price: 66, mode: 'TICKET' }), 'a1'), {
+    ticketId: 't1', playerId: 'p-t1', accountId: 'a1', name: 'Player t1', grade: 'D-', position: 'SG',
+    salary: 48, base: 48, basePct: 0, price: 66, currency: 'TIX', status: 'EXPIRED', createdAt: '2026-10-01T00:00:00Z'
   });
-  const image = element('IMG', '', { alt: fullName, src: '/_next/image?url=%2Fplayers%2Fplayer.webp' });
-  const priceMarker = element(currency === 'TIX' ? 'IMG' : 'SPAN', currency === 'TIX' ? '' : '🎮', { alt: currency === 'TIX' ? 'ticket' : '' });
-  const priceValue = element('SPAN', String(price));
-  priceMarker.parentElement = { querySelectorAll: () => [priceMarker, priceValue] };
-  return {
-    querySelectorAll: selector => selector === 'div' ? labels : selector === 'img' ? [image] : selector === 'span' ? [priceMarker, priceValue] : [],
-    querySelector: selector => selector === 'h3' ? element('H3', name) : selector === 'img[alt="ticket"]' && currency === 'TIX' ? priceMarker : null
-  };
-}
-
-test('My Listings parser keeps SOLD, LISTED, and EXPIRED separate with the correct salary and currency', () => {
-  const cards = [
-    mockCard({ name: 'J. Harden', fullName: 'James Harden', salary: 1870, status: 'SOLD', price: 20, currency: 'APK' }),
-    mockCard({ name: 'C. Cunningham', fullName: 'Cade Cunningham', salary: 1930, status: 'LISTED', price: 20, currency: 'APK' }),
-    mockCard({ name: 'L. Shamet', fullName: 'Landry Shamet', salary: 50, status: 'EXPIRED', price: 200, currency: 'TIX' })
-  ];
-  const buttons = ['«', '‹', '›', '»'].map(label => element('BUTTON', label));
-  const counter = element('SPAN', '2/5');
-  const pager = { children: [buttons[0], buttons[1], counter, buttons[2], buttons[3]] };
-  for (const button of buttons) button.parentElement = pager;
-  const original = global.document;
-  global.document = {
-    body: element('BODY', 'My Listings Salary Status'),
-    querySelectorAll: selector => selector === 'button' ? buttons : selector === 'h1,h2,h3' ? [element('H2','My Listings')] :
-      selector === 'div[class*="group/card"]' ? cards : []
-  };
-  try {
-    const parsed = readMarketView();
-    assert.deepEqual(parsed.pagination, { current: 2, total: 5 });
-    assert.equal(parsed.invalid, false);
-    assert.deepEqual(parsed.rows.map(row => [row.fullName, row.status, row.salary, row.price, row.currency]), [
-      ['James Harden', 'SOLD', 1870, 20, 'APK'],
-      ['Cade Cunningham', 'LISTED', 1930, 20, 'APK'],
-      ['Landry Shamet', 'EXPIRED', 50, 200, 'TIX']
-    ]);
-  } finally { global.document = original; }
 });
 
-test('A short 1/1 My Listings page uses its own pager rather than the Trading Hall pager behind it', async () => {
-  const { s } = service();
-  const cards = [
-    mockCard({ name: 'A', fullName: 'Player A', salary: 100, status: 'LISTED', price: 10, currency: 'APK' }),
-    mockCard({ name: 'B', fullName: 'Player B', salary: 200, status: 'SOLD', price: 20, currency: 'APK' }),
-    mockCard({ name: 'C', fullName: 'Player C', salary: 300, status: 'EXPIRED', price: 30, currency: 'APK' })
-  ];
-  const listingButtons = ['«', '‹', '›', '»'].map(label => element('BUTTON', label, { disabled: '' }));
-  const listingCounter = element('SPAN', '1/1');
-  const listingPager = { children: [listingButtons[0], listingButtons[1], listingCounter,
-    listingButtons[2], listingButtons[3]], className: 'flex items-center gap-1' };
-  for (const button of listingButtons) button.parentElement = listingPager;
-  listingCounter.parentElement = listingPager;
-  const hallButton = element('BUTTON', '«');
-  hallButton.parentElement = { children: [hallButton, element('SPAN', '1/20')] };
-  const heading = element('H3', 'My Listings');
-  const badges = ['Listed: 1', 'Sold: 1', 'Expired: 1'].map(value => element('SPAN', value));
-  const listingRoot = {
-    textContent: 'My Listings',
-    querySelectorAll: selector => selector === 'button' ? listingButtons :
-      selector === 'span' ? [...badges, listingCounter] :
-      selector === 'div[class*="group/card"]' ? cards : []
-  };
-  heading.closest = selector => selector === 'div.absolute.inset-0' ? listingRoot : null;
-  const original = global.document;
-  global.document = {
-    body: element('BODY', 'Trading Hall'),
-    querySelectorAll: selector => selector === 'h1,h2,h3' ? [heading] :
-      selector === 'button' ? [hallButton, ...listingButtons] : []
-  };
-  try {
-    const parsed = readMarketView();
-    assert.deepEqual(parsed.pagination, { current: 1, total: 1 });
-    assert.equal(parsed.headerCount, 3);
-    assert.equal(parsed.cardCount, 3);
-    assert.equal(clickMarketPager('›'), false);
-    s._view = async () => readMarketView();
-    s._clickPager = async () => { throw Error('Single-page listings must not turn a pager'); };
-    const rows = await s._scanPages({}, 'a', new AbortController().signal);
-    assert.equal(rows.length, 3);
-    assert.equal(s.snapshot().a.totalPages, 1);
-  } finally { global.document = original; }
+test('scan reads every page and counts listed / sold / expired', async () => {
+  const tickets = [...Array.from({ length: 10 }, (_, i) => ticket(`l${i}`, 'LISTED')), ticket('s1', 'SOLD'), ...Array.from({ length: 6 }, (_, i) => ticket(`e${i}`, 'EXPIRED'))];
+  const game = fakeGame(tickets);
+  const { s, logs } = service(game);
+  const snap = await s.scan(['a1']);
+  assert.deepEqual(snap.accounts.a1.counts, { listed: 10, sold: 1, expired: 6, total: 17 });
+  assert.deepEqual(game.calls.filter(c => c.event === 'market:getMyPlayerListings').map(c => c.payload.page), [1, 2, 3]);
+  assert.ok(game.calls.every(c => !c.payload || c.payload.userId === undefined || c.payload.userId === USER));
+  assert.equal(snap.accounts.a1.sold[0].ticketId, 's1');
+  assert.equal(snap.busy, false);
+  assert.ok(logs.some(l => l.code === 'mk.scanned'));
 });
 
-test('A 1/1 counter remains readable when the game omits disabled navigation buttons', async () => {
-  const { s } = service();
-  const counter = element('SPAN', '1/1');
-  counter.parentElement = { className: 'flex items-center gap-1' };
-  const heading = element('H3', 'My Listings');
-  const cards = [mockCard({ name: 'A', fullName: 'Player A', salary: 100,
-    status: 'SOLD', price: 10, currency: 'APK' })];
-  const root = { textContent: 'My Listings', querySelectorAll: selector =>
-    selector === 'span' ? [counter] : selector === 'div[class*="group/card"]' ? cards : [] };
-  heading.closest = selector => selector === 'div.absolute.inset-0' ? root : null;
-  const original = global.document;
-  global.document = { body: element('BODY', ''),
-    querySelectorAll: selector => selector === 'h1,h2,h3' ? [heading] : [] };
-  try {
-    s._view = async () => readMarketView();
-    const view = await s._waitPage({}, 1, new AbortController().signal, null, 1500);
-    assert.deepEqual(view.pagination, { current: 1, total: 1 });
-    assert.equal(view.cardCount, 1);
-  } finally { global.document = original; }
+test('claim settles every sold listing, reads the balance from the game and rescans', async () => {
+  const game = fakeGame([ticket('s1', 'SOLD', { price: 20 }), ticket('s2', 'SOLD', { price: 100, mode: 'TICKET' }), ticket('l1', 'LISTED')]);
+  const { s, logs, merges } = service(game);
+  const snap = await s.claim(['a1']);
+  assert.deepEqual(game.calls.filter(c => c.event === 'market:settleTicket').map(c => c.payload.ticketId), ['s1', 's2']);
+  const last = snap.accounts.a1.lastClaim;
+  assert.equal(last.claimed, 2);
+  assert.deepEqual(last.payout, { APK: 17, TIX: 85 });
+  assert.deepEqual(merges.at(-1), ['a1', { apk: 120, tix: 7, tk: 5000, level: 39 }]);
+  assert.equal(snap.accounts.a1.counts.sold, 0);
+  assert.ok(logs.some(l => l.code === 'mk.claimDone' && l.params.apk === 17 && l.params.tix === 85));
 });
 
-test('Page switch waits for eight fresh cards; a new page number with old cards is not accepted', async () => {
-  const { s } = service();
-  const page = { id: 'page' };
-  let reads = 0;
-  s._view = async () => {
-    reads++;
-    return { listingOpen: true, loading: false, invalid: false,
-      pagination: { current: 2, total: 4 }, cardCount: reads === 2 ? 4 : 8,
-      signature: reads < 3 ? 'old-page-cards' : 'new-page-cards' };
-  };
-  const result = await s._waitPage(page, 2, new AbortController().signal, 'old-page-cards', 5000);
-  assert.equal(result.signature, 'new-page-cards');
-  assert.ok(reads >= 4);
+test('a cooldown reply is waited out and the write repeated', async () => {
+  const game = fakeGame([ticket('s1', 'SOLD')], { cooldownOnce: ['market:settleTicket'] });
+  const { s } = service(game);
+  const t0 = Date.now();
+  const snap = await s.claim(['a1']);
+  assert.equal(game.calls.filter(c => c.event === 'market:settleTicket').length, 2);
+  assert.ok(Date.now() - t0 >= 1000, 'waited retryAfter');
+  assert.equal(snap.accounts.a1.lastClaim.claimed, 1);
 });
 
-test('My Listings scan includes every page and keeps the shorter last page', async () => {
-  const { s } = service();
-  const page = {};
-  const counts = [8, 8, 3];
-  const views = counts.map((count, pageIndex) => ({
-    listingOpen: true, pagination: { current: pageIndex + 1, total: 3 },
-    cardCount: count, signature: `page-${pageIndex + 1}`,
-    rows: Array.from({ length: count }, (_, index) => ({
-      fullName: `Player ${pageIndex + 1}-${index}`, status: pageIndex === 1 && index === 1 ? 'SOLD' : 'LISTED'
-    }))
-  }));
-  s._firstPage = async () => views[0];
-  s._clickPager = async (_page, label) => assert.equal(label, '›');
-  s._waitPage = async (_page, target, _signal, signature) => {
-    assert.equal(signature, views[target - 2].signature);
-    return views[target - 1];
-  };
-  const rows = await s._scanPages(page, 'a', new AbortController().signal);
-  assert.equal(rows.length, 19);
-  assert.equal(rows.find(row => row.status === 'SOLD').page, 2);
-  assert.equal(s.snapshot().a.totalPages, 3);
-  assert.equal(s.snapshot().a.rows.filter(row => row.page === 3).length, 3);
+test('relist removes and lists only the selected players (expired or listed) with the chosen price and currency', async () => {
+  const game = fakeGame([ticket('l1', 'LISTED', { price: 300 }), ticket('e1', 'EXPIRED', { price: 200 }), ticket('e2', 'EXPIRED', { price: 999, mode: 'TICKET' }), ticket('e3', 'EXPIRED'), ticket('s1', 'SOLD')]);
+  const { s, logs } = service(game);
+  const loaded = await s.loadRelist(['a1']);
+  assert.deepEqual(Object.keys(loaded.relist.rows).sort(), ['e1', 'e2', 'e3', 'l1'], 'listed and expired, never sold');
+  const snap = await s.relistPlayers([{ ticketId: 'e1', price: 200, currency: 'APK' }, { ticketId: 'e2', price: 450, currency: 'APK' }, { ticketId: 'l1', price: 250, currency: 'TIX' }]);
+  const writes = game.calls.filter(c => c.event === 'market:cancelPlayerListing' || c.event === 'market:sellPlayer');
+  assert.deepEqual(writes.map(c => [c.event, c.payload.ticketId || c.payload.playerId, c.payload.price, c.payload.paymentMode]), [
+    ['market:cancelPlayerListing', 'e1', undefined, undefined],
+    ['market:sellPlayer', 'p-e1', 200, 'APK_TICKET'],
+    ['market:cancelPlayerListing', 'e2', undefined, undefined],
+    ['market:sellPlayer', 'p-e2', 450, 'APK_TICKET'],
+    ['market:cancelPlayerListing', 'l1', undefined, undefined],
+    ['market:sellPlayer', 'p-l1', 250, 'TICKET']
+  ]);
+  assert.deepEqual(Object.values(snap.relist.lastRun).map(r => r.state), ['listed', 'listed', 'listed']);
+  assert.deepEqual(snap.relist.report, { total: 3, listed: 3, owned: 0, failed: 0, removedNotListed: 0, stopped: 0 });
+  // The account was scanned again: the new listings are there with their prices.
+  const after = Object.values(snap.relist.rows).filter(r => r.status === 'LISTED').map(r => [r.playerId, r.price, r.currency]).sort();
+  assert.deepEqual(after, [['p-e1', 200, 'APK'], ['p-e2', 450, 'APK'], ['p-l1', 250, 'TIX']]);
+  assert.equal(snap.relist.rows.e3.state, 'ready');
+  assert.ok(logs.some(l => l.code === 'mk.relisted' && l.params.price === 450));
 });
 
-test('A completed scan retains unsold and expired rows but closes accounts with no SOLD listing', async () => {
-  const { s } = service();
-  const row = { status: 'LISTED', fullName: 'Available player', salary: 100, price: 20, currency: 'APK' };
-  const expired = { status: 'EXPIRED', fullName: 'Stock player', salary: 50, price: 200, currency: 'TIX' };
-  let closed = 0;
-  s._ensureSession = async () => ({ page: {} });
-  s._openListings = async () => {};
-  s._scanPages = async (_page, id) => {
-    s.set(id, { rows: [row, expired], page: 1, totalPages: 1 });
-    return [row, expired];
-  };
-  s._closeSession = async () => { closed++; };
-  const result = await s.open('a');
-  assert.equal(closed, 1);
-  assert.equal(result.status, 'closed');
-  assert.equal(result.rows[1].status, 'EXPIRED');
+test('a player already in the roster is reported, and a failed sale after removal is flagged', async () => {
+  const game = fakeGame([ticket('e1', 'EXPIRED', { playerId: 'dup' }), ticket('e2', 'EXPIRED', { playerId: 'cap' })], { roster: ['dup'], sellFails: ['cap'] });
+  const { s, logs } = service(game);
+  await s.loadRelist(['a1']);
+  const snap = await s.relistPlayers([{ ticketId: 'e1', price: 50, currency: 'TIX' }, { ticketId: 'e2', price: 50, currency: 'TIX' }]);
+  assert.equal(snap.relist.rows.e1.state, 'owned');
+  assert.match(snap.relist.rows.e1.message, /already own/);
+  assert.equal(snap.relist.rows.e2.state, 'removedNotListed');
+  assert.equal(snap.relist.rows.e2.message, 'Salary cap exceeded');
+  assert.equal(snap.relist.report.owned, 1);
+  assert.equal(snap.relist.report.removedNotListed, 1);
+  assert.ok(logs.some(l => l.level === 'error' && l.code === 'mk.relistSellFailed'));
+  assert.equal(game.calls.filter(c => c.event === 'market:sellPlayer').length, 1, 'never sells an owned player twice');
+  const rescanned = await s.scan(['a1']);
+  assert.equal(rescanned.relist.rows.e2.state, 'removedNotListed', 'still shown after the next scan');
+  assert.equal(rescanned.relist.rows.e1.state, 'owned');
 });
 
-test('An APK verification left pending is retried before closing an account with no remaining SOLD listing', async () => {
-  const { s } = service();
-  s.state('a').pendingApkRefresh = true;
-  s._ensureSession = async () => ({ page: {} });
-  s._openListings = async () => {};
-  s._scanPages = async (_page, id) => { s.set(id, { rows: [] }); return []; };
-  let refreshed = 0;
-  let closedWithoutVerification = 0;
-  s._refreshApkAndClose = async () => { refreshed++; s.set('a', { pendingApkRefresh: false, status: 'closed' }); };
-  s._closeSession = async () => { closedWithoutVerification++; };
-  await s.open('a');
-  assert.equal(refreshed, 1);
-  assert.equal(closedWithoutVerification, 0);
+test('invalid prices and an empty selection are refused before anything is sent', async () => {
+  const game = fakeGame([ticket('e1', 'EXPIRED')]);
+  const { s } = service(game);
+  await s.loadRelist(['a1']);
+  await assert.rejects(s.relistPlayers([{ ticketId: 'e1', price: 0, currency: 'APK' }]), /Invalid price/);
+  await assert.rejects(s.relistPlayers([{ ticketId: 'e1', price: 10, currency: 'GOLD' }]), /Invalid currency/);
+  await assert.rejects(s.relistPlayers([]), /Select at least one player/);
+  assert.equal(game.calls.filter(c => c.event === 'market:cancelPlayerListing').length, 0);
 });
 
-test('A failed APK retry leaves the Market session open so the balance can be checked again', async () => {
-  const { s } = service();
-  s.state('a').pendingApkRefresh = true;
-  s._ensureSession = async () => ({ page: {} });
-  s._openListings = async () => {};
-  s._scanPages = async (_page, id) => { s.set(id, { rows: [] }); return []; };
-  s._refreshApkAndClose = async () => { throw new Error('APK still loading'); };
-  let closed = 0;
-  s._closeSession = async () => { closed++; };
-  await assert.rejects(s.open('a'), /APK still loading/);
-  assert.equal(closed, 0);
-  assert.equal(s.snapshot().a.pendingApkRefresh, true);
-  assert.equal(s.snapshot().a.status, 'error');
-  await assert.rejects(s.close('a'), /must be verified/);
-  assert.equal(closed, 0);
+test('stop during relist finishes the player in progress and leaves the rest untouched', async () => {
+  const game = fakeGame([ticket('e1', 'EXPIRED'), ticket('e2', 'EXPIRED'), ticket('e3', 'EXPIRED')], { cooldownOnce: ['market:sellPlayer'] });
+  const { s } = service(game);
+  await s.loadRelist(['a1']);
+  const run = s.relistPlayers(['e1', 'e2', 'e3'].map(ticketId => ({ ticketId, price: 30, currency: 'APK' })));
+  // e1 is removed, then its sale waits out a cooldown: stop arrives meanwhile.
+  await new Promise(r => setTimeout(r, 200));
+  await s.stop();
+  const snap = await run;
+  assert.equal(snap.relist.rows.e1.state, 'listed', 'the removed player was still listed');
+  assert.equal(snap.relist.rows.e2.state, 'stopped');
+  assert.equal(snap.relist.rows.e3.state, 'stopped');
+  assert.equal(game.calls.filter(c => c.event === 'market:cancelPlayerListing').length, 1);
 });
 
-test('After claiming on page 2 the game pager goes back and forward, even if the displayed cards already look like page 1', async () => {
-  const { s } = service();
-  const actions = [];
-  s._view = async () => ({ pagination: { current: 2, total: 5 }, signature: 'already-page-one' });
-  s._clickPager = async (_page, key) => actions.push(key);
-  s._waitPage = async (_page, target, _signal, previous) => {
-    actions.push(`${target}:${previous}`);
-    return { pagination: { current: target, total: 5 }, signature: `page-${target}` };
-  };
-  await s._recoverAfterClaim({}, 2, new AbortController().signal, 'before');
-  assert.deepEqual(actions, ['‹', '1:null', '›', '2:page-1']);
+test('only one market operation runs at a time', async () => {
+  const game = fakeGame([ticket('s1', 'SOLD')], { cooldownOnce: ['market:settleTicket'] });
+  const { s } = service(game);
+  const first = s.claim(['a1']);
+  await new Promise(r => setTimeout(r, 20));
+  await assert.rejects(s.scan(['a1']), /Another Market operation is running/);
+  await first;
 });
 
-test('Claim requires confirmation and verified success before Continue; a timeout cannot cause a second confirm', async () => {
-  const { s } = service();
-  const steps = [];
-  const row = { accountId: 'a', page: 4, index: 1, status: 'SOLD', fullName: 'James Harden', imagePath: '/players/harden.webp', price: 20, currency: 'APK' };
-  s._goToPage = async () => ({ rows: [null, { ...row }], signature: 'page-four' });
-  s._recoverAfterClaim = async (_page, number) => steps.push(`recover:${number}`);
-  const confirm = {
-    waitFor: async () => { steps.push('confirm-visible'); },
-    innerText: async () => 'Claim Sale 19 APK — after 3% tax',
-    getByRole: () => ({ click: async () => { steps.push('confirm-click'); } })
-  };
-  const success = {
-    waitFor: async ({ state }) => { steps.push(`success-${state}`); },
-    innerText: async () => 'CLAIM SUCCESSFUL Successfully claimed 19 APK',
-    getByRole: () => ({ click: async () => { steps.push('continue-click'); } })
-  };
-  const page = { locator: selector => selector.includes('group/card') ? {
-    nth: () => ({ getByRole: () => ({ click: async () => { steps.push('claim-click'); } }) })
-  } : { first: () => selector.includes('Claim confirmation') ? confirm : success } };
-  assert.equal(await s._claimOne(page, row, new AbortController().signal), true);
-  assert.equal(s.snapshot().a.pendingApkRefresh, true);
-  assert.deepEqual(steps, ['claim-click', 'confirm-visible', 'confirm-click', 'success-visible', 'continue-click', 'success-hidden', 'recover:4']);
-  success.waitFor = async () => { throw new Error('success not visible'); };
-  steps.length = 0;
-  await assert.rejects(s._claimOne(page, row, new AbortController().signal), /success not visible/);
-  assert.equal(steps.filter(step => step === 'confirm-click').length, 1);
-  assert.equal(steps.includes('recover:4'), false);
+test('the last 19:10 Turkey cutoff is found correctly around the boundary', () => {
+  const { lastExpiryCutoff } = require('../src/main/services/market-service.cjs');
+  // 19:15 TR (16:15 UTC) -> today's 19:10; 19:05 TR -> yesterday's.
+  assert.equal(new Date(lastExpiryCutoff(Date.parse('2026-10-20T16:15:00Z'))).toISOString(), '2026-10-20T16:10:00.000Z');
+  assert.equal(new Date(lastExpiryCutoff(Date.parse('2026-10-20T16:05:00Z'))).toISOString(), '2026-10-19T16:10:00.000Z');
+  assert.equal(new Date(lastExpiryCutoff(Date.parse('2026-10-20T01:00:00Z'))).toISOString(), '2026-10-19T16:10:00.000Z');
 });
 
-test('A login failure before Confirm Claim does not lock the account into APK verification', async () => {
-  const { s } = service();
-  s.state('a').rows = [{ status: 'SOLD' }];
-  s._ensureSession = async () => { throw new Error('Login unavailable'); };
-  await assert.rejects(s.claim('a'), /Login unavailable/);
-  assert.equal(s.snapshot().a.pendingApkRefresh, false);
-  s._closeSession = async () => {};
-  await s.close('a');
+test('scheduled relist lists only yesterday\'s expired listings, at the same price and currency', async () => {
+  const at = iso => ({ ...ticket('x', 'EXPIRED'), createdAt: iso });
+  const game = fakeGame([
+    { ...at('2026-10-19T20:00:00Z'), id: 'yday1', playerId: 'p1', price: 200, paymentMode: 'APK_TICKET' },
+    { ...at('2026-10-20T10:00:00Z'), id: 'yday2', playerId: 'p2', price: 999, paymentMode: 'TICKET' },
+    { ...at('2026-10-18T12:00:00Z'), id: 'old', playerId: 'p3', price: 50, paymentMode: 'APK_TICKET' },
+    { ...ticket('l1', 'LISTED'), createdAt: '2026-10-20T17:00:00Z' }
+  ]);
+  const { s, logs } = service(game);
+  const snap = await s.relistRecent(['a1'], { now: Date.parse('2026-10-20T16:15:00Z') });
+  const sells = game.calls.filter(c => c.event === 'market:sellPlayer').map(c => [c.payload.playerId, c.payload.price, c.payload.paymentMode]);
+  assert.deepEqual(sells, [['p1', 200, 'APK_TICKET'], ['p2', 999, 'TICKET']]);
+  assert.equal(snap.relist.rows.old.state, 'ready', 'older expired listing kept as stock');
+  assert.equal(snap.relist.report.listed, 2);
+  assert.ok(logs.some(l => l.code === 'mk.relistRecentPicked' && l.params.count === 2 && l.params.skipped === 1));
 });
 
-test('One account Claim collects every SOLD sale and closes only after the final scan and APK check', async () => {
-  const { s } = service();
-  const sales = [
-    { fullName: 'James Harden', status: 'SOLD', price: 20, currency: 'APK' },
-    { fullName: 'Other sale', status: 'SOLD', price: 30, currency: 'APK' }
-  ];
-  s.state('a').rows = [...sales];
-  const steps = [];
-  s._ensureSession = async () => ({ page: {} });
-  s._openListings = async () => {};
-  s._scanPages = async (_page, id) => {
-    steps.push(`scan:${sales.length}`);
-    s.set(id, { rows: [...sales] });
-    return [...sales];
-  };
-  s._claimOne = async (_page, sale) => {
-    steps.push(`claim:${sale.fullName}`);
-    sales.shift();
-    return true;
-  };
-  s._refreshApkAndClose = async (_account) => {
-    steps.push('stadium-apk-and-close');
-    s.set('a', { status: 'closed' });
-  };
-  const result = await s.claim('a');
-  assert.deepEqual(steps, ['scan:2', 'claim:James Harden', 'scan:1', 'claim:Other sale', 'scan:0', 'stadium-apk-and-close']);
-  assert.equal(result.claimed, 2);
-  assert.equal(result.rows.length, 0);
+test('market writes register the socket first, and register again when the game drops it', async () => {
+  const game = fakeGame([ticket('e1', 'EXPIRED')], { dropAuthOnce: ['market:sellPlayer'] });
+  const { s } = service(game);
+  await s.loadRelist(['a1']);
+  const snap = await s.relistPlayers([{ ticketId: 'e1', price: 30, currency: 'APK' }]);
+  assert.equal(snap.relist.lastRun.e1.state, 'listed');
+  const events = game.calls.map(c => c.event).filter(e => e === 'register' || e.startsWith('market:sell') || e.startsWith('market:cancel'));
+  assert.deepEqual(events, ['register', 'register', 'market:cancelPlayerListing', 'market:sellPlayer', 'register', 'market:sellPlayer']);
 });
 
-test('Claim returns to City and Stadium and updates APK from the actual widget, including zero', async () => {
-  const { s, merged } = service();
-  const steps = [];
-  const back = { isVisible: async () => true, click: async () => { steps.push('back'); } };
-  const stadium = { waitFor: async () => { steps.push('city'); }, click: async () => { steps.push('stadium'); } };
-  const agent = { isVisible: async () => false, waitFor: async () => { steps.push('home'); } };
-  s.state('a').pendingApkRefresh = true;
-  const page = {
-    getByRole: () => ({ first: () => back }),
-    locator: selector => ({ first: () => selector.includes('Stadium') ? stadium : agent }),
-    evaluate: async () => ({ apk: 0, stadiumReady: true, level: 20 })
-  };
-  s._closeSession = async () => { steps.push('closed'); };
-  await s._refreshApkAndClose({ id: 'a' }, { page }, new AbortController().signal);
-  assert.deepEqual(steps, ['back', 'city', 'stadium', 'home', 'closed']);
-  assert.equal(merged[0][1].apk, 0);
-  assert.equal(s.snapshot().a.pendingApkRefresh, false);
+test('listing kind: on sale, was on sale yesterday, or stock', () => {
+  const { listingKind } = require('../src/main/services/market-service.cjs');
+  const now = Date.parse('2026-10-20T16:15:00Z'); // 19:15 TR, just after today's expiry
+  assert.equal(listingKind({ status: 'LISTED', createdAt: '2026-10-01T00:00:00Z' }, now), 'onSale');
+  assert.equal(listingKind({ status: 'EXPIRED', createdAt: '2026-10-19T20:00:00Z' }, now), 'recent');
+  assert.equal(listingKind({ status: 'EXPIRED', createdAt: '2026-10-19T16:09:00Z' }, now), 'stock');
+  assert.equal(listingKind({ status: 'SOLD', createdAt: '2026-10-19T20:00:00Z' }, now), null);
 });

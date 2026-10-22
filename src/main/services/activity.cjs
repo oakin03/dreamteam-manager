@@ -9,7 +9,9 @@ class ActivityService {
     return this.store.getActivity();
   }
 
-  add({ level = 'info', accountId = null, accountName = '', taskId = null, taskName = '', message, alertType = null }) {
+  // `code` + `params` let the page show the entry in the selected language;
+  // `message` stays as the English fallback.
+  add({ level = 'info', accountId = null, accountName = '', taskId = null, taskName = '', message, alertType = null, code = null, params = null }) {
     const settings = this.store.getSettings();
     const max = Number(settings.maxActivityEntries || 500);
     const items = this.store.getActivity();
@@ -22,7 +24,8 @@ class ActivityService {
       taskId,
       taskName,
       message: String(message),
-      alertType: alertType || null
+      alertType: alertType || null,
+      ...(code ? { code, params: params || {} } : {})
     });
     this.store.saveActivity(items.slice(0, max));
     this.onChanged?.();

@@ -23,8 +23,14 @@ function sleep(ms, signal) {
 }
 
 class TaskEngine {
-  constructor({ store, credentials, registry, browserService, activity, onChanged }) {
+  constructor({ store, credentials, registry, browserService, activity, onChanged, beforeRun = null, beforeRunNextAt = null }) {
     this.store = store;
+    // Optional `async ({ account, taskId, signal }) => {}` run before a task's loop
+    // (the daily routine) and again at `beforeRunNextAt(accountId)` while it runs.
+    // Only an abort stops the task; other errors are ignored.
+    this.beforeRun = beforeRun;
+    this.beforeRunNextAt = beforeRunNextAt;
+    this.gates = new Map(); // accountId -> promise of a running routine
     this.credentials = credentials;
     this.registry = registry;
     this.browserService = browserService;
@@ -43,6 +49,7 @@ class TaskEngine {
         taskName: worker.taskName,
         mode: worker.mode || '',
         message: worker.message || '',
+        phase: worker.phase || null,
         startedAt: worker.startedAt || null,
         lastActionAt: worker.lastActionAt || null,
         nextActionAt: worker.nextActionAt || null
@@ -109,7 +116,13 @@ class TaskEngine {
       manifest,
       signal,
       browser: this.browserService,
-      sleep: (ms) => sleep(ms, signal),
+      sleep: async (ms) => {
+        await sleep(ms, signal);
+        for (let gate; (gate = this.gates.get(account.id));) {
+          await gate;
+          if (signal.aborted) throw abortError();
+        }
+      },
       now: () => Date.now(),
       log,
       alert,
@@ -237,6 +250,11 @@ class TaskEngine {
 
     worker.donePromise = (async () => {
       try {
+        if (this.beforeRun) {
+          await this._runBeforeRun(worker, account);
+          if (worker.controller.signal.aborted) throw abortError();
+          this._scheduleBeforeRun(worker, account);
+        }
         await worker.plugin.run({
           ...worker.runtime,
           config: worker.config,
@@ -258,6 +276,8 @@ class TaskEngine {
           }
         }
       } finally {
+        clearTimeout(worker.beforeRunTimer);
+        worker.beforeRunTimer = null;
         try {
           if (worker.plugin.disposePrepared) {
             await worker.plugin.disposePrepared(worker.preparedData, worker.runtime);
@@ -282,6 +302,46 @@ class TaskEngine {
     })();
 
     return true;
+  }
+
+  // Runs the daily routine while the task's own loop waits: ctx.sleep() does not
+  // return while a gate is set for the account, so no new action starts meanwhile.
+  _runBeforeRun(worker, account) {
+    const gate = (async () => {
+      worker.phase = 'daily';
+      this.onChanged?.();
+      try {
+        await this.beforeRun({ account, taskId: worker.taskId, signal: worker.controller.signal });
+      } catch {
+        // Abort is seen by the caller through the signal; other errors never stop the task.
+      } finally {
+        worker.phase = null;
+        if (this.gates.get(account.id) === gate) this.gates.delete(account.id);
+        this.onChanged?.();
+      }
+    })();
+    this.gates.set(account.id, gate);
+    return gate;
+  }
+
+  // While the task runs, the routine runs again at the next due time (19:12 TR).
+  _scheduleBeforeRun(worker, account, at = null) {
+    if (!this.beforeRunNextAt || worker.controller.signal.aborted) return;
+    clearTimeout(worker.beforeRunTimer);
+    const delay = Math.max(1000, Number(at ?? this.beforeRunNextAt(account.id)) - Date.now());
+    worker.beforeRunTimer = setTimeout(async () => {
+      if (this.workers.get(account.id) !== worker || worker.controller.signal.aborted) return;
+      await this._runBeforeRun(worker, account);
+      this._scheduleBeforeRun(worker, account);
+    }, Math.min(delay, 2 ** 31 - 1));
+    worker.beforeRunTimer.unref?.();
+  }
+
+  // Look at the routine again now (e.g. the account was just ticked for it).
+  recheckBeforeRun(accountId) {
+    const worker = this.workers.get(accountId);
+    if (!worker || !this.beforeRun || this.gates.has(accountId) || worker.beforeRunTimer == null) return;
+    this._scheduleBeforeRun(worker, this.accountById(accountId), Date.now());
   }
 
   async startAccount(accountId, taskId, options = {}) {

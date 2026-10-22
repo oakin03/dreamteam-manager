@@ -30,6 +30,8 @@ class AppStore {
     // the frequent UI snapshots should not reread and parse every JSON file.
     this.cache = new Map();
     this.revisions = new Map();
+    this.dirty = new Set();
+    this.flushTimer = null;
     ensureDir(baseDir);
     this.files = {
       accounts: path.join(baseDir, 'accounts.json'),
@@ -44,6 +46,13 @@ class AppStore {
       cardMetadata: path.join(baseDir, 'card-metadata.json'),
       autoTrade: path.join(baseDir, 'auto-trade.json'),
       dailyRewards: path.join(baseDir, 'daily-rewards.json'),
+      tournamentReport: path.join(baseDir, 'tournament-report.json'),
+      dailyRoutine: path.join(baseDir, 'daily-routine.json'),
+      autoTrade2: path.join(baseDir, 'auto-trade-v2.json'),
+      playersData: path.join(baseDir, 'players-data.json'),
+      draftData: path.join(baseDir, 'draft.json'),
+      pvpReport: path.join(baseDir, 'pvp-report.json'),
+      buyData: path.join(baseDir, 'buy.json'),
       playerMarketData: path.join(baseDir, 'player-market.json'),
       playerMarketAccount: path.join(
         baseDir,
@@ -81,6 +90,25 @@ class AppStore {
   }
   revision(key) { return this.revisions.get(key) || 0; }
 
+  // Frequent writers (the activity log) update the cache and revision at
+  // once and reach the disk in batches; flush() writes whatever is pending.
+  _saveDeferred(key, value, delayMs = 400) {
+    this.cache.set(key, value);
+    this.revisions.set(key, (this.revisions.get(key) || 0) + 1);
+    this.dirty.add(key);
+    if (!this.flushTimer) {
+      this.flushTimer = setTimeout(() => this.flush(), delayMs);
+      this.flushTimer.unref?.();
+    }
+  }
+
+  flush() {
+    if (this.flushTimer) clearTimeout(this.flushTimer);
+    this.flushTimer = null;
+    for (const key of this.dirty) writeJsonAtomic(this.files[key], this.cache.get(key));
+    this.dirty.clear();
+  }
+
   getAccounts() { return this._get('accounts', []); }
   saveAccounts(v) { this._save('accounts', v); }
   getAccountProfile() { return this._get('accountProfile', { version: 1, mainAccountId: null, accounts: {} }); }
@@ -90,7 +118,7 @@ class AppStore {
   getSettings() { return this._get('settings', {}); }
   saveSettings(v) { this._save('settings', v); }
   getActivity() { return this._get('activity', []); }
-  saveActivity(v) { this._save('activity', v); }
+  saveActivity(v) { this._saveDeferred('activity', v); }
   getTradeAccount() { return this._get('tradeAccount', null); }
   getPlayerMarketAccount() {
     return this._get('playerMarketAccount', null);
@@ -125,6 +153,21 @@ class AppStore {
   saveCardMetadata(v) { this._save('cardMetadata', v); }
   getAutoTrade() { return this._get('autoTrade', { version: 1, runtime: null, lastRun: null }); }
   saveAutoTrade(v) { this._save('autoTrade', v); }
+  getTournamentReport() { return this._get('tournamentReport', null); }
+  saveTournamentReport(v) { this._save('tournamentReport', v); }
+  getDailyRoutine() { return this._get('dailyRoutine', { version: 1, accounts: {} }); }
+  saveDailyRoutine(v) { this._save('dailyRoutine', v); }
+  getAutoTrade2() { return this._get('autoTrade2', null); }
+  getPlayersData() { return this._get('playersData', null); }
+  savePlayersData(v) { this._save('playersData', v); }
+  getBuyData() { return this._get('buyData', null); }
+  saveBuyData(v) { this._saveDeferred('buyData', v); }
+  getPvpReport() { return this._get('pvpReport', null); }
+  savePvpReport(v) { this._save('pvpReport', v); }
+  getDraftData() { return this._get('draftData', null); }
+  saveDraftData(v) { this._save('draftData', v); }
+  // Written often while a run moves players; batched like the activity log.
+  saveAutoTrade2(v) { this._saveDeferred('autoTrade2', v); }
   getDailyRewards() { return this._get('dailyRewards', { version: 1, accounts: {} }); }
   saveDailyRewards(v) { this._save('dailyRewards', v); }
 }

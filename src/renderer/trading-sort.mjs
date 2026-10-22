@@ -1,5 +1,5 @@
 const GRADES=['N','D-','D','D+','C-','C','C+','B-','B','B+','A-','A','A+','S-','S','S+'];
-const NUMERIC=new Set(['salary','base','value','valueChange','price']);
+const NUMERIC=new Set(['salary','base','basePct','value','valueChange','price']);
 const collator=new Intl.Collator(undefined,{numeric:true,sensitivity:'base'});
 
 function numeric(value){
@@ -33,6 +33,7 @@ export function filterTradingRows(rows,filters={}){
   const maxGrade=filters.gradeMax?GRADES.indexOf(String(filters.gradeMax).trim().toUpperCase()):null;
   const salaryMin=numeric(filters.salaryMin),salaryMax=numeric(filters.salaryMax);
   const priceMin=numeric(filters.priceMin),priceMax=numeric(filters.priceMax);
+  const basePctMax=numeric(filters.basePctMax);
   const matches=(value,terms)=>!terms.length || terms.some(term=>String(value||'').toLowerCase().includes(term));
   return (rows||[]).filter(row=>{
     if(!row || !matches(row.name,nameTerms) || !matches(row.seller,sellerTerms))return false;
@@ -50,6 +51,12 @@ export function filterTradingRows(rows,filters={}){
     const price=valueFor(row,'price');
     if((priceMin!==null || priceMax!==null) && (price===null ||
        priceMin!==null && price<priceMin || priceMax!==null && price>priceMax))return false;
+    // Same set as the game's "Base only" switch, taken from the game itself.
+    if(filters.baseOnly && row.isBase!==true)return false;
+    if(basePctMax!==null){
+      const pct=valueFor(row,'basePct');
+      if(pct===null || pct>basePctMax)return false;
+    }
     return true;
   });
 }

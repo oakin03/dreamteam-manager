@@ -1,9 +1,19 @@
 const crypto = require('crypto');
+const { GameSocket } = require('./game-socket.cjs');
 
 const DEFAULT_ROLES = [
   { id: 'sellable', name: 'Satılabilir', builtIn: true, color: '#2f855a' },
   { id: 'card', name: 'Kart', builtIn: true, color: '#c0392b' }
 ];
+
+const MODIFIED_TEAM = 'MOD'; // the Cards page group of players with a user-given team
+
+// The team a player counts for: the user's choice first, then the game's.
+function effectiveTeamOf(player, customTeam) {
+  if (customTeam === 'NONE') return null;
+  if (customTeam) return customTeam;
+  return player?.noTeam || player?.x ? null : (player?.team && player.team !== 'No Team' ? player.team : null);
+}
 
 const CUSTOM_ROLE_COLORS = ['#2563eb','#7c3aed','#d97706','#0f766e','#db2777','#4f46e5','#ea580c','#475569'];
 
@@ -28,9 +38,6 @@ function normalizeRoles(raw) {
   });
 }
 
-const STAR_CARD_SELECTOR = 'img[alt="Star Card"], img[src*="/ui/star_card.webp"]';
-
-function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
 
 function normalizeName(value) {
   return String(value || '')
@@ -131,71 +138,6 @@ function disambiguatePlayerKeys(players) {
   });
 }
 
-function targetCostForStar(currentStar) {
-  const star = Math.max(0, Number(currentStar || 0));
-  if (star === 0) return 1;
-  if (star === 1) return 4;
-  return 4 ** star;
-}
-
-function directNextProgress(actualStars, rawCount) {
-  const stars = Math.max(0, Math.min(5, Number(actualStars || 0)));
-  const current = Math.max(0, Number(rawCount || 0));
-  if (stars >= 5) return { actualStars: stars, targetStars: null, current, required: null, ready: false, maxed: true };
-  const required = targetCostForStar(stars);
-  return { actualStars: stars, targetStars: stars + 1, current, required, ready: current >= required, guaranteed: stars < 2 };
-}
-
-function cardProgress(actualStars, rawCount) {
-  let stars = Math.max(0, Math.min(5, Number(actualStars || 0)));
-  let remaining = Math.max(0, Number(rawCount || 0));
-  const actual = stars;
-
-  // 0★ -> 1★ and 1★ -> 2★ are guaranteed. For display purposes we can
-  // virtually consume cards through those two stages. From 2★ upward a
-  // synthesis can fail, so we never project past the actual star level.
-  while (stars < 2 && stars < 5) {
-    const need = targetCostForStar(stars);
-    if (remaining < need) {
-      return {
-        actualStars: actual,
-        projectedStars: stars,
-        targetStars: stars + 1,
-        current: remaining,
-        required: need,
-        ready: false,
-        guaranteed: true
-      };
-    }
-    remaining -= need;
-    stars += 1;
-  }
-
-  if (stars >= 5) {
-    return {
-      actualStars: actual,
-      projectedStars: stars,
-      targetStars: null,
-      current: remaining,
-      required: null,
-      ready: false,
-      guaranteed: false,
-      maxed: true
-    };
-  }
-
-  const required = targetCostForStar(stars);
-  return {
-    actualStars: actual,
-    projectedStars: stars,
-    targetStars: stars + 1,
-    current: remaining,
-    required,
-    ready: remaining >= required,
-    guaranteed: false
-  };
-}
-
 function normalizeData(raw) {
   const result = { version: 2, updatedAt: raw?.updatedAt || null, players: {} };
   const source = Array.isArray(raw) ? raw : Array.isArray(raw?.players) ? raw.players : Object.values(raw?.players || {});
@@ -223,86 +165,6 @@ function normalizeMetadata(raw) {
 
 // Everything below is executed inside the game page through page.evaluate().
 // Keep these helpers self-contained: they must not reference Node-side helpers.
-function readActivateTeamPanel() {
-  const clean = value => String(value || '').replace(/\s+/g, ' ').trim();
-  const heading = [...document.querySelectorAll('h3')].find(el => clean(el.textContent) === 'Select Team');
-  if (!heading) return null;
-  let panel = heading.parentElement;
-  // The pager lives in the header row while the team buttons live one level
-  // higher. Require both so we do not stop at the header and accidentally
-  // report an empty team list.
-  while (panel && !(
-    panel.querySelector('button[aria-label="Next page"], button[aria-label="Previous page"]') &&
-    panel.querySelector('img[src*="/LOGOS/"]')
-  )) panel = panel.parentElement;
-  if (!panel) return null;
-  const pagerText = [...panel.querySelectorAll('span')].map(el => clean(el.textContent)).find(v => /^\d+\s*\/\s*\d+$/.test(v)) || '';
-  const pm = pagerText.match(/(\d+)\s*\/\s*(\d+)/);
-  const buttons = [...panel.querySelectorAll('button')].filter(b => b.querySelector('img[src*="/LOGOS/"]'));
-  const teams = buttons.map((button, index) => {
-    const img = button.querySelector('img[src*="/LOGOS/"]');
-    const texts = [...button.querySelectorAll('div,span')].map(el => clean(el.textContent)).filter(Boolean);
-    const code = texts.find(v => /^[A-Z0-9]{2,4}$/.test(v)) || '';
-    return {
-      index,
-      name: clean(img?.getAttribute('alt')),
-      imagePath: img?.getAttribute('src') || '',
-      code,
-      selected: button.getAttribute('aria-pressed') === 'true'
-    };
-  });
-  return { current: pm ? Number(pm[1]) : 1, total: pm ? Number(pm[2]) : 1, teams };
-}
-
-function readActivatePlayerTiles() {
-  const clean = value => String(value || '').replace(/\s+/g, ' ').trim();
-  const backgrounds = [...document.querySelectorAll('main img[alt="Card Background"]')];
-  const cards = [];
-  const seen = new Set();
-  for (const bg of backgrounds) {
-    const card = bg.closest('.aspect-square');
-    if (!card || seen.has(card)) continue;
-    seen.add(card);
-    const imgs = [...card.querySelectorAll('img')];
-    const playerImg = imgs.find(img => clean(img.getAttribute('alt')) && clean(img.getAttribute('alt')) !== 'Card Background' && /players\//i.test(img.getAttribute('src') || ''));
-    if (!playerImg) continue;
-    const texts = [...card.querySelectorAll('div,span')].map(el => clean(el.textContent)).filter(Boolean);
-    const grade = texts.find(v => /^(S\+|S|S-|A\+|A|A-|B\+|B|B-|C\+|C|C-|D\+|D|D-|N)$/.test(v)) || '';
-    const starSpans = [...card.querySelectorAll('span')].filter(el => clean(el.textContent) === '★');
-    const stars = starSpans.filter(el => /text-amber-400/.test(el.className || '')).length;
-    cards.push({
-      index: cards.length,
-      name: clean(playerImg.getAttribute('alt')),
-      imagePath: playerImg.getAttribute('src') || '',
-      grade,
-      stars
-    });
-  }
-  return cards;
-}
-
-function readActivateSelected() {
-  const clean = value => String(value || '').replace(/\s+/g, ' ').trim();
-  const marker = [...document.querySelectorAll('div')].find(el => clean(el.textContent) === 'Selected Player');
-  if (!marker) return null;
-  let root = marker.parentElement;
-  while (root && !/\bProgress\b/.test(clean(root.textContent))) root = root.parentElement;
-  if (!root) return null;
-
-  const nameEl = [...root.querySelectorAll('span')].find(el => /text-base/.test(el.className || '') && clean(el.textContent));
-  const detailEl = [...root.querySelectorAll('span')].find(el => /text-xs/.test(el.className || '') && /•/.test(clean(el.textContent)));
-  const detail = clean(detailEl?.textContent);
-  const dm = detail.match(/^(.+?)\s*•\s*([A-Z0-9]{2,4})$/);
-  const starSpans = [...root.querySelectorAll('span')].filter(el => clean(el.textContent) === '★');
-  const stars = starSpans.filter(el => /text-amber-400/.test(el.className || '')).length;
-  return {
-    name: clean(nameEl?.textContent),
-    position: dm ? clean(dm[1]).replace(/\s/g, '') : '',
-    team: dm ? dm[2] : '',
-    stars
-  };
-}
-
 function readMyPlayerCardTiles() {
   const clean = value => String(value || '').replace(/\s+/g, ' ').trim();
   const playerPath = image => {
@@ -342,38 +204,6 @@ function readMyPlayerCardTiles() {
   return cards;
 }
 
-function readCardSpotlight() {
-  const clean = value => String(value || '').replace(/\s+/g, ' ').trim();
-  const heading = [...document.querySelectorAll('h3')].find(el => clean(el.textContent) === 'Card Spotlight');
-  if (!heading) return null;
-  let root = heading.parentElement;
-  while (root && !/Player Details/i.test(clean(root.textContent))) root = root.parentElement;
-  if (!root) return null;
-
-  const valueFor = label => {
-    const labelEl = [...root.querySelectorAll('span')].find(el => clean(el.textContent).toLowerCase() === String(label).toLowerCase());
-    if (!labelEl) return '';
-    const row = labelEl.parentElement;
-    const siblings = [...(row?.children || [])];
-    const value = siblings.find(el => el !== labelEl);
-    return clean(value?.textContent);
-  };
-
-  const name = valueFor('Linked Player');
-  const position = valueFor('Position');
-  const team = valueFor('Team');
-  const allText = clean(root.textContent);
-  const lm = allText.match(/\bLevel\s*(\d+)\b/i);
-  const selectedImg = [...root.querySelectorAll('img')].find(img => clean(img.getAttribute('alt')) === name && /players\//i.test(img.getAttribute('src') || ''));
-  return {
-    name,
-    position,
-    team,
-    level: lm ? Number(lm[1]) : null,
-    imagePath: selectedImg?.getAttribute('src') || ''
-  };
-}
-
 function readMyPlayerPager() {
   const clean = value => String(value || '').replace(/\s+/g, ' ').trim();
   const heading = [...document.querySelectorAll('h2')].find(el => clean(el.textContent) === 'My Star Cards');
@@ -394,32 +224,49 @@ function readMyPlayerPager() {
   };
 }
 
+// ---------- Star card rules ----------
+// Activating a card uses it up and sets the player's stars to the card's
+// level, so a 0★ player is taken straight to 2★ with one L2 card, and a 1★
+// player gains nothing toward 2★ from the card already used. Cards are
+// counted in L1 equivalents (L1=1, L2=4, L3=16 …): 4 cards of the same
+// player synthesize into that player's next level card. Up to 2★ this is
+// certain; from 2★ upward a synthesis can fail (75%).
+const LEVEL_WEIGHT = level => 4 ** (Math.max(1, Number(level)) - 1);
+function cardEquivalent(levels) {
+  return Object.entries(levels || {}).reduce((sum, [level, qty]) => sum + LEVEL_WEIGHT(level) * Math.max(0, Number(qty) || 0), 0);
+}
+
+function cardProgress(actualStars, levelsOrCount) {
+  const stars = Math.max(0, Math.min(5, Number(actualStars || 0)));
+  const current = typeof levelsOrCount === 'number' ? Math.max(0, levelsOrCount) : cardEquivalent(levelsOrCount);
+  if (stars >= 5) return { actualStars: stars, targetStars: null, current, required: null, ready: false, guaranteed: false, maxed: true };
+  const targetStars = stars < 2 ? 2 : stars + 1;
+  const required = LEVEL_WEIGHT(targetStars);
+  return { actualStars: stars, projectedStars: stars, targetStars, current, required, ready: current >= required, guaranteed: targetStars <= 2 };
+}
+const directNextProgress = cardProgress;
+
 class CardsService {
-  constructor({ store, credentials = null, browserService = null, activity, accountProfile = null, onChanged }) {
+  constructor({ store, activity, accountProfile = null, sessions = null, createSocket, onChanged, rosterConcurrency = 4 }) {
     this.store = store;
-    this.credentials = credentials;
-    this.browser = browserService;
     this.activity = activity;
     this.accountProfile = accountProfile;
+    this.sessions = sessions;
+    this.createSocket = createSocket;
     this.onChanged = onChanged;
-    this.runtime = { status: 'idle', message: '', scannedTeams: 0, scannedPlayers: 0, inventoryCards: 0 };
+    this.rosterConcurrency = rosterConcurrency;
+    this.runtime = { status: 'idle', message: '', step: null, stepParams: {}, scannedTeams: 0, scannedPlayers: 0, inventoryCards: 0 };
     this.scanning = false;
     this._ensureDefaults();
   }
 
   _ensureDefaults() {
-    const roles = normalizeRoles(this.store.getCardRoles());
-    this.store.saveCardRoles(roles);
-    const data = normalizeData(this.store.getCards());
-    this.store.saveCards(data);
-    const metadata = normalizeMetadata(this.store.getCardMetadata());
-    this.store.saveCardMetadata(metadata);
+    this.store.saveCardRoles(normalizeRoles(this.store.getCardRoles()));
+    this.store.saveCards(normalizeData(this.store.getCards()));
+    this.store.saveCardMetadata(normalizeMetadata(this.store.getCardMetadata()));
   }
 
-  _roles() {
-    return normalizeRoles(this.store.getCardRoles());
-  }
-
+  _roles() { return normalizeRoles(this.store.getCardRoles()); }
   _metadata() { return normalizeMetadata(this.store.getCardMetadata()); }
   _data() { return normalizeData(this.store.getCards()); }
 
@@ -428,7 +275,12 @@ class CardsService {
     const roleIds = Array.isArray(meta.roleIds) ? meta.roleIds : [];
     return {
       ...player,
-      progress: cardProgress(player.stars, player.cardCount),
+      // A team the user gave this player (e.g. a No Team player → LAL). Auto Trade
+      // treats the player as on that team; this page lists it under "Değiştirilmiş".
+      customTeam: meta.customTeam || null,
+      // The team that counts (Auto Trade): "NONE" = removed from its team.
+      effectiveTeam: effectiveTeamOf(player, meta.customTeam),
+      progress: player.noTeam ? null : cardProgress(player.stars, player.cards || player.cardCount),
       roleIds,
       roles: roleIds.map(id => roles.find(r => r.id === id)).filter(Boolean)
     };
@@ -442,36 +294,30 @@ class CardsService {
     const data = this._data();
     const metadata = this._metadata();
     const roles = this._roles();
-    const players = Object.values(data.players).map(p => this._playerView(p, metadata, roles));
-    const activePlayers = players.filter(p => p.active !== false);
+    const players = Object.values(data.players).filter(p => p.active !== false).map(p => this._playerView(p, metadata, roles));
     const teamMap = new Map();
-
-    for (const player of activePlayers) {
-      const team = String(player.team || '—').trim() || '—';
-      if (!teamMap.has(team)) teamMap.set(team, []);
-      teamMap.get(team).push(player);
+    for (const player of players) {
+      if (player.noTeam && !player.customTeam) continue;
+      const team = player.customTeam ? MODIFIED_TEAM : (String(player.team || '—').trim() || '—');
+      if (!teamMap.has(team)) teamMap.set(team, { players: [], teamName: player.customTeam ? 'Değiştirilmiş' : (player.teamName || team), teamId: player.customTeam ? null : (player.teamId ?? null) });
+      teamMap.get(team).players.push(player);
     }
-
-    const teams = [...teamMap.entries()].map(([team, teamPlayers]) => {
+    const teams = [...teamMap.entries()].map(([team, entry]) => {
+      const teamPlayers = entry.players;
       const star = teamPlayers.length ? Math.min(...teamPlayers.map(p => Math.max(0, Number(p.stars || 0)))) : 0;
       const blockers = teamPlayers.filter(p => Number(p.stars || 0) === star);
       return {
-        team,
+        team, teamName: entry.teamName, teamId: entry.teamId, x: team === 'X', modified: team === MODIFIED_TEAM,
         star,
         playerCount: teamPlayers.length,
         blockerCount: blockers.length,
-        blockers: blockers.map(p => ({
-          key: p.key,
-          name: p.name,
-          stars: p.stars,
-          progress: directNextProgress(p.stars, p.cardCount),
-          raisesTeamIfUpgraded: blockers.length === 1
-        }))
+        readyCount: blockers.filter(p => p.progress?.ready).length,
+        blockers: blockers.map(p => ({ key: p.key, name: p.name, stars: p.stars, progress: p.progress, raisesTeamIfUpgraded: blockers.length === 1 }))
       };
-    }).sort((a, b) => a.team.localeCompare(b.team));
+    }).sort((a, b) => (a.modified - b.modified) || (a.x - b.x) || a.team.localeCompare(b.team));
 
     this._snapshot = {
-      scannerReady: Boolean(this.browser && this.credentials && this.accountProfile),
+      scannerReady: Boolean(this.sessions && this.accountProfile),
       updatedAt: data.updatedAt,
       players,
       roles,
@@ -499,20 +345,15 @@ class CardsService {
     return this._accountById(mainId);
   }
 
-  _log(account, level, message) {
-    this.activity?.add({ level, accountId: account.id, accountName: account.name, message });
+  _log(account, level, message, code = null, params = null) {
+    this.activity?.add({ level, accountId: account?.id || 'cards', accountName: account?.name || '', taskName: 'Cards', message, code, params });
   }
 
   addRole(name, color = CUSTOM_ROLE_COLORS[0]) {
     const clean = String(name || '').trim();
     if (!clean) throw new Error('Rol adı gerekli.');
     const roles = this._roles();
-    const role = {
-      id: `role-${crypto.randomUUID()}`,
-      name: clean,
-      builtIn: false,
-      color: normalizeRoleColor(color, CUSTOM_ROLE_COLORS[roles.length % CUSTOM_ROLE_COLORS.length])
-    };
+    const role = { id: `role-${crypto.randomUUID()}`, name: clean, builtIn: false, color: normalizeRoleColor(color, CUSTOM_ROLE_COLORS[roles.length % CUSTOM_ROLE_COLORS.length]) };
     roles.push(role);
     this.store.saveCardRoles(roles);
     this.onChanged?.();
@@ -523,7 +364,6 @@ class CardsService {
     const roles = this._roles();
     const role = roles.find(r => r.id === id);
     if (!role) throw new Error('Rol bulunamadı.');
-
     const payload = typeof patch === 'string' ? { name: patch } : (patch || {});
     if (payload.name != null) {
       const clean = String(payload.name || '').trim();
@@ -533,7 +373,6 @@ class CardsService {
     if (!role.builtIn && payload.color != null) role.color = normalizeRoleColor(payload.color, role.color);
     if (role.id === 'sellable') role.color = '#2f855a';
     if (role.id === 'card') role.color = '#c0392b';
-
     this.store.saveCardRoles(roles);
     this.onChanged?.();
     return role;
@@ -544,9 +383,7 @@ class CardsService {
     if (!roles.some(r => r.id === id)) return true;
     this.store.saveCardRoles(roles.filter(r => r.id !== id));
     const metadata = this._metadata();
-    for (const meta of Object.values(metadata.players)) {
-      if (Array.isArray(meta.roleIds)) meta.roleIds = meta.roleIds.filter(x => x !== id);
-    }
+    for (const meta of Object.values(metadata.players)) if (Array.isArray(meta.roleIds)) meta.roleIds = meta.roleIds.filter(x => x !== id);
     this.store.saveCardMetadata(metadata);
     this.onChanged?.();
     return true;
@@ -557,12 +394,35 @@ class CardsService {
     if (!data.players[playerKey]) throw new Error('Oyuncu bulunamadı.');
     const valid = new Set(this._roles().map(r => r.id));
     const metadata = this._metadata();
-    const old = metadata.players[playerKey] || {};
-    metadata.players[playerKey] = {
-      ...old,
-      roleIds: [...new Set((roleIds || []).filter(id => valid.has(id)))],
-      updatedAt: new Date().toISOString()
-    };
+    metadata.players[playerKey] = { ...(metadata.players[playerKey] || {}), roleIds: [...new Set((roleIds || []).filter(id => valid.has(id)))], updatedAt: new Date().toISOString() };
+    this.store.saveCardMetadata(metadata);
+    this.onChanged?.();
+    return true;
+  }
+
+  // Roles by player id for any game player (the Oyuncular page lists more players
+  // than the Cards page); the same record the Cards page reads.
+  setRolesById(playerId, roleIds) {
+    const key = `id:${String(playerId || '').trim()}`;
+    if (key === 'id:') throw new Error('Oyuncu bulunamadı.');
+    const valid = new Set(this._roles().map(r => r.id));
+    const metadata = this._metadata();
+    metadata.players[key] = { ...(metadata.players[key] || {}), roleIds: [...new Set((roleIds || []).filter(id => valid.has(id)))], updatedAt: new Date().toISOString() };
+    this.store.saveCardMetadata(metadata);
+    this.onChanged?.();
+    return true;
+  }
+
+  // team: an abbreviation like "LAL" (give a team), "NONE" (take it out of its
+  // team = No Team), or null (undo: back to the game's own team).
+  setCustomTeam(playerKey, team) {
+    const metadata = this._metadata();
+    const value = team ? String(team).trim().toUpperCase() : null;
+    if (value && (value === MODIFIED_TEAM || value === 'X')) throw new Error('Bu takım atanamaz.');
+    const entry = { ...(metadata.players[playerKey] || {}) };
+    if (value) entry.customTeam = value; else delete entry.customTeam;
+    entry.updatedAt = new Date().toISOString();
+    metadata.players[playerKey] = entry;
     this.store.saveCardMetadata(metadata);
     this.onChanged?.();
     return true;
@@ -578,490 +438,155 @@ class CardsService {
 
   resetData() {
     this.store.saveCards({ version: 2, updatedAt: null, players: {} });
-    // Reset is intentionally stronger than Refresh: remove player-role mappings
-    // and followed teams too, but keep the role definitions themselves.
+    // Reset is stronger than Refresh: player roles and followed teams go too,
+    // the role definitions stay.
     const metadata = this._metadata();
     metadata.players = {};
     metadata.trackedTeams = [];
     this.store.saveCardMetadata(metadata);
-    this._setRuntime({ status: 'idle', message: '', scannedTeams: 0, scannedPlayers: 0, inventoryCards: 0 });
+    this._setRuntime({ status: 'idle', message: '', step: null, scannedTeams: 0, scannedPlayers: 0, inventoryCards: 0 });
     return true;
   }
 
-  // Season-safe merge. Refresh replaces the active game-derived snapshot, while
-  // roles live in card-metadata.json and are migrated when the same player gets
-  // a new key (for example after a roster/team/image-path update).
+  // Replaces the game-derived player list. Roles live in card-metadata.json
+  // under the player key ("id:<playerId>"). Roles saved under an older key
+  // (portrait slug, per-level No Team keys) move to the new key once, when
+  // exactly one scanned player claims that old key.
   syncPlayers(incomingPlayers) {
     if (!Array.isArray(incomingPlayers)) throw new Error('Kart oyuncu listesi geçersiz.');
-    const keys=new Set();
-    for(const incoming of incomingPlayers){
-      const key=incoming.key||playerKeyOf(incoming);
-      if(keys.has(key))throw new Error(`Kart taramasında iki oyuncu aynı kimlikle bulundu (${key}). Roller korunarak tarama durduruldu.`);
+    const keys = new Set();
+    for (const incoming of incomingPlayers) {
+      const key = incoming.key || playerKeyOf(incoming);
+      if (keys.has(key)) throw new Error(`Kart taramasında iki oyuncu aynı kimlikle bulundu (${key}). Roller korunarak tarama durduruldu.`);
       keys.add(key);
     }
     const data = this._data();
     const metadata = this._metadata();
     const now = new Date().toISOString();
-    const previousEntries = Object.entries(data.players);
-    for (const player of Object.values(data.players)) player.active = false;
-
+    const claims = new Map();
+    for (const incoming of incomingPlayers) for (const legacy of incoming.legacyKeys || []) claims.set(legacy, (claims.get(legacy) || 0) + 1);
+    let migrated = 0;
+    const next = {};
     for (const incoming of incomingPlayers) {
       const key = incoming.key || playerKeyOf(incoming);
-      let previousKey = key;
-      let previous = data.players[key] || null;
-
-      if (!previous && incoming.name) {
-        const sameName = previousEntries.filter(([, p]) => normalizeName(p?.name) === normalizeName(incoming.name));
-        const incomingWithName = incomingPlayers.filter(p => normalizeName(p?.name) === normalizeName(incoming.name));
-        // Migrate an old role only for a unique full name. Initials such as
-        // S. Curry can describe several people and must never move roles.
-        if (sameName.length === 1 && incomingWithName.length === 1 &&
-            normalizeName(incoming.name).split(' ')[0].length > 1) {
-          previousKey = sameName[0][0];
-          previous = sameName[0][1];
+      const previous = data.players[key] || {};
+      const { legacyKeys = [], ...clean } = incoming;
+      next[key] = { ...previous, ...clean, key, active: true, firstSeenAt: previous.firstSeenAt || now, lastSeenAt: now };
+      if (!metadata.players[key]?.roleIds?.length) {
+        const legacy = legacyKeys.find(old => claims.get(old) === 1 && metadata.players[old]?.roleIds?.length);
+        if (legacy) {
+          metadata.players[key] = { ...metadata.players[legacy], migratedFrom: legacy, migratedAt: now };
+          migrated++;
         }
       }
-
-      previous = previous || {};
-      data.players[key] = {
-        ...previous,
-        ...incoming,
-        key,
-        position: incoming.position || previous.position || '',
-        team: incoming.team || previous.team || '',
-        teamName: incoming.teamName || previous.teamName || '',
-        grade: incoming.grade || previous.grade || '',
-        stars: Math.max(0, Number(incoming.stars ?? incoming.cardStars ?? previous.stars ?? 0)),
-        cardCount: Math.max(0, Number(incoming.cardCount ?? incoming.count ?? previous.cardCount ?? 0)),
-        active: true,
-        firstSeenAt: previous.firstSeenAt || now,
-        lastSeenAt: now
-      };
-
-      if (previousKey !== key) {
-        const oldMeta = metadata.players[previousKey];
-        if (oldMeta && !metadata.players[key]) metadata.players[key] = { ...oldMeta, migratedAt: now };
-        delete data.players[previousKey];
-        delete metadata.players[previousKey];
-      }
     }
-
+    for (const incoming of incomingPlayers) for (const legacy of incoming.legacyKeys || []) if (claims.get(legacy) === 1) delete metadata.players[legacy];
+    // Second pass for old keys no player claimed (a changed portrait, or the
+    // oldest "name:" keys): move the role only when the full name points to
+    // exactly one non-X player that has no role yet.
+    const byName = new Map();
+    for (const incoming of incomingPlayers) {
+      if (incoming.x) continue;
+      const name = normalizeName(incoming.name);
+      if (name) byName.set(name, byName.has(name) ? null : incoming);
+    }
+    for (const [oldKey, meta] of Object.entries(metadata.players)) {
+      if (oldKey.startsWith('id:') || !meta?.roleIds?.length) continue;
+      const oldName = data.players[oldKey]?.name || (oldKey.startsWith('name:') ? oldKey.slice(5) : '');
+      const target = byName.get(normalizeName(oldName));
+      if (!target) continue;
+      const key = target.key || playerKeyOf(target);
+      if (metadata.players[key]?.roleIds?.length) continue;
+      metadata.players[key] = { ...meta, migratedFrom: oldKey, migratedAt: now };
+      delete metadata.players[oldKey];
+      migrated++;
+    }
+    // Players that disappeared from the game stay (inactive) so their roles survive a season change.
+    for (const [key, player] of Object.entries(data.players)) {
+      if (!next[key] && key.startsWith('id:')) next[key] = { ...player, active: false };
+    }
+    data.players = next;
     data.updatedAt = now;
     this.store.saveCards(data);
     this.store.saveCardMetadata(metadata);
     this.onChanged?.();
+    this._lastMigrated = migrated;
     return this.snapshot();
   }
 
-  async _waitActivateSelected(page, expectedName, expectedStars, timeoutMs = 2500) {
-    const end = Date.now() + timeoutMs;
-    while (Date.now() < end) {
-      const info = await page.evaluate(readActivateSelected).catch(() => null);
-      if (info?.name && normalizeName(info.name) === normalizeName(expectedName)) {
-        if (expectedStars == null || Number(info.stars) === Number(expectedStars)) return info;
-      }
-      await sleep(40);
-    }
-    return null;
-  }
-
-  async _waitSpotlight(page, expectedName, expectedLevel, timeoutMs = 2500) {
-    const end = Date.now() + timeoutMs;
-    while (Date.now() < end) {
-      const info = await page.evaluate(readCardSpotlight).catch(() => null);
-      if (info?.name && normalizeName(info.name) === normalizeName(expectedName)) {
-        if (!expectedLevel || Number(info.level) === Number(expectedLevel)) return info;
-      }
-      await sleep(40);
-    }
-    return null;
-  }
-
-  async _waitTeamPage(page, expected, timeoutMs = 5000) {
-    const end = Date.now() + timeoutMs;
-    while (Date.now() < end) {
-      const state = await page.evaluate(readActivateTeamPanel).catch(() => null);
-      if (state?.current === expected) return state;
-      await sleep(80);
-    }
-    throw new Error(`Star Cards takım sayfası ${expected} yüklenemedi.`);
-  }
-
-  async _waitTeamSelected(page, teamName, timeoutMs = 4000) {
-    const end = Date.now() + timeoutMs;
-    const img = page.getByRole('img', { name: teamName, exact: true }).first();
-    const button = img.locator('xpath=ancestor::button[1]');
-    while (Date.now() < end) {
-      const pressed = await button.getAttribute('aria-pressed').catch(() => null);
-      if (pressed === 'true') return true;
-      await sleep(50);
-    }
-    return false;
-  }
-
-  _assertScanDeadline() {
-    if (this._scanDeadline && Date.now() > this._scanDeadline) {
-      throw new Error('Cards taraması 10 dakikayı aştığı için durduruldu. Tarama takılmış olabilir.');
-    }
-  }
-
-  async _waitMyPage(page, expected, timeoutMs = 5000) {
-    const end = Date.now() + timeoutMs;
-    while (Date.now() < end) {
-      const state = await page.evaluate(readMyPlayerPager).catch(() => null);
-      if (state?.current === expected) return state;
-      await sleep(80);
-    }
-    throw new Error(`My Player Card sayfası ${expected} yüklenemedi.`);
-  }
-
-  async _waitActivateTeamPanelReady(page, timeoutMs = 30000) {
-    const end = Date.now() + timeoutMs;
-    let lastState = null;
-    while (Date.now() < end) {
-      lastState = await page.evaluate(readActivateTeamPanel).catch(() => null);
-      if (lastState?.teams?.length) return lastState;
-      await sleep(120);
-    }
-    return lastState;
-  }
-
-  async _openStarCards(session, account) {
-    const page = session.page;
+  // ---------- Scan over the game's socket ----------
+  async _fetchAll(account, signal) {
+    const session = await this.sessions.get(account, { owner: 'cards', log: (level, message) => this._log(account, level, message) });
+    const userId = session.userId;
+    const open = () => GameSocket.open({ createSocket: this.createSocket, cookie: session.cookieHeader, signal });
+    const main = await open();
+    const sockets = [main];
     try {
-      await this.browser.normalizeToStadium(session, (level, message) => this._log(account, level, message));
-    } catch {
-      await page.goto('https://www.dreamteamph.com/main', { waitUntil: 'domcontentloaded' });
-      await this.browser.waitForMain(page, { timeoutMs: 150000, log: (level, message) => this._log(account, level, message) });
-    }
-    await this.accountProfile?.captureStadium(account.id, page).catch(() => {});
-
-    // The Star Card control is a button wrapping img[alt="Star Card"].
-    // Click the button itself, then wait for the Star Cards shell to render.
-    const starCardImg = page.locator(STAR_CARD_SELECTOR).first();
-    await starCardImg.waitFor({ state: 'visible', timeout: 60000 });
-    const starCardButton = starCardImg.locator('xpath=ancestor::button[1]');
-    if (await starCardButton.count()) await starCardButton.click();
-    else await starCardImg.click();
-    this._log(account, 'info', 'Star Cards button clicked.');
-
-    await page.locator('nav[aria-label="Star card sections"]').first().waitFor({ state: 'visible', timeout: 60000 });
-
-    // The navigation appears before the Activate/team grid on some machines.
-    // Do not start scanning until the actual team panel has rendered.
-    const activateButton = page.locator('nav[aria-label="Star card sections"] button').filter({ hasText: 'Activate' }).first();
-    if (!(await activateButton.getAttribute('aria-current').catch(() => null))) {
-      await activateButton.click();
-    }
-
-    let panel = await this._waitActivateTeamPanelReady(page, 30000);
-    if (!panel?.teams?.length) {
-      // One retry handles React transitions where the tab shell appears but
-      // the Activate body did not mount on the first click.
-      await activateButton.click().catch(() => {});
-      panel = await this._waitActivateTeamPanelReady(page, 15000);
-    }
-    if (!panel?.teams?.length) {
-      throw new Error('Star Cards açıldı ancak takım listesi yüklenmedi.');
-    }
-    this._log(account, 'info', `Star Cards ready · team page ${panel.current}/${panel.total} · ${panel.teams.length} teams.`);
-  }
-
-  async _scanActivate(page, account) {
-    const activateButton = page.locator('nav[aria-label="Star card sections"] button').filter({ hasText: 'Activate' }).first();
-    if (!(await activateButton.getAttribute('aria-current').catch(() => null))) {
-      await activateButton.click({ timeout: 5000 });
-    }
-
-    let panel = await this._waitActivateTeamPanelReady(page, 20000);
-    if (!panel?.teams?.length) throw new Error('Star Cards takım listesi bulunamadı.');
-    while (panel.current > 1) {
-      this._assertScanDeadline();
-      const prev = page.getByRole('button', { name: 'Previous page' }).first();
-      await prev.click({ timeout: 5000 });
-      panel = await this._waitTeamPage(page, panel.current - 1);
-    }
-
-    const seen = new Map();
-    let scannedTeams = 0;
-    this._log(account, 'info', 'Cards Activate taraması başladı · 3 takım sayfası.');
-
-    for (let targetPage = 1; targetPage <= 3; targetPage++) {
-      this._assertScanDeadline();
-      panel = await this._waitTeamPage(page, targetPage);
-      const teams = panel.teams || [];
-      if (!teams.length) throw new Error(`Star Cards takım sayfası ${targetPage} boş okundu; mevcut kart verisi değiştirilmedi.`);
-
-      for (const team of teams) {
-        this._assertScanDeadline();
-        const teamImg = page.getByRole('img', { name: team.name, exact: true }).first();
-        const teamButton = teamImg.locator('xpath=ancestor::button[1]');
-        const wasSelected = (await teamButton.getAttribute('aria-pressed').catch(() => null)) === 'true';
-        const beforeTiles = await page.evaluate(readActivatePlayerTiles).catch(() => []);
-        const beforeSignature = beforeTiles.map(x => `${x.name}|${x.stars}`).join('||');
-
-        await teamButton.scrollIntoViewIfNeeded().catch(() => {});
-        if (!wasSelected) await teamButton.click({ timeout: 5000 });
-
-        const selected = await this._waitTeamSelected(page, team.name, 4000);
-        if (!selected) throw new Error(`${team.code || team.name} takım seçimi doğrulanamadı.`);
-
-        let tiles = await page.evaluate(readActivatePlayerTiles).catch(() => []);
-        const waitEnd = Date.now() + 2500;
-        while (Date.now() < waitEnd) {
-          const signature = tiles.map(x => `${x.name}|${x.stars}`).join('||');
-          if (tiles.length && (wasSelected || signature !== beforeSignature)) break;
-          await sleep(60);
-          tiles = await page.evaluate(readActivatePlayerTiles).catch(() => []);
+      this._setRuntime({ status: 'scanning', step: 'teams', stepParams: {} });
+      const teams = (await main.call('starcard:getTeams', { userId }, 'starcard:teams', { signal }))?.teams || [];
+      if (!teams.length) throw new Error('No star card teams in the reply.');
+      this._setRuntime({ step: 'inventory', stepParams: {} });
+      const inventory = (await main.call('starcard:getUserStarCards', { userId }, 'starcard:userStarCards', { timeoutMs: 30000, signal }))?.inventory || [];
+      // Rosters in parallel over a few sockets (each socket answers in order).
+      while (sockets.length < Math.min(this.rosterConcurrency, teams.length)) sockets.push(await open());
+      const rosters = new Map();
+      let next = 0;
+      await Promise.all(sockets.map(async socket => {
+        while (next < teams.length) {
+          const team = teams[next++];
+          const reply = await socket.call('starcard:getTeamRoster', { teamId: team.id, userId }, 'starcard:teamRoster', { signal });
+          if (Number(reply?.teamId) !== Number(team.id)) throw new Error(`Roster reply for team ${team.id} did not match.`);
+          rosters.set(team.id, reply.players || []);
+          this._setRuntime({ step: 'rosters', stepParams: { done: rosters.size, total: teams.length }, scannedTeams: rosters.size });
         }
-        if (!tiles.length) throw new Error(`${team.code || team.name} oyuncuları okunamadı; mevcut kart verisi değiştirilmedi.`);
-
-        // Fast path: the Activate cards already contain name, grade, current
-        // stars and image. The selected team gives us the team identity. The
-        // old code clicked every player and waited for the detail panel, which
-        // could turn a complete scan into a 30-60 minute job.
-        const isXTeamPage = targetPage === 3;
-
-        for (const tile of tiles) {
-          const player = {
-            name: tile.name,
-            team: isXTeamPage ? 'X Team' : (team.code || team.name),
-            teamName: isXTeamPage ? 'X Team' : (team.name || ''),
-            position: '',
-            grade: tile.grade || '',
-            stars: Math.max(0, Number(tile.stars || 0)),
-            imagePath: tile.imagePath || '',
-            slug: imageSlug(tile.imagePath || '') || undefined,
-            cardCount: 0,
-            inventoryLevels: {}
-          };
-          player.key = playerKeyOf(player);
-          seen.set(`${player.key}|name:${compactName(player.name)}`, player);
-        }
-
-        scannedTeams += 1;
-        this._setRuntime({
-          status: 'scanning',
-          message: `Activate · ${team.code || team.name} · ${scannedTeams} takım`,
-          scannedTeams,
-          scannedPlayers: seen.size
-        });
-        this._log(account, 'info', `Cards Activate · ${team.code || team.name} · ${tiles.length} oyuncu.`);
-      }
-
-      if (targetPage < 3) {
-        const next = page.getByRole('button', { name: 'Next page' }).first();
-
-        if (!(await next.isEnabled().catch(() => false))) {
-          throw new Error(`Star Cards ${targetPage + 1}. takım sayfasına geçilemiyor.`);
-        }
-
-        await next.click({ timeout: 5000 });
-        await this._waitTeamPage(page, targetPage + 1);
-      }
+      }));
+      return { teams, inventory, rosters };
+    } finally {
+      for (const socket of sockets) socket.close();
     }
-
-    const found=disambiguatePlayerKeys([...seen.values()]);
-    this._log(account, 'info', `Cards Activate tamamlandı · ${scannedTeams} takım · ${seen.size} oyuncu.`);
-    return found;
-  }
-
-  async _scanMyPlayerCards(page, account) {
-    const tab = page.locator('nav[aria-label="Star card sections"] button').filter({ hasText: 'My Player Card' }).first();
-    await tab.click({ timeout: 5000 });
-    await page.getByText('My Star Cards', { exact: true }).first().waitFor({ state: 'visible', timeout: 30000 });
-
-    // Lv 1/Lv 2/... are filters. Keep All selected and use only the bottom pager.
-    const allButton = page.getByRole('button', { name: 'All', exact: true }).first();
-    if (await allButton.isVisible().catch(() => false)) await allButton.click({ timeout: 5000 });
-
-    let pager = await page.evaluate(readMyPlayerPager).catch(() => null);
-    if (!pager) throw new Error('My Player Card sayfalaması bulunamadı.');
-    while (pager.current > 1) {
-      this._assertScanDeadline();
-      const prev = page.getByRole('button', { name: 'Previous page' }).last();
-      await prev.click({ timeout: 5000 });
-      pager = await this._waitMyPage(page, pager.current - 1);
-    }
-
-    const inventory = new Map();
-    let inventoryCards = 0;
-    this._log(account, 'info', `My Player Card taraması başladı · ${pager.total} sayfa.`);
-
-    while (true) {
-      this._assertScanDeadline();
-      pager = await page.evaluate(readMyPlayerPager).catch(() => null);
-      if (!pager) throw new Error('My Player Card sayfa bilgisi okunamadı.');
-
-      let tiles = await page.evaluate(readMyPlayerCardTiles).catch(() => []);
-      const waitEnd = Date.now() + 2500;
-      while (!tiles.length && Date.now() < waitEnd) {
-        await sleep(60);
-        tiles = await page.evaluate(readMyPlayerCardTiles).catch(() => []);
-      }
-      if (!tiles.length) throw new Error(`My Player Card ${pager.current}/${pager.total} boş okundu; mevcut kart verisi değiştirilmedi.`);
-
-      // Fast path: each tile already contains player name, card level and xN.
-      // No per-card click is necessary to calculate the raw-card equivalent.
-      for (const tile of tiles) {
-        const level = Math.max(1, Math.min(5, Number(tile.level || 1)));
-        const quantity = Math.max(1, Number(tile.quantity || 1));
-        const equivalent = quantity * (4 ** (level - 1));
-        const identity = {
-          name: tile.name,
-          imagePath: tile.imagePath || '',
-          slug: imageSlug(tile.imagePath || '') || undefined
-        };
-        // The same portrait can be used by two different players. Aggregate
-        // copies of one player's card by portrait AND name.
-        const key = `${playerKeyOf(identity)}|name:${compactName(identity.name)}`;
-        let entry = inventory.get(key);
-        if (!entry) {
-          entry = {
-            key,
-            name: identity.name,
-            imagePath: identity.imagePath,
-            position: '',
-            teamName: '',
-            rawEquivalent: 0,
-            levels: {}
-          };
-          inventory.set(key, entry);
-        }
-        entry.rawEquivalent += equivalent;
-        entry.levels[level] = Number(entry.levels[level] || 0) + quantity;
-        inventoryCards += quantity;
-      }
-
-      this._setRuntime({
-        status: 'scanning',
-        message: `My Player Card · ${pager.current}/${pager.total}`,
-        inventoryCards
-      });
-      this._log(account, 'info', `My Player Card · ${pager.current}/${pager.total} · ${tiles.length} kart satırı.`);
-
-      if (pager.current >= pager.total || pager.nextDisabled) break;
-      const next = page.getByRole('button', { name: 'Next page' }).last();
-      await next.click({ timeout: 5000 });
-      await this._waitMyPage(page, pager.current + 1);
-    }
-
-    this._log(account, 'info', `My Player Card tamamlandı · ${inventoryCards} kart · ${inventory.size} oyuncu.`);
-    return [...inventory.values()];
-  }
-
-  _mergeActivateAndInventory(activatePlayers, inventoryEntries) {
-    const byKey = new Map(inventoryEntries.map(x => [x.key, x]));
-    const used = new Set();
-
-    const merged = activatePlayers.map(player => {
-      let inv = byKey.get(player.key) || null;
-
-      if (!inv) {
-        inv = resolvePlayer(
-          inventoryEntries.filter(x => !used.has(x.key)),
-          player
-        );
-      }
-
-      if (inv && used.has(inv.key)) inv = null;
-      if (inv) used.add(inv.key);
-
-      return {
-        ...player,
-        cardCount: Math.max(0, Number(inv?.rawEquivalent || 0)),
-        inventoryLevels: inv?.levels || {},
-        inventoryTeamName: inv?.teamName || null,
-        inventoryPosition: inv?.position || null
-      };
-    });
-
-    for (const inv of inventoryEntries) {
-      if (used.has(inv.key)) continue;
-
-      const levels = Object.entries(inv.levels || {})
-        .map(([level, quantity]) => [
-          Number(level),
-          Number(quantity)
-        ])
-        .filter(([level, quantity]) => level >= 1 && quantity > 0)
-        .sort((a, b) => a[0] - b[0]);
-
-      for (const [level, quantity] of levels) {
-        merged.push({
-          key: `${inv.key}|no-team-star:${level}`,
-          name: inv.name,
-          team: 'No Team',
-          teamName: 'No Team',
-          position: inv.position || '',
-          grade: inv.grade || '',
-          stars: level,
-          cardCount: quantity,
-          inventoryLevels: {
-            [level]: quantity
-          },
-          imagePath: inv.imagePath || '',
-          slug: imageSlug(inv.imagePath || '') || undefined,
-          active: true,
-          noTeam: true
-        });
-      }
-    }
-
-    return merged;
   }
 
   async refresh() {
     if (this.scanning) throw new Error('Kart taraması zaten çalışıyor.');
-    if (!this.browser || !this.credentials || !this.accountProfile) throw new Error('Kart tarayıcı servisi hazır değil.');
+    if (!this.sessions || !this.accountProfile) throw new Error('Kart tarayıcı servisi hazır değil.');
     const account = this._mainAccount();
-    if (this.browser.isFeatureLocked(account.id)) {
-      throw new Error('Ana hesap şu anda başka bir tarayıcı işlemi tarafından kullanılıyor. Önce o işlemi kapatıp Kartları yenile.');
-    }
-    const owner = `cards:${account.id}`;
-    let auth = null;
     this.scanning = true;
-    this._scanDeadline = Date.now() + (10 * 60 * 1000);
-    this._setRuntime({ status: 'starting', message: 'Star Cards açılıyor…', scannedTeams: 0, scannedPlayers: 0, inventoryCards: 0 });
-    this._log(account, 'info', 'Cards scan starting…');
-
+    const startedAt = Date.now();
+    this._setRuntime({ status: 'starting', step: 'login', stepParams: {}, message: '', scannedTeams: 0, scannedPlayers: 0, inventoryCards: 0 });
+    this._log(account, 'info', 'Cards scan starting…', 'cd.started');
     try {
-      auth = await this.browser.authenticate(account, {
-        login: account.login,
-        password: this.credentials.decryptSecret(account.passwordEncrypted)
-      }, { visible: false, keepOpen: true, owner, log: (level, message) => this._log(account, level, message) });
-
-      this.browser.lockFeature(account.id, 'cards');
-      await this._openStarCards(auth.session, account);
-      this._setRuntime({ status: 'scanning', message: 'Activate · takım 1/2' });
-      const activatePlayers = await this._scanActivate(auth.session.page, account);
-      this._setRuntime({ status: 'scanning', message: 'My Player Card açılıyor…' });
-      const inventory = await this._scanMyPlayerCards(auth.session.page, account);
-      const merged = this._mergeActivateAndInventory(activatePlayers, inventory);
-
-      const result = this.syncPlayers(merged);
-      this._setRuntime({ status: 'done', message: `${merged.length} oyuncu`, scannedPlayers: merged.length });
-      this._log(account, 'success', `Cards scan completed · ${merged.length} players · ${inventory.length} card identities.`);
+      const { teams, inventory, rosters } = await this._fetchAll(account, null);
+      const players = buildCardPlayers(teams, inventory, rosters);
+      const result = this.syncPlayers(players);
+      const counts = {
+        players: players.filter(p => !p.noTeam).length,
+        noTeam: players.filter(p => p.noTeam).length,
+        cards: inventory.reduce((sum, c) => sum + (Number(c.quantity) || 1), 0),
+        teams: teams.length,
+        seconds: Math.round((Date.now() - startedAt) / 100) / 10,
+        migrated: this._lastMigrated || 0
+      };
+      this._setRuntime({ status: 'done', step: 'done', stepParams: counts, message: `${counts.players} oyuncu`, scannedPlayers: players.length, inventoryCards: counts.cards });
+      this._log(account, 'success', `Cards scan completed · ${counts.teams} teams · ${counts.players} players · ${counts.noTeam} No Team · ${counts.cards} cards · ${counts.seconds}s.`, 'cd.done', counts);
+      if (counts.migrated) this._log(account, 'info', `${counts.migrated} player role(s) moved to the new player ids.`, 'cd.migrated', { count: counts.migrated });
       return result;
     } catch (error) {
-      this._setRuntime({ status: 'error', message: error.message });
-      this._log(account, 'error', `Cards: ${error.message}`);
+      this._setRuntime({ status: 'error', step: 'error', stepParams: { error: error.message }, message: error.message });
+      this._log(account, 'error', `Cards: ${error.message}`, 'cd.failed', { error: error.message });
       throw error;
     } finally {
-      this.browser.unlockFeature(account.id, 'cards');
-      if (auth?.owner) await this.browser.release(account.id, auth.owner, { closeWhenUnused: true }).catch(() => {});
       this.scanning = false;
-      this._scanDeadline = null;
       this.onChanged?.();
     }
   }
 
+  // Scout still reads agents from the screen (portrait + name). Cards keeps
+  // the portrait path only for this lookup; X players have their own portraits.
   findForScout(agent) {
     const snap = this.snapshot();
-    const active = snap.players.filter(p => p.active !== false);
-    const player = resolvePlayer(active, agent, { requirePortrait: true });
+    const active = snap.players.filter(p => p.active !== false && !p.noTeam);
+    const player = (agent?.playerId && active.find(p => p.playerId === agent.playerId)) || resolvePlayer(active, agent, { requirePortrait: true });
     if (!player) return null;
-
     const team = snap.teams.find(t => t.team === player.team);
     const blocker = team?.blockers?.find(b => b.key === player.key);
     return {
@@ -1080,4 +605,60 @@ class CardsService {
   }
 }
 
-module.exports = { CardsService, DEFAULT_ROLES, cardProgress, directNextProgress, playerKeyOf, namesMatch, resolvePlayer, disambiguatePlayerKeys, readMyPlayerPager, readMyPlayerCardTiles };
+// One entry per roster player (keyed by playerId) plus one per No Team card
+// owner. Stars come from the roster, cards from the inventory by playerId.
+function buildCardPlayers(teams, inventory, rosters) {
+  const teamById = new Map(teams.map(t => [Number(t.id), t]));
+  const owned = new Map();
+  for (const stack of inventory) {
+    const item = stack.item || {};
+    const linked = item.linkedPlayer || {};
+    const playerId = item.linkedPlayerId || linked.id;
+    if (!playerId) continue;
+    if (!owned.has(playerId)) owned.set(playerId, { levels: {}, item, linked });
+    const entry = owned.get(playerId);
+    const level = Number(item.level) || 1;
+    entry.levels[level] = (entry.levels[level] || 0) + (Number(stack.quantity) || 1);
+  }
+  const players = [];
+  const seen = new Set();
+  for (const [teamId, roster] of rosters) {
+    const team = teamById.get(Number(teamId)) || {};
+    for (const row of roster) {
+      const p = row.player || {};
+      const playerId = row.playerId || p.id;
+      if (!playerId || seen.has(playerId)) continue;
+      seen.add(playerId);
+      const cards = owned.get(playerId)?.levels || {};
+      const slug = imageSlug(p.avatarUrl);
+      players.push({
+        key: `id:${playerId}`, playerId, name: p.name || '', grade: p.rating || '', position: p.position || '',
+        type: p.type || null, x: p.type === 'XPLAYER',
+        team: team.abbreviation || String(teamId), teamName: team.name || '', teamId: Number(teamId),
+        stars: Math.max(0, Number(row.currentLevel) || 0), cardsUsed: Number(row.totalCardsUsed) || 0,
+        cards, cardCount: cardEquivalent(cards), inventoryLevels: cards,
+        imagePath: p.avatarUrl || '', slug: slug || undefined,
+        // Older saves keyed normal players by portrait slug.
+        legacyKeys: slug && p.type !== 'XPLAYER' ? [`slug:${slug}`] : []
+      });
+    }
+  }
+  for (const [playerId, entry] of owned) {
+    if (seen.has(playerId)) continue;
+    const linked = entry.linked;
+    if ((linked.starCardTeamAssignment || []).length) continue;
+    const slug = imageSlug(entry.item.icon);
+    const levels = Object.keys(entry.levels);
+    players.push({
+      key: `id:${playerId}`, playerId, name: linked.name || entry.item.name || '', grade: linked.rating || '', position: linked.position || '',
+      type: linked.type || null, x: linked.type === 'XPLAYER', noTeam: true,
+      team: 'No Team', teamName: 'No Team', teamId: null, stars: null,
+      cards: entry.levels, cardCount: cardEquivalent(entry.levels), inventoryLevels: entry.levels,
+      imagePath: entry.item.icon || '', slug: slug || undefined,
+      legacyKeys: slug ? [`slug:${slug}`, ...levels.map(level => `slug:${slug}|no-team-star:${level}`)] : []
+    });
+  }
+  return players;
+}
+
+module.exports = { CardsService, effectiveTeamOf, MODIFIED_TEAM, DEFAULT_ROLES, cardProgress, directNextProgress, cardEquivalent, buildCardPlayers, playerKeyOf, namesMatch, resolvePlayer, disambiguatePlayerKeys, readMyPlayerPager, readMyPlayerCardTiles };

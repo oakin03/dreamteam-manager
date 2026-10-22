@@ -2,6 +2,9 @@ const fs = require('fs');
 const path = require('path');
 const { ensureDir } = require('./store.cjs');
 
+// Bundled tasks that were replaced by a built-in service: their copies are removed.
+const RETIRED_TASKS = ['task2-pvp'];
+
 function copyRecursive(src, dest, overwrite = false) {
   if (!fs.existsSync(src)) return;
   ensureDir(dest);
@@ -19,6 +22,7 @@ class TaskRegistry {
     this.bundledTaskDir = bundledTaskDir;
     this.tasks = new Map();
     ensureDir(taskDir);
+    for (const name of RETIRED_TASKS) fs.rmSync(path.join(taskDir, name), { recursive: true, force: true });
     // Bundled default tasks are application code and must be refreshed on updates.
     // User-created plugin folders remain untouched.
     if (fs.existsSync(bundledTaskDir)) {

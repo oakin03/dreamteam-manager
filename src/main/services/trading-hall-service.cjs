@@ -1,144 +1,69 @@
-const { CITY_SELECTOR, STADIUM_SELECTOR } = require('./browser-service.cjs');
+const { io } = require('socket.io-client');
 
 function sleep(ms) { return new Promise(resolve => setTimeout(resolve, ms)); }
 function abortError() { const e = new Error('Aborted'); e.name = 'AbortError'; return e; }
 
-const BUILDING_SELECTOR = 'div.absolute.cursor-pointer[style*="top: 260px"][style*="left: 220px"][style*="width: 200px"][style*="height: 120px"]';
+// Trading Hall listings come from the game's public market socket: the page UI
+// emits market:getMarketPlayers and the server answers with a separate
+// market:marketPlayersData event (no ack, no page number in the reply), 8
+// tickets per page, sorted by price. No login is needed, so the scan runs
+// without a browser: a small pool of sockets, one request in flight per
+// socket so every reply belongs to the request that socket just sent.
+const SOCKET_URL = 'https://dreamteamph.com';
+const SOCKET_PATH = '/socket/';
+const REQUEST_EVENT = 'market:getMarketPlayers';
+const REPLY_EVENT = 'market:marketPlayersData';
+const PAGE_SIZE = 8;
+const CONCURRENCY = 8;
+const REQUEST_TIMEOUT_MS = 15000;
+const PAGE_ATTEMPTS = 3;
+const CURRENCY_LABELS = { APK_TICKET: 'APK', TICKET: 'TIX' };
+const SCAN_LABELS = { APK_TICKET: 'APK', TICKET: 'TIX', all: 'All' };
+const PROGRESS_LOG_STEPS = [25, 50, 75];
 
-function extractTradingCards() {
-  const cards = Array.from(document.querySelectorAll('div.group\\/card'));
-  const cleanInt = (txt) => {
-    if (txt == null) return null;
-    const m = String(txt).replace(/[^0-9-]/g, '');
-    if (!m || m === '-') return null;
-    const n = Number(m);
-    return Number.isFinite(n) ? n : null;
-  };
-  const directTextAfterLabel = (card, wanted) => {
-    for (const d of card.querySelectorAll('div')) {
-      if ((d.textContent || '').trim() !== wanted) continue;
-      const p = d.parentElement;
-      if (!p) continue;
-      const kids = Array.from(p.children).filter(x => x.tagName === 'DIV');
-      if (kids.length >= 2) return (kids[1].textContent || '').trim();
-    }
-    return '';
-  };
+const fmt = value => Number(value || 0).toLocaleString('en-US');
+const seconds = ms => `${Math.max(0, Math.round(ms / 1000))}s`;
 
-  return cards.map(card => {
-    const playerImg = Array.from(card.querySelectorAll('img')).find(img => {
-      const src = (img.getAttribute('src') || '').toLowerCase();
-      return img.getAttribute('alt') && (src.includes('/players/') || src.includes('%2fplayers%2f'));
-    });
-    if (!playerImg) return null;
-
-    let position = null;
-    let grade = null;
-    for (const d of card.querySelectorAll('div')) {
-      const cls = d.classList;
-      const value = (d.textContent || '').trim().toUpperCase();
-      if (cls.contains('absolute') && cls.contains('left-0') && cls.contains('top-0.5')) position = value;
-      if (cls.contains('absolute') && cls.contains('bottom-1') && cls.contains('right-1.5')) grade = value;
-    }
-
-    const salary = cleanInt(directTextAfterLabel(card, 'Salary'));
-    const seller = directTextAfterLabel(card, 'Seller') || null;
-
-    let currency = null;
-    let price = null;
-    const ticket = card.querySelector('img[alt="ticket"]');
-    const game = Array.from(card.querySelectorAll('span')).find(s => (s.textContent || '').includes('🎮'));
-    const marker = ticket || game;
-    if (marker && marker.parentElement) {
-      currency = ticket ? 'TIX' : 'APK';
-      const nums = Array.from(marker.parentElement.querySelectorAll('span'))
-        .map(s => cleanInt(s.textContent))
-        .filter(v => v !== null);
-      if (nums.length) price = nums[nums.length - 1];
-    }
-
-    if (salary === null || price === null || !currency) return null;
-    return {
-      name: (playerImg.getAttribute('alt') || '').trim(),
-      position,
-      grade,
-      salary,
-      base: null,
-      value: null,
-      valueChange: null,
-      price,
-      currency,
-      seller
-    };
-  }).filter(Boolean);
-}
-
-function readPageState() {
-  let pagination = null;
-  let firstDisabled = true;
-  let prevDisabled = true;
-  let nextDisabled = true;
-  let lastDisabled = true;
-
-  for (const parent of document.querySelectorAll('div')) {
-    const children = Array.from(parent.children || []);
-    const buttons = children.filter(el => el.tagName === 'BUTTON');
-    if (buttons.length < 4) continue;
-    const labels = buttons.map(b => (b.textContent || '').trim());
-    if (!['«', '‹', '›', '»'].every(x => labels.includes(x))) continue;
-    const span = children.find(el => el.tagName === 'SPAN' && /^(\d+)\s*\/\s*(\d+)$/.test((el.textContent || '').trim()));
-    if (!span) continue;
-    const m = (span.textContent || '').trim().match(/^(\d+)\s*\/\s*(\d+)$/);
-    const disabled = (label) => {
-      const btn = buttons.find(b => (b.textContent || '').trim() === label);
-      return !btn || !!btn.disabled || btn.hasAttribute('disabled') || btn.getAttribute('aria-disabled') === 'true';
-    };
-    pagination = { current: Number(m[1]), total: Number(m[2]) };
-    firstDisabled = disabled('«');
-    prevDisabled = disabled('‹');
-    nextDisabled = disabled('›');
-    lastDisabled = disabled('»');
-    break;
-  }
-
-  const text = (document.body.textContent || '').toLowerCase();
+function ticketToRow(ticket, sourcePage) {
+  const player = ticket?.player || {};
+  const price = Number(ticket?.price);
+  const salary = Number(ticket?.signedSalary);
+  const currency = CURRENCY_LABELS[ticket?.paymentMode] || ticket?.paymentMode || null;
+  if (!Number.isFinite(price) || !Number.isFinite(salary) || !currency) return null;
+  const base = Number(player.newBaseSalary);
+  const hasBase = Number.isFinite(base) && base > 0;
   return {
-    pagination,
-    firstDisabled,
-    prevDisabled,
-    nextDisabled,
-    lastDisabled,
-    loadingPlayers: text.includes('loading players'),
-    empty: text.includes('no players') || text.includes('no player') || text.includes('no listings') || text.includes('no listing') || text.includes('nothing here'),
-    cardCount: document.querySelectorAll('div.group\\/card').length
+    id: ticket.id,
+    playerId: ticket.playerId || player.id || null,
+    name: String(player.visualName || player.name || '').trim(),
+    position: player.position ? String(player.position).toUpperCase() : null,
+    grade: player.rating ? String(player.rating).toUpperCase() : null,
+    salary,
+    // The game shows its BASE badge when signedSalary <= newBaseSalary.
+    base: hasBase ? base : null,
+    // How far the salary is above (+) or below (-) base, in percent.
+    basePct: hasBase ? Math.round(((salary - base) / base) * 1000) / 10 : null,
+    // Set from the game's own basePlayersOnly listing after the scan.
+    isBase: null,
+    value: null,
+    valueChange: null,
+    price,
+    currency,
+    seller: ticket.user?.teamName || null,
+    sourcePage
   };
-}
-
-function clickPagerButton(label) {
-  for (const parent of document.querySelectorAll('div')) {
-    const children = Array.from(parent.children || []);
-    const buttons = children.filter(el => el.tagName === 'BUTTON');
-    if (buttons.length < 4) continue;
-    const labels = buttons.map(b => (b.textContent || '').trim());
-    if (!['«', '‹', '›', '»'].every(x => labels.includes(x))) continue;
-    const hasPager = children.some(el => el.tagName === 'SPAN' && /^(\d+)\s*\/\s*(\d+)$/.test((el.textContent || '').trim()));
-    if (!hasPager) continue;
-    const btn = buttons.find(b => (b.textContent || '').trim() === label);
-    if (!btn || btn.disabled || btn.hasAttribute('disabled') || btn.getAttribute('aria-disabled') === 'true') return false;
-    btn.click();
-    return true;
-  }
-  return false;
 }
 
 class TradingHallService {
-  constructor({ store, credentials, browserService, activity, onChanged }) {
+  constructor({ store, credentials, activity, onChanged, createSocket = (url, options) => io(url, options), concurrency = CONCURRENCY, requestTimeoutMs = REQUEST_TIMEOUT_MS }) {
     this.store = store;
     this.credentials = credentials;
-    this.browser = browserService;
     this.activity = activity;
     this.onChanged = onChanged;
-    this.runtime = { status: 'idle', page: 0, totalPages: 0, count: 0, message: '', startedAt: null, finishedAt: null };
+    this.createSocket = createSocket;
+    this.concurrency = concurrency;
+    this.requestTimeoutMs = requestTimeoutMs;
+    this.runtime = { status: 'idle', phase: null, page: 0, totalPages: 0, count: 0, message: '', pagesPerSecond: null, etaSeconds: null, startedAt: null, finishedAt: null };
     this.controller = null;
     this.rows = [];
     this.lastUiEmitAt = 0;
@@ -159,9 +84,8 @@ class TradingHallService {
     return safe;
   }
 
-  log(level, message) {
-    const a = this.tradeAccountSafe();
-    this.activity.add({ level, accountId: a?.id || 'trade', accountName: a?.name || 'Trade Account', message });
+  log(level, message, code = null, params = null) {
+    this.activity.add({ level, accountId: 'trading-hall', accountName: '', taskName: 'Trading Hall', message, code, params });
   }
 
   setRuntime(patch, { emit = true } = {}) {
@@ -191,231 +115,251 @@ class TradingHallService {
     return this.tradeAccountSafe();
   }
 
-  async _readCards(page) {
-    const value = await page.evaluate(extractTradingCards).catch(() => []);
-    return Array.isArray(value) ? value : [];
+  _connect(signal) {
+    return new Promise((resolve, reject) => {
+      if (signal.aborted) return reject(abortError());
+      const socket = this.createSocket(SOCKET_URL, { path: SOCKET_PATH, transports: ['websocket'], reconnection: false, timeout: this.requestTimeoutMs });
+      const cleanup = () => { socket.off('connect', onConnect); socket.off('connect_error', onError); signal.removeEventListener('abort', onAbort); };
+      const onConnect = () => { cleanup(); resolve(socket); };
+      const onError = error => { cleanup(); socket.close(); reject(new Error(`Market socket could not connect: ${error?.message || error}`)); };
+      const onAbort = () => { cleanup(); socket.close(); reject(abortError()); };
+      socket.on('connect', onConnect);
+      socket.on('connect_error', onError);
+      signal.addEventListener('abort', onAbort, { once: true });
+    });
   }
 
-  async _state(page) {
-    return page.evaluate(readPageState).catch(() => null);
+  _request(socket, payload, signal) {
+    return new Promise((resolve, reject) => {
+      if (signal.aborted) return reject(abortError());
+      const timer = setTimeout(() => finish(new Error('Market request timed out.')), this.requestTimeoutMs);
+      const finish = (error, data) => {
+        clearTimeout(timer);
+        socket.off(REPLY_EVENT, onReply);
+        socket.off('disconnect', onDisconnect);
+        signal.removeEventListener('abort', onAbort);
+        if (error) reject(error); else resolve(data);
+      };
+      const onReply = data => finish(null, data);
+      const onDisconnect = () => finish(new Error('Market socket disconnected.'));
+      const onAbort = () => finish(abortError());
+      socket.on(REPLY_EVENT, onReply);
+      socket.on('disconnect', onDisconnect);
+      signal.addEventListener('abort', onAbort, { once: true });
+      socket.emit(REQUEST_EVENT, payload);
+    });
   }
 
-  async _waitHall(page, timeoutMs = 90000) {
-    const end = Date.now() + timeoutMs;
-    let sawLoadingPlayers = false;
-    let loadingFinishedAt = null;
-    while (Date.now() < end) {
-      const state = await this._state(page);
-      if (state?.loadingPlayers) {
-        sawLoadingPlayers = true;
-        loadingFinishedAt = null;
-      } else if (sawLoadingPlayers && loadingFinishedAt === null) {
-        loadingFinishedAt = Date.now();
-      }
+  // Fetches every page of one market query with the shared socket pool.
+  // `workers` hold one socket each and are reused between passes.
+  async _scanQuery(query, { workers, sockets, signal, limit, phase, label }) {
+    const pass = phase === 'base' ? 'th.base' : 'th.listings';
+    const hasLimit = Number.isFinite(limit);
+    const pages = new Map();
+    let stoppedAt = null;
 
-      if (state?.pagination || state?.cardCount > 0 || state?.empty) return true;
-      if (sawLoadingPlayers && loadingFinishedAt && Date.now() - loadingFinishedAt >= 3000) return true;
-      await sleep(100);
-    }
-    throw new Error('Trading Hall did not become ready.');
-  }
-
-  async _openHall(session) {
-    const page = session.page;
-    const existing = await this._state(page);
-    if (existing?.pagination || existing?.cardCount > 0) return;
-
-    await this.browser.normalizeToStadium(session, (l, m) => this.log(l, m));
-    const city = page.locator(CITY_SELECTOR).first();
-    await city.waitFor({ state: 'visible', timeout: 60000 });
-    await city.click();
-
-    await page.locator(STADIUM_SELECTOR).first().waitFor({ state: 'visible', timeout: 90000 }).catch(() => {});
-    const building = page.locator(BUILDING_SELECTOR).first();
-    await building.waitFor({ state: 'visible', timeout: 90000 });
-    await building.click({ position: { x: 100, y: 60 } });
-    await this._waitHall(page);
-  }
-
-  async _applyCurrency(page, desired) {
-    desired = desired || 'APK_TICKET';
-    if (desired === 'all') return;
-    const selects = page.locator('select');
-    const count = await selects.count();
-    for (let i = 0; i < count; i++) {
-      const sel = selects.nth(i);
-      const values = await sel.locator('option').evaluateAll(els => els.map(x => x.value)).catch(() => []);
-      if (values.includes(desired) && values.includes('all')) {
-        if (await sel.inputValue().catch(() => '') !== desired) {
-          await sel.selectOption(desired);
-          await this._waitHall(page, 60000);
+    // A timed-out socket may still deliver its late reply, which would be
+    // read as the answer to its next request; such sockets are replaced.
+    const fetchPage = async (worker, page) => {
+      let lastError = null;
+      for (let attempt = 1; attempt <= PAGE_ATTEMPTS; attempt++) {
+        if (signal.aborted) throw abortError();
+        try {
+          if (!worker.socket) {
+            worker.socket = await this._connect(signal);
+            sockets.add(worker.socket);
+          }
+          const data = await this._request(worker.socket, { ...query, page }, signal);
+          if (!Array.isArray(data?.tickets)) throw new Error('Unexpected Trading Hall reply.');
+          return data;
+        } catch (error) {
+          if (error?.name === 'AbortError') throw error;
+          lastError = error;
+          if (worker.socket) { sockets.delete(worker.socket); worker.socket.close(); worker.socket = null; }
+          if (attempt < PAGE_ATTEMPTS) {
+            this.log('warning', `${label}: page ${page} failed (${error.message}) · retrying on a new connection (${attempt + 1}/${PAGE_ATTEMPTS}).`, 'th.retry', { page, attempt: attempt + 1, max: PAGE_ATTEMPTS });
+            await sleep(attempt * 400);
+          }
         }
-        return;
       }
-    }
-    throw new Error('Trading Hall currency selector was not found.');
-  }
+      throw new Error(`Page ${page} could not be loaded: ${lastError?.message || 'market error'}`);
+    };
 
-  async _waitPage(page, target, signal, timeoutMs = 20000) {
-    const end = Date.now() + timeoutMs;
-    while (Date.now() < end) {
-      if (signal.aborted) throw abortError();
-      const state = await this._state(page);
-      if (state?.pagination?.current === target && !state.loadingPlayers && (state.cardCount > 0 || state.empty)) return state.pagination;
-      await sleep(75);
-    }
-    throw new Error(`Page ${target} did not finish loading.`);
-  }
+    const startedAt = Date.now();
+    const first = await fetchPage(workers[0], 1);
+    const total = Number(first.total || 0);
+    const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+    let lastPage = totalPages;
+    this.log('info', `${label}: ${fmt(total)} listings on ${fmt(totalPages)} pages · ${workers.length} connections.`, `${pass}Listed`, { total, pages: totalPages });
 
-  async _waitNextReady(page, oldPage, signal, timeoutMs = 20000) {
-    const end = Date.now() + timeoutMs;
-    while (Date.now() < end) {
-      if (signal.aborted) throw abortError();
-      const state = await this._state(page);
-      const current = state?.pagination?.current || 0;
-      const total = state?.pagination?.total || 0;
-      if (current > oldPage) return false;
-      if (total && current >= total) throw new Error('Last Trading Hall page reached.');
-      if (state?.pagination && !state.nextDisabled && !state.loadingPlayers) return true;
-      await sleep(75);
-    }
-    return null;
-  }
+    let count = 0;
+    let nextLog = 0;
+    const accept = (page, data) => {
+      const rows = [];
+      for (const ticket of data.tickets) {
+        const row = ticketToRow(ticket, page);
+        if (!row) continue;
+        // Listings are sorted by price, so nothing after this page can be cheaper.
+        if (hasLimit && row.price >= limit) {
+          if (stoppedAt == null || page < stoppedAt) stoppedAt = page;
+          lastPage = Math.min(lastPage, page);
+          break;
+        }
+        rows.push(row);
+      }
+      if (data.tickets.length < PAGE_SIZE) lastPage = Math.min(lastPage, page);
+      pages.set(page, rows);
+      count += rows.length;
 
-  async _returnToFirstPage(page, signal) {
-    const state = await this._state(page);
-    const current = state?.pagination?.current || 1;
-    if (current <= 1) return;
-    const clicked = await page.evaluate(clickPagerButton, '«').catch(() => false);
-    if (!clicked) throw new Error('Trading Hall could not return to page 1.');
-    await this._waitPage(page, 1, signal, 25000);
-  }
+      const done = pages.size;
+      const elapsed = Date.now() - startedAt;
+      const rate = elapsed > 0 ? done / (elapsed / 1000) : null;
+      const remaining = Math.max(0, lastPage - done);
+      const eta = rate ? remaining / rate : null;
+      this.setRuntime({
+        status: 'running', phase, page: done, totalPages: lastPage, count,
+        pagesPerSecond: rate ? Math.round(rate * 10) / 10 : null,
+        etaSeconds: eta == null ? null : Math.round(eta),
+        message: `${label} · ${fmt(done)}/${fmt(lastPage)} pages · ${fmt(count)} listings${rate ? ` · ${rate.toFixed(1)} pages/s` : ''}${eta != null && remaining ? ` · ~${seconds(eta * 1000)} left` : ''}`
+      }, { emit: false });
+      this.emitProgress(false);
 
-  async _nudgePager(page, oldPage, signal) {
-    if (oldPage <= 1) return false;
-    const state = await this._state(page);
-    if (!state?.pagination || state.pagination.current !== oldPage || state.prevDisabled || state.loadingPlayers) return false;
-    this.setRuntime({ message: `Pager recovery · ${oldPage}` }, { emit: false });
-    this.emitProgress(true);
-    if (!(await page.evaluate(clickPagerButton, '‹').catch(() => false))) return false;
-    await this._waitPage(page, oldPage - 1, signal, 20000).catch(() => null);
-    const ready = await this._waitNextReady(page, oldPage - 1, signal, 20000);
-    if (!ready) return false;
-    if (!(await page.evaluate(clickPagerButton, '›').catch(() => false))) return false;
-    await this._waitPage(page, oldPage, signal, 20000);
-    return true;
-  }
+      const percent = Math.floor((done / lastPage) * 100);
+      while (nextLog < PROGRESS_LOG_STEPS.length && percent >= PROGRESS_LOG_STEPS[nextLog]) {
+        // A price limit can shrink lastPage and jump straight to 100%; the
+        // completion line covers that, so only log steps with work left.
+        if (lastPage >= 40 && done < lastPage) {
+          this.log('info', `${label}: ${PROGRESS_LOG_STEPS[nextLog]}% · ${fmt(done)}/${fmt(lastPage)} pages · ${fmt(count)} listings · ${rate.toFixed(1)} pages/s · ~${seconds(eta * 1000)} left.`, 'th.progress', { pct: PROGRESS_LOG_STEPS[nextLog], count, eta: Math.round(eta) });
+        }
+        nextLog++;
+      }
+    };
 
-  async _advancePage(page, oldPage, signal) {
-    let lastError = null;
-    for (let attempt = 1; attempt <= 3; attempt++) {
-      if (signal.aborted) throw abortError();
+    accept(1, first);
+    let nextPage = 2;
+    let failure = null;
+    const active = workers.slice(0, Math.max(1, Math.min(workers.length, lastPage - 1)));
+    // Workers stop at the first failure and are all awaited, so no request
+    // is still running once the sockets are closed.
+    await Promise.all(active.map(async worker => {
       try {
-        const ready = await this._waitNextReady(page, oldPage, signal, 20000);
-        if (ready === null) throw new Error('Next page button stayed disabled.');
-        if (ready) {
-          const clicked = await page.evaluate(clickPagerButton, '›').catch(() => false);
-          if (!clicked) throw new Error('Next page button changed before click.');
+        while (!failure && nextPage <= lastPage) {
+          const page = nextPage++;
+          const data = await fetchPage(worker, page);
+          if (page <= lastPage) accept(page, data);
         }
-        return await this._waitPage(page, oldPage + 1, signal, 20000);
       } catch (error) {
-        lastError = error;
-        if (attempt === 2) await this._nudgePager(page, oldPage, signal).catch(() => false);
-        if (attempt < 3) await sleep(attempt * 350);
+        failure ||= error;
       }
+    }));
+    if (failure) {
+      failure.partialPages = pages;
+      throw failure;
     }
-    throw new Error(`Page ${oldPage + 1} could not be loaded: ${lastError?.message || 'pager error'}`);
-  }
-
-  _saveCurrentRows() {
-    this.store.saveTradingRows(this.rows);
+    return { pages, lastPage, totalPages, stoppedAt, elapsedMs: Date.now() - startedAt };
   }
 
   async start({ stopPrice = 9999, scanCurrency = 'APK_TICKET' } = {}) {
     if (this.controller) throw new Error('Trading Hall scan is already running.');
-    const account = this.store.getTradeAccount();
-    if (!account) throw new Error('Trade account is not configured.');
 
     this.controller = new AbortController();
     const signal = this.controller.signal;
     this.rows = [];
     this.store.saveTradingRows([]);
-    let page = null;
-    let auth = null;
     this.setRuntime({
-      status: 'starting', page: 0, totalPages: 0, count: 0,
-      message: 'Opening Trading Hall…', startedAt: new Date().toISOString(), finishedAt: null
+      status: 'starting', phase: 'listings', page: 0, totalPages: 0, count: 0, pagesPerSecond: null, etaSeconds: null, baseCount: null, stoppedByPrice: false, durationSeconds: null, error: null,
+      message: 'Connecting to the game market…', startedAt: new Date().toISOString(), finishedAt: null
     });
 
+    const limit = Number(stopPrice);
+    const hasLimit = Number.isFinite(limit);
+    const query = { search: '', sort: 'asc', basePlayersOnly: false };
+    if (scanCurrency && scanCurrency !== 'all') query.paymentMode = scanCurrency;
+    const currencyLabel = SCAN_LABELS[scanCurrency] || scanCurrency || 'All';
+    const sockets = new Set();
+    const workers = Array.from({ length: this.concurrency }, () => ({ socket: null }));
+    const startedAt = Date.now();
+    let listing = null;
+    this.log('info', `Scan started · ${currencyLabel} · stop at price ${hasLimit ? fmt(limit) : '—'} · ${this.concurrency} parallel connections.`, 'th.start', { currency: currencyLabel, stop: hasLimit ? limit : null });
+
     try {
-      auth = await this.browser.authenticate(account, {
-        login: account.login,
-        password: this.credentials.decryptSecret(account.passwordEncrypted)
-      }, { visible: false, keepOpen: true, owner: 'trading-hall', log: (l, m) => this.log(l, m) });
+      try {
+        listing = await this._scanQuery(query, { workers, sockets, signal, limit, phase: 'listings', label: 'Listings' });
+      } catch (error) {
+        if (error?.partialPages) listing = { pages: error.partialPages, lastPage: Infinity };
+        throw error;
+      }
+      if (listing.stoppedAt != null) {
+        this.log('info', `Price limit ${fmt(limit)} reached on page ${fmt(listing.stoppedAt)} · the remaining ${fmt(listing.totalPages - listing.stoppedAt)} pages are not needed.`, 'th.priceStop', { price: limit, page: listing.stoppedAt });
+      }
+      this.rows = this._collectRows(listing.pages, listing.lastPage);
+      this.log('info', `Listings read in ${seconds(listing.elapsedMs)} · ${fmt(this.rows.length)} listings.`, 'th.listingsDone', { count: this.rows.length, seconds: Math.round(listing.elapsedMs / 1000) });
 
-      page = auth.session.page;
-      await this._openHall(auth.session);
+      // Second, short pass: the game's own "Base only" listing marks which
+      // tickets get the BASE badge (it also checks ranking/injury we can't see).
       if (signal.aborted) throw abortError();
-      await this._applyCurrency(page, scanCurrency);
-      await this._returnToFirstPage(page, signal);
-
-      let stoppedByPrice = false;
-      while (!signal.aborted) {
-        const state = await this._state(page);
-        const pager = state?.pagination;
-        const pageRows = await this._readCards(page);
-        const current = pager?.current || Math.max(1, this.runtime.page || 1);
-        const total = pager?.total || current;
-
-        for (const row of pageRows) {
-          if (Number.isFinite(Number(stopPrice)) && Number(row.price) >= Number(stopPrice)) {
-            stoppedByPrice = true;
-            break;
-          }
-          this.rows.push({ ...row, sourcePage: current });
-        }
-
-        Object.assign(this.runtime, {
-          status: 'running', page: current, totalPages: total, count: this.rows.length, message: `${current}/${total}`
-        });
-        this.emitProgress(false);
-
-        if (stoppedByPrice || !pager || current >= total) break;
-        if (signal.aborted) throw abortError();
-        await this._advancePage(page, current, signal);
+      this.setRuntime({ status: 'running', phase: 'base', page: 0, totalPages: 0, pagesPerSecond: null, etaSeconds: null, message: 'Marking base players…' });
+      try {
+        const base = await this._scanQuery({ ...query, basePlayersOnly: true }, { workers, sockets, signal, limit, phase: 'base', label: 'Base players' });
+        const baseIds = new Set();
+        for (const rows of base.pages.values()) for (const row of rows) baseIds.add(row.id);
+        for (const row of this.rows) row.isBase = baseIds.has(row.id);
+        this.log('info', `Base players marked in ${seconds(base.elapsedMs)} · ${fmt(this.rows.filter(row => row.isBase).length)} base listings.`, 'th.baseDone', { count: this.rows.filter(row => row.isBase).length });
+      } catch (error) {
+        if (error?.name === 'AbortError') throw error;
+        this.log('warning', `Base players could not be marked (${error.message}) · the "Base only" filter is unavailable for this scan.`, 'th.baseFailed', { error: error.message });
       }
 
       if (signal.aborted) throw abortError();
-      this._saveCurrentRows();
+      this.store.saveTradingRows(this.rows);
+      const baseCount = this.rows.filter(row => row.isBase).length;
       this.setRuntime({
-        status: 'done', count: this.rows.length,
-        message: stoppedByPrice ? 'Stopped at price limit' : 'Completed',
+        status: 'done', phase: null, page: listing.lastPage, totalPages: listing.lastPage, count: this.rows.length,
+        pagesPerSecond: null, etaSeconds: null, baseCount, stoppedByPrice: listing.stoppedAt != null,
+        durationSeconds: Math.round((Date.now() - startedAt) / 1000), error: null,
+        message: `${listing.stoppedAt != null ? 'Stopped at price limit' : 'Completed'} · ${fmt(this.rows.length)} listings · ${fmt(baseCount)} base · ${seconds(Date.now() - startedAt)}`,
         finishedAt: new Date().toISOString()
       });
-      this.log('success', `Trading Hall scan completed · ${this.rows.length} listings.`);
+      this.log('success', `Trading Hall scan completed in ${seconds(Date.now() - startedAt)} · ${fmt(this.rows.length)} listings · ${fmt(baseCount)} base.`, 'th.done', { count: this.rows.length, base: baseCount, seconds: Math.round((Date.now() - startedAt) / 1000) });
       return this.rows;
     } catch (error) {
-      // Keep whatever was already scanned, but write it only once instead of rewriting
-      // an ever-growing JSON file on every page.
-      this._saveCurrentRows();
+      // Keep whatever was already scanned.
+      if (!this.rows.length && listing?.pages) this.rows = this._collectRows(listing.pages, Infinity);
+      this.store.saveTradingRows(this.rows);
       if (error?.name === 'AbortError') {
-        this.setRuntime({ status: 'stopped', count: this.rows.length, message: 'Stopped', finishedAt: new Date().toISOString() });
-        this.log('warning', 'Trading Hall scan stopped.');
+        this.setRuntime({ status: 'stopped', phase: null, count: this.rows.length, etaSeconds: null, message: `Stopped · ${fmt(this.rows.length)} listings kept`, finishedAt: new Date().toISOString() });
+        this.log('warning', `Trading Hall scan stopped by user · ${fmt(this.rows.length)} listings kept.`, 'th.stopped', { count: this.rows.length });
       } else {
-        this.setRuntime({ status: 'error', count: this.rows.length, message: error.message, finishedAt: new Date().toISOString() });
-        this.log('error', `Trading Hall: ${error.message}`);
+        this.setRuntime({ status: 'error', phase: null, count: this.rows.length, etaSeconds: null, error: error.message, message: error.message, finishedAt: new Date().toISOString() });
+        this.log('error', `Trading Hall scan failed: ${error.message} · ${fmt(this.rows.length)} listings kept.`, 'th.failed', { error: error.message, count: this.rows.length });
       }
       throw error;
     } finally {
-      if (page) await page.keyboard.press('Escape').catch(() => {});
-      if (auth?.owner) await this.browser.release(account.id, auth.owner, { closeWhenUnused: true }).catch(() => {});
+      for (const socket of sockets) socket.close();
       this.controller = null;
       this.emitProgress(true);
     }
   }
 
+  // Page order keeps the price order; a listing that moved between two pages
+  // while the scan ran would otherwise show up twice.
+  _collectRows(pages, lastPage) {
+    const seen = new Set();
+    const rows = [];
+    for (const page of [...pages.keys()].sort((a, b) => a - b)) {
+      if (page > lastPage) continue;
+      for (const row of pages.get(page)) {
+        if (seen.has(row.id)) continue;
+        seen.add(row.id);
+        rows.push(row);
+      }
+    }
+    return rows;
+  }
+
   async stop() {
     if (!this.controller) return true;
+    this.log('info', 'Stop requested · finishing the pages in flight…', 'th.stopRequested');
     this.controller.abort();
     const end = Date.now() + 15000;
     while (this.controller && Date.now() < end) await sleep(100);
@@ -423,4 +367,4 @@ class TradingHallService {
   }
 }
 
-module.exports = { TradingHallService };
+module.exports = { TradingHallService, ticketToRow };

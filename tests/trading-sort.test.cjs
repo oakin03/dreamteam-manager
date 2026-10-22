@@ -49,3 +49,18 @@ test('Trading Hall numeric bounds exclude missing values and read formatted sala
   assert.deepEqual(filterTradingRows(rows,{gradeMin:'B-',gradeMax:'A+',salaryMax:'1200',salaryMaxExclusive:true})
     .map(r=>r.name),['Too cheap']);
 });
+
+test('Base only keeps the game-marked base listings and Base % filters by distance to base',async()=>{
+  const {filterTradingRows,sortTradingRows}=await import('../src/renderer/trading-sort.mjs');
+  const rows=[
+    {name:'Below',basePct:-4,isBase:true,price:1},
+    {name:'Equal',basePct:0,isBase:true,price:1},
+    {name:'Near',basePct:5.5,isBase:false,price:1},
+    {name:'Far',basePct:80,isBase:false,price:1},
+    {name:'Unknown',basePct:null,isBase:null,price:1}
+  ];
+  assert.deepEqual(filterTradingRows(rows,{baseOnly:true}).map(r=>r.name),['Below','Equal']);
+  assert.deepEqual(filterTradingRows(rows,{basePctMax:'10'}).map(r=>r.name),['Below','Equal','Near']);
+  assert.deepEqual(sortTradingRows(rows,{key:'basePct',dir:'asc'}).map(r=>r.name),['Below','Equal','Near','Far','Unknown']);
+  assert.deepEqual(sortTradingRows(rows,{key:'basePct',dir:'desc'}).map(r=>r.name),['Far','Near','Equal','Below','Unknown']);
+});

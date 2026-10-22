@@ -1,7 +1,6 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { CardsService, resolvePlayer, disambiguatePlayerKeys } = require('../src/main/services/cards-service.cjs');
-const { AutoTradeService } = require('../src/main/services/auto-trade-service.cjs');
 const Module=require('node:module');
 const originalLoad=Module._load;
 Module._load=function(request,parent,isMain){
@@ -41,13 +40,6 @@ test('Old Scout portraits absent from Cards never inherit a role from a matching
   assert.equal(cards.findForScout({name:'T. Jemison III',imagePath:'/players/old-jemison.webp'}),null);
   assert.equal(cards.findForScout({name:'S. Curry'}),null);
   assert.deepEqual(cards.findForScout({name:'Trey Jemison III'}).roleIds,['card']);
-});
-
-test('Auto Trade uses the same unique portrait identity for roster roles', () => {
-  const trade = Object.create(AutoTradeService.prototype);
-  assert.deepEqual(trade._decorate({name:'S. Curry',imagePath:'/players/seth-curry.webp'},players).roleIds,[]);
-  assert.deepEqual(trade._decorate({name:'T. Jemison III',imagePath:'/players/trey-jemison.webp'},players).roleIds,['card']);
-  assert.deepEqual(trade._decorate({name:'S. Curry'},players).roleIds,[]);
 });
 
 test('Cards refresh does not transfer a role by a shared initial and surname', () => {

@@ -264,6 +264,12 @@ class ScoutService {
     const revision = this.cards && typeof this.store?.revision === 'function'
       ? [this.store.revision('cards'),this.store.revision('cardMetadata'),this.store.revision('cardRoles')].join(':') : null;
     for (const [id, s] of this.states) {
+      // The page counts the Scout timer down from an end time; a list read from the
+      // screen only has the "mm:ss" text of that moment.
+      if (s.data && s.data.cooldownEnds == null && s.data.timer) {
+        const m = String(s.data.timer).match(/(?:(\d+):)?(\d{1,2}):(\d{2})/);
+        if (m) s.data.cooldownEnds = Date.now() + ((Number(m[1] || 0) * 60 + Number(m[2])) * 60 + Number(m[3])) * 1000;
+      }
       if (s.data?.agents && this.cards && (revision === null || s._cardsRevision !== revision)) {
         for (const agent of s.data.agents) {
           agent.card=this.cards.findForScout(agent);
@@ -280,6 +286,30 @@ class ScoutService {
 
   log(account, level, message) {
     this.activity.add({ level, accountId: account.id, accountName: account.name, message });
+  }
+
+  // Auto Trade reads Scout over the socket; the Scout page shows the same list.
+  // Agents carry their player id, so cards and roles match exactly.
+  showSocketScout(accountId, reply) {
+    if (!Array.isArray(reply?.freeAgents)) return;
+    const state = this.states.get(accountId) || { status: 'idle', data: null, error: null };
+    const previous = state.data || {};
+    state.data = {
+      ...previous,
+      agents: reply.freeAgents.map((a, index) => ({
+        key: a.id, index, playerId: a.id, name: a.visualName || a.name, position: a.position, grade: a.rating,
+        price: a.baseSalary, team: a.team || null, signed: Boolean(a.isSigned), canSign: !a.isSigned
+      })),
+      attempts: reply.attemptsLeft ?? previous.attempts ?? null,
+      attemptsMax: 3,
+      cooldownEnds: Number(reply.cooldownEnds) || null,
+      timer: null,
+      source: 'auto-trade',
+      readAt: new Date().toISOString()
+    };
+    state._cardsRevision = null;
+    this.states.set(accountId, state);
+    this.onChanged?.();
   }
 
   async _ensureOpen(accountId) {

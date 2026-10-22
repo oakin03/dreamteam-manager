@@ -16,3 +16,7 @@ storage/
 tmp/
 temp/
 release.zip
+
+# Claude Code (local paths / per-account MCP servers)
+.mcp.json
+.claude/settings.local.json

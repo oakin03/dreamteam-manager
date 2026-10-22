@@ -3,6 +3,7 @@ const fs = require('fs');
 const crypto = require('crypto');
 const { app } = require('electron');
 const { ensureDir } = require('./store.cjs');
+const { readStadiumTelemetry, parseUserBasicInfo } = require('./account-profile-service.cjs');
 
 if (app.isPackaged) {
   const bundled = path.join(process.resourcesPath, 'app.asar.unpacked', 'node_modules', 'playwright-core', '.local-browsers');
@@ -38,10 +39,14 @@ class BrowserService {
     this.featureLocks = new Map();
     this.authLocks = new Map();
     this.stadiumObserver = stadiumObserver;
+    this.basicInfo = new WeakMap();
     ensureDir(this.profileRoot);
   }
 
   profileDir(accountId) { return path.join(this.profileRoot, accountId); }
+
+  // Latest userBasicInfo (APK/TIX) the game pushed to this page, if any.
+  basicInfoFor(page) { return (page && this.basicInfo.get(page)) || null; }
 
   setStadiumObserver(observer) {
     this.stadiumObserver = typeof observer === 'function' ? observer : null;
@@ -94,6 +99,11 @@ class BrowserService {
     if (!page) page = await context.newPage();
     page.setDefaultTimeout(15000);
     page.setDefaultNavigationTimeout(90000);
+    // Read-only: only frames the game itself receives are inspected.
+    page.on('websocket', ws => ws.on('framereceived', frame => {
+      const info = parseUserBasicInfo(frame.payload);
+      if (info) this.basicInfo.set(page, { ...info, at: Date.now() });
+    }));
     const session = {
       accountId: account.id,
       context,
@@ -126,19 +136,8 @@ class BrowserService {
           session._stadiumVisible = false;
           return;
         }
-        const signature = await page.evaluate(() => {
-          const text = el => (el?.textContent || '').trim();
-          const label = [...document.querySelectorAll('span')].find(node => text(node) === 'Auto PK');
-          const widget = label?.parentElement?.parentElement;
-          const apk = widget?.querySelector('img[alt="Auto PK Tickets"]')?.parentElement;
-          const apkText = widget ? (apk ? text(apk) || '0' : '0') : '';
-          let lv = '';
-          for (const node of document.querySelectorAll('span,div')) {
-            const value = text(node);
-            if (/^Lv\.?\s*\d{1,2}$/i.test(value)) { lv = value; break; }
-          }
-          return `${lv}|${apkText}`;
-        }).catch(() => '');
+        const telemetry = await page.evaluate(readStadiumTelemetry).catch(() => null);
+        const signature = telemetry ? `${telemetry.level ?? ''}|${telemetry.apk ?? ''}|${telemetry.tix ?? ''}` : '';
         const changed = signature && signature !== session._stadiumSignature;
         const entered = !session._stadiumVisible;
         session._stadiumVisible = true;
