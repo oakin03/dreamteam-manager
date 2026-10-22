@@ -9,6 +9,9 @@ const PATH = '/draft-socket/';
 const SLOT_LEVELS = { 3: [1, 20], 4: [1, 20], 5: [21, 30], 6: [21, 30], 7: [21, 30], 8: [31, 50], 9: [31, 50], 10: [51, 70], 11: [51, 70], 12: [71, 100] };
 const ROOM_SIZE = 10;
 const POLL_MS = 2000;
+const PICK_WAIT_MS = 6000;
+const PICK_TRIES = 3;
+const PICK_RETRY_MS = 700;
 
 function levelRange(slot) { return SLOT_LEVELS[slot] || null; }
 
@@ -70,7 +73,7 @@ class DraftService {
         joinable: joinableSlots(this.slots, level, { attempts: att?.draftAttempts ?? 0, busy: inSlot != null })
       };
     });
-    const rooms = [...this.rooms.values()].map(r => ({ ...r, ours: r.ours.map(id => ({ id, name: this._name(id), userId: this.joined.get(id)?.userId || this._userId(id) })) }));
+    const rooms = [...this.rooms.values()].map(r => ({ ...r, ours: r.ours.map(id => ({ id, name: this._name(id), userId: this.joined.get(id)?.userId || this._userId(id), picking: Boolean(this.joined.get(id)?.picking) })) }));
     return {
       watching: this.watchers > 0, slotsAt: this.slotsAt, error: this.error,
       slots: this.slots.map(s => ({ slotNumber: s.slotNumber, range: levelRange(s.slotNumber), users: s.users?.length || 0, hasStarted: s.hasStarted, cooldownRemaining: s.cooldownRemaining || 0, countdown: s.countdown })),
@@ -176,7 +179,12 @@ class DraftService {
     s.on('draftPlayersUpdate', d => { room().players = d || room().players; touch(); });
     s.on('draftUsersUpdate', d => { room().users = d || []; touch(); });
     s.on('draftCountdown', d => { room().countdown = Number(d); room().countdownAt = new Date(this.now()).toISOString(); touch(); });
-    s.on('draftState', d => { Object.assign(room(), { started: Boolean(d?.hasStarted), pickOrder: d?.pickOrder || room().pickOrder, pickIndex: d?.currentPickIndex ?? room().pickIndex }); touch(); });
+    s.on('draftState', d => {
+      const rm = room();
+      Object.assign(rm, { started: Boolean(d?.hasStarted), pickOrder: d?.pickOrder || rm.pickOrder, pickIndex: d?.currentPickIndex ?? rm.pickIndex });
+      if (d?.currentPickingUserId && rm.turn?.userId !== d.currentPickingUserId) rm.turn = { index: d.currentPickIndex, seconds: d.pickTimer, userId: d.currentPickingUserId, at: new Date(this.now()).toISOString() };
+      touch();
+    });
     s.on('draftStart', d => { Object.assign(room(), { started: true, pickOrder: d?.pickOrder || [] }); this._log('info', 'df.started', { slot: entry.slot, count: (d?.pickOrder || []).length }, `Draft ${entry.slot} started`, accountId); touch(); });
     s.on('draftPickTimer', d => {
       const rm = room();
@@ -192,22 +200,69 @@ class DraftService {
     s.on('disconnect', () => touch());
   }
 
+  // One signDraftPlayer: resolves with the game's answer, a draftError, or {timeout}.
+  _signOnce(entry, playerId) {
+    const sock = entry.conn.socket;
+    return new Promise(resolve => {
+      const done = d => { clearTimeout(timer); sock.off('signDraftPlayerResponse', onResp); sock.off('draftError', onErr); resolve(d); };
+      const onResp = d => done(d);
+      const onErr = d => done({ success: false, message: typeof d === 'string' ? d : (d?.message || d?.error || 'Draft error') });
+      const timer = setTimeout(() => done({ success: false, timeout: true }), PICK_WAIT_MS);
+      sock.on('signDraftPlayerResponse', onResp);
+      sock.on('draftError', onErr);
+      sock.emit('signDraftPlayer', { userId: entry.userId, playerId, slotNumber: entry.slot, draftType: 'CURRENT' });
+    });
+  }
+
+  // The pick went through even if its answer was lost: the player is marked signed
+  // and our user shows as signed.
+  _signedNow(room, userId, playerId) {
+    return Boolean(room.players.find(p => p.id === playerId)?.signed && room.users.find(u => u.userId === userId)?.signed);
+  }
+
+  // Ask the game for the room state again (whose turn it is, who signed).
+  _resync(entry) {
+    try {
+      entry.conn.socket.emit('getDraftState', { slotNumber: entry.slot });
+      entry.conn.socket.emit('getDraftUsers', { slotNumber: entry.slot });
+    } catch {}
+  }
+
   async pick(accountId, playerId) {
     const entry = this.joined.get(accountId);
     if (!entry) throw new Error('This account is not in a draft.');
+    if (entry.picking) throw new Error('A pick is already being sent for this account.');
     const room = this._room(entry.slot);
     const player = room.players.find(p => p.id === playerId);
     if (!player) throw new Error('Player not in this draft.');
     if (player.signed) throw new Error('This player was already picked.');
-    const reply = new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('No answer to the pick.')), 15000);
-      entry.conn.socket.once('signDraftPlayerResponse', d => { clearTimeout(timer); resolve(d); });
-    });
-    entry.conn.socket.emit('signDraftPlayer', { userId: entry.userId, playerId, slotNumber: entry.slot, draftType: 'CURRENT' });
-    const r = await reply;
+    entry.picking = true;
+    this.onChanged();
+    let r = null;
+    try {
+      // Picking the moment the turn arrives can be refused ("not your turn" / "please
+      // wait") while the game still moves the turn; such answers are retried shortly.
+      // The game also answers failures on "draftError", not only on
+      // signDraftPlayerResponse; before, those were missed and the button stayed
+      // locked for 15 s while the 30 s pick time ran out.
+      for (let attempt = 1; attempt <= PICK_TRIES; attempt++) {
+        r = await this._signOnce(entry, playerId);
+        if (r?.success) break;
+        if (this._signedNow(room, entry.userId, playerId)) { r = { success: true }; break; }
+        const retry = /turn|wait|not .*yet|too fast|slow down/i.test(String(r?.message || '')) || r?.timeout;
+        if (!retry || attempt === PICK_TRIES || room.ended) break;
+        await new Promise(res => setTimeout(res, PICK_RETRY_MS));
+        this._resync(entry);
+      }
+    } finally {
+      entry.picking = false;
+      this.onChanged();
+    }
     if (!r?.success) {
-      this._log('warning', 'df.pickFailed', { player: player.name, error: r?.message || '' }, `Pick failed: ${r?.message || ''}`, accountId);
-      throw new Error(r?.message || 'Pick refused.');
+      const message = r?.timeout ? 'No answer to the pick.' : (r?.message || 'Pick refused.');
+      this._log('warning', 'df.pickFailed', { player: player.name, error: message }, `Pick failed: ${message}`, accountId);
+      this._resync(entry);
+      throw new Error(message);
     }
     const drafted = this._drafted();
     drafted[accountId] = [...(drafted[accountId] || []), { id: player.id, name: player.visualName || player.name, rating: player.rating, position: player.position, value: player.baseSalary, base: player.newBaseSalary, slot: entry.slot, at: new Date(this.now()).toISOString(), listed: false }];

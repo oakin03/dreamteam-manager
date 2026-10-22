@@ -8,7 +8,7 @@ const TEXT = {
     idle: 'Boşta', inRoom: 'Oda {slot}\'da', inRoomGame: 'Oda {slot}\'da (oyundan)', noRoom: 'Uygun oda yok', join: 'Oda {slot} · Lv {from}–{to} · {users}/10 · Katıl', joining: 'Katılıyor…',
     hall: 'Draft Salonu', open: 'Açık', live: 'Canlı', cooldown: 'Beklemede · {s}', room: 'Oda {slot}',
     liveRooms: 'Katıldığın odalar', startsIn: 'Başlamasına {s} sn', started: 'Başladı', round: '{r}. tur', turnOf: 'Sıra: {name} · {s} sn', yourTurn: 'Sıra sende: {name} · {s} sn', waitingTurn: 'Sıranı bekle',
-    users: 'Katılımcılar', player: 'Oyuncu', pos: 'Mevki', rating: 'Rating', value: 'Fiyat', salary: 'Maaş', salaryHint: 'Seçmeden önce maaş fiyata eşittir; Lv30+ hesaplarda %5 indirim çıkabilir.', base: 'Base', change: 'Değişim', roles: 'Roller', card: 'Kart', pick: '{name} seçsin', picked: 'Alındı', ended: 'Draft bitti',
+    users: 'Katılımcılar', player: 'Oyuncu', pos: 'Mevki', rating: 'Rating', value: 'Fiyat', salary: 'Maaş', salaryHint: 'Seçmeden önce maaş fiyata eşittir; Lv30+ hesaplarda %5 indirim çıkabilir.', base: 'Base', change: 'Değişim', roles: 'Roller', card: 'Kart', pick: '{name} seçsin', picking: 'Gönderiliyor…', picked: 'Alındı', ended: 'Draft bitti',
     drafted: 'Drafttan alınanlar', draftedHint: 'Fiyat ve para birimi seçip istediklerini pazara koy.', list: 'Seçilileri listele', clear: 'Listeyi temizle', listed: 'Pazarda', none: 'Henüz draftta oyuncu alınmadı.',
     warning: 'Odaya girdikten sonra draft bitene kadar çıkılmaz; oyunda da "ayrılırsan hakkını kaybedersin" yazıyor. Haklar draft tamamen bitince oyundan yeniden okunur.',
     noTeam: 'No Team', stars: '★{s}', cards: '{n} kart', baseBadge: 'Base'
@@ -18,7 +18,7 @@ const TEXT = {
     idle: 'Idle', inRoom: 'In room {slot}', inRoomGame: 'In room {slot} (from the game)', noRoom: 'No room to join', join: 'Room {slot} · Lv {from}–{to} · {users}/10 · Join', joining: 'Joining…',
     hall: 'Draft Hall', open: 'Open', live: 'Live', cooldown: 'Cooldown · {s}', room: 'Room {slot}',
     liveRooms: 'Your rooms', startsIn: 'Starts in {s}s', started: 'Started', round: 'Round {r}', turnOf: 'Turn: {name} · {s}s', yourTurn: 'Your turn: {name} · {s}s', waitingTurn: 'Wait for your turn',
-    users: 'Participants', player: 'Player', pos: 'Pos', rating: 'Rating', value: 'Price', salary: 'Salary', salaryHint: 'Before the pick the salary equals the price; Lv30+ accounts may get a 5% discount.', base: 'Base', change: 'Change', roles: 'Roles', card: 'Card', pick: 'Pick for {name}', picked: 'Taken', ended: 'Draft ended',
+    users: 'Participants', player: 'Player', pos: 'Pos', rating: 'Rating', value: 'Price', salary: 'Salary', salaryHint: 'Before the pick the salary equals the price; Lv30+ accounts may get a 5% discount.', base: 'Base', change: 'Change', roles: 'Roles', card: 'Card', pick: 'Pick for {name}', picking: 'Sending…', picked: 'Taken', ended: 'Draft ended',
     drafted: 'Drafted players', draftedHint: 'Choose price and currency and list the ones you want.', list: 'List selected', clear: 'Clear list', listed: 'Listed', none: 'No drafted players yet.',
     warning: 'Once in a room you stay until the draft ends; the game warns that leaving loses the attempt. Attempts are read again from the game after the draft fully ends.',
     noTeam: 'No Team', stars: '★{s}', cards: '{n} cards', baseBadge: 'Base'
@@ -102,7 +102,7 @@ function Room({ room, x, players, roles, busy, run, now }) {
           <td><div className="pl-roles">{isBase && <span className="role-badge pl-base-badge">{x.baseBadge}</span>}{rl.map(r => <span key={r.id} className="role-badge" style={{ backgroundColor: r.color, borderColor: r.color }}>{r.name}</span>)}</div></td>
           <td>{info?.card ? (info.card.noTeam && !info.card.customTeam ? x.noTeam : fill(x.stars, { s: info.card.stars ?? 0 })) + ' · ' + fill(x.cards, { n: info.card.cardCount }) : '—'}</td>
           <td className="actions">{p.signed ? <span className="pill muted"><i />{x.picked}</span> : room.ours.map(o => { const key = `pick:${o.id}:${p.id}`; const mine = room.turn?.userId === o.userId && !room.ended;
-            return <button key={o.id} className="btn success small" disabled={!mine || busy[key]} title={mine ? '' : x.waitingTurn} onClick={() => run(key, () => api.draft.pick(o.id, p.id))}>{fill(x.pick, { name: o.name })}</button>; })}</td>
+            return <button key={o.id} className="btn success small" disabled={!mine || busy[key] || o.picking} title={mine ? '' : x.waitingTurn} onClick={() => run(key, () => api.draft.pick(o.id, p.id))}>{busy[key] ? x.picking : fill(x.pick, { name: o.name })}</button>; })}</td>
         </tr>; })}</tbody></table></div>
   </div>;
 }

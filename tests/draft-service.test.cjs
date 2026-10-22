@@ -28,6 +28,7 @@ function fakeDraft() {
       world.calls.push({ event, payload: p, cookie: s.cookie });
       if (event === 'getLiveDraftStatus') return push('liveDraftStatus', world.slots);
       if (event === 'joinDraftSlot') { world.room = s; world.slots[0].users.push(p.userId); push('draftJoined', { slotNumber: p.slotNumber, players: pool }); push('draftUsersUpdate', [{ userId: p.userId, teamName: 'Trophy4', signed: false }, { userId: 'x', teamName: 'Stranger', signed: false }]); return true; }
+      if (event === 'signDraftPlayer' && world.refuseSigns > 0) { world.refuseSigns--; push('draftError', world.refuseMessage || 'It is not your turn yet'); return true; }
       if (event === 'signDraftPlayer') { pool.find(x => x.id === p.playerId).signed = true; world.attempts[p.userId] -= 1; push('signDraftPlayerResponse', { success: true, playerId: p.playerId }); push('draftPlayersUpdate', pool.map(x => ({ ...x }))); return true; }
       return true;
     };
@@ -78,5 +79,31 @@ test('join with the session cookie (no register), our turn calls for attention, 
   assert.equal(svc.snapshot().accounts[0].attempts, 1);
   assert.equal(svc.snapshot().rooms[0].ended, true);
   assert.ok(logs.some(l => l.code === 'df.picked') && logs.some(l => l.code === 'df.ended'));
+  svc.unwatch(); svc.shutdown();
+});
+
+test('a pick refused right when the turn arrives (draftError) is retried; a hard refusal fails at once', async () => {
+  const { world, createSocket, push } = fakeDraft();
+  const logs = []; const mem = { d: null };
+  const svc = new DraftService({
+    store: { getAccounts: () => [{ id: 'a1', name: 'Trophy4' }], getAccountProfile: () => ({ accounts: { a1: { userId: 'u1', level: 34 } } }), getDraftData: () => mem.d, saveDraftData: v => { mem.d = v; } },
+    activity: { add: e => logs.push(e) }, onChanged() {}, onAttention() {},
+    sessions: { get: async () => ({ userId: 'u1', cookieHeader: 'session=abc' }) }, createSocket
+  });
+  await svc.watch();
+  await new Promise(r => setTimeout(r, 20));
+  await svc.join('a1', 8);
+  push('draftStart', { round: 1, pickOrder: ['u1'] });
+  push('draftPickTimer', { index: 0, seconds: 30, userId: 'u1' });
+  await new Promise(r => setTimeout(r, 5));
+  world.refuseSigns = 1;
+  const t0 = Date.now();
+  await svc.pick('a1', 'p1');
+  assert.ok(Date.now() - t0 < 3000, 'no 15 s wait');
+  assert.equal(world.calls.filter(c => c.event === 'signDraftPlayer').length, 2);
+  assert.equal(svc.snapshot().drafted.a1[0].name, 'Bez Mbeng');
+  world.refuseSigns = 1; world.refuseMessage = 'You already signed a player this round';
+  await assert.rejects(svc.pick('a1', 'p2'), /already signed/);
+  assert.ok(logs.some(l => l.code === 'df.pickFailed'));
   svc.unwatch(); svc.shutdown();
 });
