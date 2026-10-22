@@ -70,6 +70,21 @@ class TradingHallService {
   }
 
   snapshot() { return { ...this.runtime }; }
+  // Auto Buy reads the cheapest listings of each watched player; those replace the
+  // player's rows (same currency, up to the highest price read) so the hall stays
+  // current between full scans. Ignored while a full scan runs.
+  mergeTickets(playerIds, currency, tickets) {
+    if (['starting', 'running'].includes(this.runtime.status)) return;
+    const fresh = (tickets || []).map(t => ticketToRow(t, 1)).filter(r => r && r.currency === currency);
+    for (const r of fresh) r.isBase = r.base != null && r.salary <= r.base;
+    const ids = new Set(playerIds);
+    const cutoff = fresh.length >= 8 ? Math.max(...fresh.map(r => r.price)) : Infinity;
+    const keep = this.rows.filter(r => !(ids.has(r.playerId) && r.currency === currency && r.price <= cutoff));
+    const seen = new Set(keep.map(r => r.id));
+    this.rows = [...keep, ...fresh.filter(r => !seen.has(r.id))].sort((a, b) => a.price - b.price);
+    this.onChanged?.();
+  }
+
   rowsSnapshot() { return ['starting', 'running'].includes(this.runtime.status) ? [] : this.rows; }
   clearRows() {
     this.rows = [];

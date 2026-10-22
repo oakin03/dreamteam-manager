@@ -289,7 +289,7 @@ function initServices() {
   market = new MarketService({ store, activity, accountProfile, sessions: gameSessions, onChanged: emitState });
   players = new PlayersService({ store, activity, onChanged: emitState });
   tower = new TowerService({ store, activity, sessions: gameSessions, onChanged: emitState });
-  buy = new BuyService({ store, activity, sessions: gameSessions, accountProfile, onChanged: emitState, onAttention: autoTradeAttention });
+  buy = new BuyService({ store, activity, sessions: gameSessions, accountProfile, onChanged: emitState, onAttention: autoTradeAttention, onScan: (ids, currency, tickets) => trading.mergeTickets(ids, currency, tickets) });
   pvp = new PvpService({ store, activity, sessions: gameSessions, onChanged: emitState });
   draft = new DraftService({ store, activity, sessions: gameSessions, accountProfile, onChanged: emitState, onAttention: autoTradeAttention });
   equipment = new EquipmentService({ store, activity, sessions: gameSessions, onChanged: emitState });

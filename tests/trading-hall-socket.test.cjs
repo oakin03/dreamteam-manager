@@ -149,3 +149,13 @@ test('stop() aborts the scan and keeps the pages already read', async () => {
   assert.ok(s.rows.length > 0 && s.rows.length < 800);
   assert.ok(logs.some(l => /stopped by user · \d+ listings kept/.test(l.message)));
 });
+
+test('Auto Buy reads refresh the watched player rows in the Trading Hall', () => {
+  const { TradingHallService } = require('../src/main/services/trading-hall-service.cjs');
+  const svc = new TradingHallService({ store: { getTradingRows: () => [], saveTradingRows() {}, getTradeAccount: () => null }, activity: { add() {} }, onChanged() {} });
+  const t = (id, playerId, price, mode = 'APK_TICKET') => ({ id, playerId, price, signedSalary: 40, paymentMode: mode, player: { id: playerId, name: playerId, newBaseSalary: 45 } });
+  svc.rows = [{ id: 'old1', playerId: 'p1', price: 20, currency: 'APK' }, { id: 'old2', playerId: 'p1', price: 25, currency: 'TIX' }, { id: 'x', playerId: 'p2', price: 10, currency: 'APK' }];
+  svc.mergeTickets(['p1'], 'APK', [t('new1', 'p1', 18), t('new2', 'p1', 30)]);
+  assert.deepEqual(svc.rows.map(r => r.id), ['x', 'new1', 'old2', 'new2']);
+  assert.equal(svc.rows.find(r => r.id === 'new1').isBase, true);
+});

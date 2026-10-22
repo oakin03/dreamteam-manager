@@ -62,12 +62,13 @@ function affordableCurrencies(rows, order, balances) {
 }
 
 class BuyService {
-  constructor({ store, activity, sessions, accountProfile, onChanged, onAttention, createSocket, now = () => Date.now(), timing = {} }) {
+  constructor({ store, activity, sessions, accountProfile, onChanged, onAttention, onScan, createSocket, now = () => Date.now(), timing = {} }) {
     this.store = store;
     this.activity = activity;
     this.sessions = sessions;
     this.accountProfile = accountProfile;
     this.onAttention = onAttention;
+    this.onScan = onScan;            // (playerIds, currency, tickets) → Trading Hall rows
     this.createSocket = createSocket;
     this.now = now;
     this.timing = { buyGapMs: BUY_GAP_MS, idleCloseMs: IDLE_CLOSE_MS, ...timing };
@@ -369,6 +370,7 @@ class BuyService {
         if (signal.aborted) throw abortError();
         if (!ok.has(row.currency)) continue;
         const reply = await anon.call('market:getMarketPlayers', { page: 1, search: row.name, sort: 'asc', paymentMode: PAYMENT_MODE[row.currency], basePlayersOnly: false }, 'market:marketPlayersData', { signal, timeoutMs: 15000 }).catch(() => null);
+        if (reply?.tickets) { try { this.onScan?.([row.playerId], row.currency, reply.tickets.filter(t => (t.playerId || t.player?.id) === row.playerId)); } catch {} }
         for (const ticket of matchingTickets(row, reply?.tickets, ownTeams)) {
           if (failedTickets.has(ticket.id)) continue;
           const price = Number(ticket.price);
