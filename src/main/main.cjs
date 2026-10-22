@@ -147,30 +147,53 @@ function autoTradeAttention(kind, text) {
 // Systems that would clash with Auto Trade on the selected accounts.
 // PVP page: whatever runs on the chosen accounts (Auto Play) is stopped first, so it
 // does not start other matches, and started again when PVP is over.
-async function startPvpManual(accountIds) {
-  if (!accountIds.length) throw new Error('Select at least one account.');
-  if (pvp.snapshot().running) throw new Error('PVP is already running.');
+// PVP and Auto Buy connect the accounts to the game, so whatever runs on them
+// (Auto Play) is stopped first and started again when they are over.
+// `taskName` / `prefix` name the service in the logs (e.g. 'PVP' / 'pvp').
+async function pauseTasksFor(accountIds, taskName, prefix) {
   const resume = [];
+  const name = id => store.getAccounts().find(a => a.id === id)?.name || '';
   for (const id of accountIds) {
     const worker = engine.workers.get(id);
     const prepared = engine.prepared.get(id);
     const active = worker && ['running', 'preparing', 'starting'].includes(worker.status) ? worker : prepared;
     if (!active) continue;
     resume.push({ accountId: id, taskId: active.taskId, taskName: active.taskName, visibleBrowser: Boolean(active.visibleBrowser), config: active.config || null });
-    await engine.stopAccount(id, { reason: 'Stopped for PVP', quiet: true });
-    activity.add({ level: 'info', accountId: id, accountName: store.getAccounts().find(a => a.id === id)?.name || '', taskName: 'PVP', code: 'pvp.pausedTask', params: { task: active.taskName || '' }, message: `${active.taskName} stopped for PVP` });
+    await engine.stopAccount(id, { reason: `Stopped for ${taskName}`, quiet: true });
+    activity.add({ level: 'info', accountId: id, accountName: name(id), taskName, code: `${prefix}.pausedTask`, params: { task: active.taskName || '' }, message: `${active.taskName} stopped for ${taskName}` });
   }
-  pvp.runAndWait(accountIds, { source: 'manual' }).catch(() => {}).finally(async () => {
+  return async () => {
     for (const r of resume) {
       try {
         await engine.startAccount(r.accountId, r.taskId, { visibleBrowser: r.visibleBrowser, forceFresh: false, config: r.config });
-        activity.add({ level: 'success', accountId: r.accountId, accountName: store.getAccounts().find(a => a.id === r.accountId)?.name || '', taskName: 'PVP', code: 'pvp.resumedTask', params: { task: r.taskName || '' }, message: `${r.taskName} started again` });
+        activity.add({ level: 'success', accountId: r.accountId, accountName: name(r.accountId), taskName, code: `${prefix}.resumedTask`, params: { task: r.taskName || '' }, message: `${r.taskName} started again` });
       } catch (error) {
-        activity.add({ level: 'error', accountId: r.accountId, accountName: '', taskName: 'PVP', code: 'pvp.resumeFailed', params: { task: r.taskName || '', error: error.message }, message: `${r.taskName} could not start again: ${error.message}` });
+        activity.add({ level: 'error', accountId: r.accountId, accountName: name(r.accountId), taskName, code: `${prefix}.resumeFailed`, params: { task: r.taskName || '', error: error.message }, message: `${r.taskName} could not start again: ${error.message}` });
       }
     }
-  });
+  };
+}
+
+async function startPvpManual(accountIds) {
+  if (!accountIds.length) throw new Error('Select at least one account.');
+  if (pvp.snapshot().running) throw new Error('PVP is already running.');
+  const resume = await pauseTasksFor(accountIds, 'PVP', 'pvp');
+  pvp.runAndWait(accountIds, { source: 'manual' }).catch(() => {}).finally(resume);
   return pvp.snapshot();
+}
+
+async function startAutoBuy(options) {
+  const ids = Array.isArray(options?.accountIds) ? options.accountIds : [];
+  if (buy.snapshot().auto.status === 'running') throw new Error('Auto Buy is already running.');
+  const resume = await pauseTasksFor(ids, 'Auto Buy', 'ab');
+  try {
+    const snap = await buy.startAuto(options);
+    buy.done.finally(resume);
+    return snap;
+  } catch (error) {
+    await resume();
+    throw error;
+  }
 }
 
 function autoTradeConflicts(accountIds) {
@@ -484,7 +507,7 @@ function registerIpc() {
   ipcMain.handle('buy:update-watch', async (_event, { id, patch }) => buy.updateWatch(id, patch || {}));
   ipcMain.handle('buy:remove-watch', async (_event, ids) => buy.removeWatch(ids || []));
   ipcMain.handle('buy:set-config', async (_event, patch) => buy.setConfig(patch || {}));
-  ipcMain.handle('buy:start-auto', async (_event, options) => buy.startAuto(options || {}));
+  ipcMain.handle('buy:start-auto', async (_event, options) => startAutoBuy(options || {}));
   ipcMain.handle('buy:stop-auto', async () => buy.stopAuto());
   ipcMain.handle('pvp:stop', async () => { pvp.stop(); return pvp.snapshot(); });
   ipcMain.handle('pvp:status', async (_event, accountIds) => pvp.status(Array.isArray(accountIds) ? accountIds : store.getAccounts().map(a => a.id)));
