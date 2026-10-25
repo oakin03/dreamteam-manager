@@ -6,7 +6,7 @@ const api = window.dreamteam;
 // When a new service is added, add it here AND to NAV_DEFAULT: a saved layout that
 // does not know the page yet gets it in its default list automatically.
 export const PAGE_META = {
-  home: ['home', 'home'], accounts: ['accounts', 'accounts'], social: ['chat', 'socialPage'],
+  home: ['home', 'commandCenter'], accounts: ['accounts', 'accounts'], social: ['chat', 'socialPage'],
   autoplay: ['play', 'autoplay'], autotrade: ['swap', 'autoTrade'], pvp: ['sword', 'pvpPage'], daily: ['calendar', 'dailyPage'], tower: ['tower', 'towerPage'], autobuy: ['cart', 'autoBuyPage'], tournament: ['trophy', 'tournament'],
   scout: ['scout', 'scout'], players: ['chart', 'playersPage'], draft: ['target', 'draftPage'], cards: ['cards', 'cards'], equipment: ['shirt', 'equipment'],
   market: ['market', 'market'], trade: ['hall', 'trade'],
