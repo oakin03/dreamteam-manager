@@ -1,4 +1,5 @@
 const { GameSocket } = require('./game-socket.cjs');
+const { OwnedSwap } = require('./owned-swap.cjs');
 
 // Market (City -> Market building) without a browser: everything below is the
 // game's own /socket/ traffic, captured from the page.
@@ -338,6 +339,8 @@ class MarketService {
       wanted.set(row.ticketId, { row, price, paymentMode, currency: item.currency });
     }
     if (!wanted.size) throw new Error('Select at least one player.');
+    // The already-owned workaround must not take back a listing this job relists.
+    this._jobTickets = [...wanted.keys()];
     const byAccount = new Map();
     for (const item of wanted.values()) {
       if (!byAccount.has(item.row.accountId)) byAccount.set(item.row.accountId, []);
@@ -395,7 +398,32 @@ class MarketService {
     const { row, price, paymentMode, currency } = item;
     if (signal.aborted) throw abortError();
     this._setRelistRow(row.ticketId, { state: 'removing' });
-    const removed = await this._write(conn, 'market:cancelPlayerListing', { userId: conn.userId, ticketId: row.ticketId }, 'cancelResult', null);
+    let removed = await this._write(conn, 'market:cancelPlayerListing', { userId: conn.userId, ticketId: row.ticketId }, 'cancelResult', null);
+    // "Already own this player": park the roster copy, take the listing back, list it at
+    // the new price, then bring the original back (equipment, skill, lineup).
+    let swap = null;
+    if (!removed?.success && /already own/i.test(removed?.message || '')) {
+      const os = new OwnedSwap({ gs: conn.socket, userId: conn.userId, log: (level, code, params, message) => this.log(account, level, `${row.name}: ${message}`, code, { ...params, name: row.name }) });
+      const prep = await os.prepare(row.playerId, row.name, { excludeTickets: this._jobTickets || [] }).catch(error => ({ ok: false, reason: 'failed', message: error.message }));
+      if (prep.ok) {
+        swap = { os, record: prep.record };
+        removed = await this._write(conn, 'market:cancelPlayerListing', { userId: conn.userId, ticketId: row.ticketId }, 'cancelResult', null);
+      } else if (prep.reason !== 'noListings' && prep.reason !== 'notInRoster') {
+        this.log(account, 'warning', `${row.name}: the already-owned workaround failed · ${prep.message || prep.reason}`, 'os.failed', { name: row.name, error: prep.message || prep.reason });
+      }
+    }
+    try {
+      await this._relistAfterRemove(account, conn, item, removed);
+    } finally {
+      if (swap) {
+        const back = await swap.os.restore(swap.record).catch(error => ({ ok: false, message: error.message }));
+        if (!back.ok) this.log(account, 'error', `${row.name}: the original could not be brought back · ${back.message || back.reason}`, 'os.restoreFailed', { name: row.name, error: back.message || back.reason });
+      }
+    }
+  }
+
+  async _relistAfterRemove(account, conn, item, removed) {
+    const { row, price, paymentMode, currency } = item;
     if (!removed?.success) {
       const message = removed?.message || 'unknown reply';
       const owned = /already own/i.test(message);

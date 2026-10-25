@@ -21,6 +21,7 @@ function fakeGame(tickets, opts = {}) {
     const emit = EventEmitter.prototype.emit.bind(s);
     const reply = (event, data) => setTimeout(() => !s.closed && emit(event, data), 1);
     s.registered = false;
+    s.timeout = () => ({ emit: (event, p, cb) => { calls.push({ event, payload: p }); setTimeout(() => cb(null, { success: true }), 1); } });
     s.emit = (event, payload) => {
       calls.push({ event, payload });
       // Like the game: writes only work on a socket registered as the user.
@@ -50,10 +51,15 @@ function fakeGame(tickets, opts = {}) {
       if (event === 'market:sellPlayer') {
         if (opts.sellFails?.includes(payload.playerId)) return reply('market:sellResult', { success: false, message: 'Salary cap exceeded' });
         state.roster.delete(payload.playerId);
-        state.tickets.unshift(ticket(`new-${payload.playerId}`, 'LISTED', { price: payload.price, mode: payload.paymentMode, playerId: payload.playerId }));
+        state.tickets.unshift(ticket(`new-${payload.playerId}${state.tickets.some(t => t.id === `new-${payload.playerId}`) ? `-${state.tickets.length}` : ""}`, 'LISTED', { price: payload.price, mode: payload.paymentMode, playerId: payload.playerId }));
         return reply('market:sellResult', { type: 'player', success: true, playerId: payload.playerId, promoted: null });
       }
-      if (event === 'getUserBasicInfo') return reply('userBasicInfo', { success: true, autoPKTickets: 120, ticket: 7, funds: 5000, level: 39 });
+      if (event === 'getUserBasicInfo') return reply('userBasicInfo', { success: true, autoPKTickets: 120, ticket: 7, funds: 5000, level: 39, salaryCap: 9000, totalSalaryUsed: 1000 });
+      // Roster for the already-owned workaround: the roster set padded to opts.rosterSize (5).
+      if (event === 'equipment:getUserPlayerAndInventory') {
+        const ids = [...state.roster]; for (let i = 1; ids.length < (opts.rosterSize ?? 5); i++) ids.push('r' + i);
+        return reply('equipment:userPlayerAndInventory', { players: ids.map((id, i) => ({ playerId: id, slot: i < 5 ? ['PG', 'SG', 'SF', 'PF', 'C'][i] : null, benchSlot: i >= 5 ? i - 4 : null })) });
+      }
       return true;
     };
     setTimeout(() => emit('connect'), 1);
@@ -247,4 +253,18 @@ test('a socket taken over by another sign-in (no reply) is reconnected and the s
   assert.deepEqual(Object.values(snap.relist.lastRun).map(r => r.state), ['listed', 'listed']);
   assert.ok(logs.some(l => l.code === 'mk.reconnected'));
   assert.ok(!logs.some(l => l.code === 'mk.failed'));
+});
+
+
+test('relist of an already-owned player: another own listing makes room, the roster copy is parked, the listing relisted, all restored', async () => {
+  // dup is in the roster and also listed; "other" is another own listing (on sale) to take back.
+  const game = fakeGame([ticket('e1', 'EXPIRED', { playerId: 'dup' }), ticket('l9', 'LISTED', { playerId: 'other', price: 77 })], { roster: ['dup'] });
+  const { s, logs } = service(game);
+  await s.loadRelist(['a1']);
+  const snap = await s.relistPlayers([{ ticketId: 'e1', price: 55, currency: 'APK' }]);
+  assert.equal(snap.relist.lastRun.e1.state, 'listed');
+  const live = game.state.tickets.filter(t => t.status === 'LISTED').map(t => [t.playerId, t.price]).sort();
+  assert.deepEqual(live, [['dup', 55], ['other', 77]], 'dup relisted at the new price, the borrowed listing back at its old price');
+  assert.ok(game.state.roster.has('dup'), 'the original is back in the roster');
+  assert.ok(logs.some(l => l.code === 'os.restored'));
 });

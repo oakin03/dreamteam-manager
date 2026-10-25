@@ -7,11 +7,24 @@ const { BuyService, rowReady, matchingTickets, pickAccount, affordableCurrencies
 function fakeGame({ users, listings }) {
   const calls = [];
   const st = { users: JSON.parse(JSON.stringify(users)), listings: listings.map(l => ({ status: 'LISTED', ...l })), my: [], seq: 0 };
+  // Each roster has `rosterSize` players (default 5): the owned ones plus fillers x1…;
+  // the first five are starters. Players can carry equipment and a skill.
+  for (const [id, u] of Object.entries(st.users)) {
+    u.owned = [...(u.owned || [])];
+    for (let i = 1; u.owned.length < (u.rosterSize ?? 5); i++) u.owned.push(`x${i}-${id}`);
+    u.gear = u.gear || {};
+  }
+  const SLOTS = ['PG', 'SG', 'SF', 'PF', 'C'];
   const createSocket = (_url, options) => {
     const s = new EventEmitter();
     s.off = s.removeListener;
     s.close = () => { s.closed = true; s.connected = false; };
     s.registered = null;
+    s.timeout = () => ({ emit: (event, p, cb) => {
+      calls.push({ event, payload: p });
+      if (event === 'updatePlayerPositions') { const u = st.users[s.registered]; u.slots = Object.fromEntries(p.starters.map(x => [x.playerId, x.slot])); (st.lineups ||= []).push(p); }
+      setTimeout(() => cb(null, { success: true }), 1);
+    } });
     const emitLocal = EventEmitter.prototype.emit.bind(s);
     const reply = (n, d) => setTimeout(() => !s.closed && emitLocal(n, d), 1);
     s.emit = (event, p) => {
@@ -25,6 +38,12 @@ function fakeGame({ users, listings }) {
       }
       if (!s.registered) return reply(event === 'market:buyPlayer' ? 'market:buyResult' : 'x', { success: false, message: 'Authentication required' });
       const me = s.registered;
+      const u = st.users[me];
+      if (event === 'equipment:getUserPlayerAndInventory') return reply('equipment:userPlayerAndInventory', { players: u.owned.map((pid, i) => ({ playerId: pid, slot: u.slots?.[pid] ?? (i < 5 ? SLOTS[i] : null), benchSlot: i >= 5 ? i - 4 : null, jerseyInventoryId: u.gear[pid]?.jersey ?? null, skillContainerId: u.gear[pid]?.skill ?? null })) });
+      if (event === 'equipment:unequipSelected') { (st.dressLog ||= []).push(['off', p.playerId]); if (u.gear[p.playerId]) u.gear[p.playerId].jersey = null; return reply('equipment:unequipSelectedResult', { success: true }); }
+      if (event === 'equipment:equipItem') { (st.dressLog ||= []).push(['on', p.playerId, p.equipmentSlot, p.inventoryId]); (u.gear[p.playerId] ||= {}).jersey = p.inventoryId; return reply('equipment:equipmentUpdated', { success: true }); }
+      if (event === 'skills:unassignContainer') { (st.dressLog ||= []).push(['skillOff', p.playerId]); if (u.gear[p.playerId]) u.gear[p.playerId].skill = null; return reply('skills:containerUnassigned', { success: true }); }
+      if (event === 'skills:assignContainerToPlayer') { (st.dressLog ||= []).push(['skillOn', p.playerId, p.containerId]); (u.gear[p.playerId] ||= {}).skill = p.containerId; return reply('skills:containerAssigned', { success: true }); }
       if (event === 'market:buyPlayer') {
         const l = st.listings.find(x => x.id === p.ticketId);
         if (!l || l.status !== 'LISTED') return reply('market:buyResult', { success: false, message: 'Listing not found' });
@@ -125,7 +144,7 @@ test('Auto Buy: buys only matching listings, follows account priority, parks at 
   assert.ok(logs.some(l => l.code === 'ab.start'));
 }, { timeout: 10000 });
 
-test('Auto Buy: an account that already owns the player passes it to the next one; if nobody can buy, warn once and keep scanning', async () => {
+test('Auto Buy: already owned and no own listing to make room → the next account; with a listing the workaround buys it', async () => {
   const game = fakeGame({
     users: { 'u-a': { apk: 100, tix: 0, owned: ['p1', 'p2'] }, 'u-b': { apk: 100, tix: 0, owned: ['p2'] } },
     listings: [L('t1', 'p1', 'Jay Huff', 20, 40), L('t2', 'p2', 'Ryan Dunn', 20, 40)]
@@ -139,13 +158,16 @@ test('Auto Buy: an account that already owns the player passes it to the next on
   await new Promise(r => setTimeout(r, 3500)); // two scans
   svc.stopAuto();
   await svc.done;
+  // Trophy3: 5 players, owns Jay Huff, no listing to take back → passes it on.
   assert.equal(game.st.listings.find(l => l.id === 't1').status, 'SOLD', 'Trophy3 owns Jay Huff → Trophy4 bought him');
-  assert.equal(game.st.users['u-b'].apk, 80);
-  assert.equal(game.st.listings.find(l => l.id === 't2').status, 'LISTED', 'both own Ryan Dunn');
-  const warns = logs.filter(l => l.code === 'ab.cannotBuy');
-  assert.equal(warns.length, 1, 'warned once, not every scan');
-  assert.equal(warns[0].params.reasonTr, 'kadroda var');
-  assert.deepEqual(warned.map(w => w[0]), ['buyCannot']);
+  // Trophy4 owns Ryan Dunn, but now has its parked Jay Huff listing: it takes that back
+  // to make room, parks its Ryan Dunn, buys, and lists Jay Huff again at the old price.
+  assert.equal(game.st.listings.find(l => l.id === 't2').status, 'SOLD');
+  assert.equal(game.st.users['u-b'].apk, 60);
+  assert.ok(game.st.users['u-b'].owned.includes('p2'), 'the original Ryan Dunn is back in the roster');
+  const listed = game.st.my.filter(t => t.status === 'LISTED' && t.userId === 'u-b').map(t => [t.playerId, t.price]).sort();
+  assert.deepEqual(listed, [['p1', PARK_PRICE], ['p2', PARK_PRICE]], 'Jay Huff relisted at its old price, the bought Ryan Dunn parked');
+  assert.ok(logs.some(l => l.code === 'os.restored'));
   assert.equal(svc.snapshot().auto.status, 'stopped', 'scanning went on until stopped');
 }, { timeout: 15000 });
 
@@ -208,4 +230,38 @@ test('quantity: unlimited by default, a number needs to be ≥ 1; Auto Buy stops
   assert.equal(data().watch[0].boughtCount, 2);
   assert.equal(game.st.listings.filter(l => l.status === 'LISTED').length, 1, 'the third listing was left alone');
   assert.ok(logs.some(l => l.code === 'ab.rowDone') && logs.some(l => l.code === 'ab.allBought'));
+});
+
+
+test('already owned: equipment, skill and lineup are put back exactly; a stock listing is relisted at 9,999,999 TIX', async () => {
+  const { OwnedSwap, pickFiller } = require('../src/main/services/owned-swap.cjs');
+  const game = fakeGame({ users: { 'u-a': { apk: 500, tix: 0, owned: ['p9', 'p1'], gear: { p1: { jersey: 'inv-j', skill: 'cont-1' } } } }, listings: [L('t1', 'p1', 'Jay Huff', 20, 40)] });
+  // p1 plays SG; a stock listing (expired long ago) is the only one to take back.
+  game.st.users['u-a'].slots = { p9: 'PG', p1: 'SG', 'x1-u-a': 'SF', 'x2-u-a': 'PF', 'x3-u-a': 'C' };
+  game.st.my.push({ id: 'old', userId: 'u-a', playerId: 'p7', price: 33, paymentMode: 'APK_TICKET', status: 'EXPIRED', createdAt: '2026-01-01T00:00:00Z', player: { id: 'p7', name: 'Old Stock' } });
+  game.st.users['u-a'].owned = game.st.users['u-a'].owned.filter(id => id !== 'p7');
+  const { svc } = service(game, [['a', 'Trophy3']]);
+  const r = await svc.buy('a', { id: 't1', playerId: 'p1', name: 'Jay Huff', price: 20, currency: 'APK', salary: 40 });
+  assert.equal(r.ok, true);
+  const u = game.st.users['u-a'];
+  assert.ok(u.owned.includes('p1'), 'original back');
+  assert.equal(u.gear.p1.jersey, 'inv-j', 'jersey on again');
+  assert.equal(u.gear.p1.skill, 'cont-1', 'skill on again');
+  assert.deepEqual(game.st.dressLog.map(x => x[0]), ['off', 'skillOff', 'on', 'skillOn']);
+  assert.equal(u.slots.p1, 'SG', 'back on its old position');
+  const relisted = game.st.my.find(t => t.playerId === 'p7' && t.status === 'LISTED');
+  assert.equal(relisted.price, PARK_PRICE, 'stock goes back at 9,999,999 TIX');
+  assert.equal(relisted.paymentMode, 'TICKET');
+  // Filler order: on sale under the cap first, stock over the cap last.
+  const now = Date.parse('2026-10-25T10:00:00Z');
+  const rows = [
+    { ticketId: 's', status: 'EXPIRED', createdAt: '2026-01-01T00:00:00Z', salary: 10 },
+    { ticketId: 'o', status: 'LISTED', createdAt: '2026-10-25T09:00:00Z', salary: 900 },
+    { ticketId: 'r', status: 'EXPIRED', createdAt: '2026-10-24T10:00:00Z', salary: 50 },
+    { ticketId: 'l', status: 'LISTED', createdAt: '2026-10-25T09:00:00Z', salary: 50 }
+  ];
+  assert.equal(pickFiller(rows, { cap: 1000, used: 500 }, now).ticketId, 'l', 'on sale and under the cap');
+  assert.equal(pickFiller(rows.filter(x => x.ticketId !== 'l'), { cap: 1000, used: 500 }, now).ticketId, 'r', 'then was on sale under the cap');
+  assert.equal(pickFiller(rows.filter(x => !['l', 'r'].includes(x.ticketId)), { cap: 1000, used: 500 }, now).ticketId, 'o', 'then on sale over the cap');
+  assert.equal(pickFiller([], {}, now), null);
 });

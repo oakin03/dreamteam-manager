@@ -1,5 +1,6 @@
 const crypto = require('crypto');
 const { GameSocket } = require('./game-socket.cjs');
+const { OwnedSwap, isOwnedError } = require('./owned-swap.cjs');
 
 // Buying from the Trading Hall and Auto Buy, over the game's /socket/:
 //   market:buyPlayer {userId, ticketId}            -> market:buyResult {success, message, retryAfter (ms)}
@@ -212,7 +213,22 @@ class BuyService {
     try {
       return await this._queueBuy(() => this._withAccount(accountId, task, async () => {
         const conn = await this._conn(accountId, signal);
-        const r = await this._write(conn, 'market:buyPlayer', { userId: conn.userId, ticketId: t.id }, 'market:buyResult', signal);
+        let r = await this._write(conn, 'market:buyPlayer', { userId: conn.userId, ticketId: t.id }, 'market:buyResult', signal);
+        // "Already own this player": park the roster copy (equipment, skill and lineup are
+        // remembered), buy, park the bought one, then bring the original back.
+        let swap = null;
+        if (!r?.success && isOwnedError(r?.message)) {
+          const os = new OwnedSwap({ gs: conn.socket, userId: conn.userId, onActivity: () => this._touch(accountId), log: (level, code, params, message) => this._log(level, code, params, `${t.name}: ${message}`, accountId, task) });
+          const prep = await os.prepare(t.playerId, t.name).catch(error => ({ ok: false, reason: 'failed', message: error.message }));
+          if (prep.ok) {
+            swap = { os, record: prep.record };
+            r = await this._write(conn, 'market:buyPlayer', { userId: conn.userId, ticketId: t.id }, 'market:buyResult', signal);
+            autoList = true; // the bought copy must leave the roster for the original to come back
+          } else if (prep.reason !== 'noListings' && prep.reason !== 'notInRoster') {
+            this._log('warning', 'os.failed', { name: t.name, error: prep.message || prep.reason }, `${t.name}: the already-owned workaround failed · ${prep.message || prep.reason}`, accountId, task);
+          }
+        }
+        try {
         if (!r?.success) {
           const message = r?.message || 'unknown reply';
           this._log('warning', 'by.buyFailed', { name: t.name, price: t.price, currency: t.currency, error: message }, `${t.name} could not be bought · ${message}`, accountId, task);
@@ -226,6 +242,12 @@ class BuyService {
         await this._balance(accountId, conn, signal).catch(() => null);
         if (autoList) await this._sell(conn, entry.id, PARK_PRICE, 'TIX', signal, task).catch(error => this._log('warning', 'by.parkFailed', { name: t.name, error: error.message }, `${t.name} could not be listed: ${error.message}`, accountId, task));
         return { ok: true, entryId: entry.id };
+        } finally {
+          if (swap) {
+            const back = await swap.os.restore(swap.record).catch(error => ({ ok: false, message: error.message }));
+            if (!back.ok) this._log('error', 'os.restoreFailed', { name: t.name, error: back.message || back.reason }, `${t.name}: the original could not be brought back · ${back.message || back.reason}`, accountId, task);
+          }
+        }
       }));
     } finally {
       delete this.busy[t.id];

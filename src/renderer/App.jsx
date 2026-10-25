@@ -401,6 +401,12 @@ const MSG = {
     "eq.enhanceFailed":"{name} +{level} basma başarısız",
     "eq.enhanceDone":"{name} +{from} → +{level} · {tries} deneme · {fails} başarısız",
     "eq.noStone":"{name}: Refine Stone bitti · +{from} → +{level} (hedef +{target}) · basma durdu",
+    "os.fillerTaken":"{name} yer açmak için pazardan geri alındı",
+    "os.parked":"Kadrodaki kopya pazara park edildi (ekipman, skill ve diziliş not edildi)",
+    "os.restored":"{name} kadroya geri döndü · ekipman, skill ve diziliş yerine kondu {problems}",
+    "os.failed":"{name}: kadroda var çözümü uygulanamadı · {error}",
+    "os.restoreFailed":"{name}: asıl oyuncu kadroya geri getirilemedi · {error}",
+    "os.skipScout":"{player} zaten kadroda ve yer açacak kendi ilanı yok · atlandı",
     "eq.eventReward":"Ekipman etkinliği ödülü: {reward}",
     "eq.refined":"{name} Refine {from} → {level} · kalan Ore {ore}",
     "eq.refineFailed":"{name} Refine {from} başarısız · kalan Ore {ore}",
@@ -738,6 +744,12 @@ const MSG = {
     "eq.enhanceFailed":"{name} +{level} enhance failed",
     "eq.enhanceDone":"{name} +{from} → +{level} · {tries} tries · {fails} failed",
     "eq.noStone":"{name}: Refine Stone ran out · +{from} → +{level} (target +{target}) · stopped",
+    "os.fillerTaken":"{name} taken back from the market to make room",
+    "os.parked":"Roster copy parked on the market (equipment, skill and lineup remembered)",
+    "os.restored":"{name} back in the roster · equipment, skill and lineup restored {problems}",
+    "os.failed":"{name}: the already-owned workaround failed · {error}",
+    "os.restoreFailed":"{name}: the original could not be brought back · {error}",
+    "os.skipScout":"{player} is already in the roster and there is no own listing to make room · skipped",
     "eq.eventReward":"Equipment event reward: {reward}",
     "eq.refined":"{name} Refine {from} → {level} · Ore left {ore}",
     "eq.refineFailed":"{name} Refine {from} failed · Ore left {ore}",
@@ -1150,7 +1162,8 @@ function AutoPlay({ state, t, refresh, toast }) {
 }
 
 const RELIST_TONE={ready:'muted',queued:'muted',removing:'warn',listing:'warn',listed:'ok',owned:'bad',failed:'bad',removedNotListed:'bad',stopped:'muted'};
-const RELIST_RETRYABLE=new Set(['ready','failed','stopped']);
+// 'owned' (already in the roster) can be tried again: the already-owned workaround may get it listed now.
+const RELIST_RETRYABLE=new Set(['ready','failed','stopped','owned']);
 const LISTING_FILTERS={accountId:'',name:'',grade:'',currency:'',kind:''};
 const listingKindOf=r=>r.state==='owned'?'owned':(r.kind||null);
 const KIND_TONE={recent:'ok',stock:'muted',onSale:'warn',owned:'bad'};
@@ -1338,7 +1351,8 @@ function Scout({ state, t, refresh, toast }) {
       const stats=profile.accounts?.[account.id]||{};
       const isBusy=!!busy[account.id];
       const isOpen=Boolean(s.browserOpen);
-      const agents=(data?.agents||[]).filter(a=>matchesAgent(a,account));
+      // Highest Scout price first (signed ones keep their place among them).
+      const agents=(data?.agents||[]).filter(a=>matchesAgent(a,account)).sort((p,q)=>(Number(q.price)||0)-(Number(p.price)||0));
       return <section className={`scout-account-row ${mainId===account.id?'main-account':''} ${selectedIds.includes(account.id)?'selected-account':''}`} key={account.id}>
         <aside className="scout-account-meta"><div className="scout-account-name"><input className="scout-row-check" type="checkbox" checked={selectedIds.includes(account.id)} onChange={()=>toggleSelected(account.id)}/><b>{account.name}</b>{mainId===account.id&&<span className="main-dot">{t.mainBadge}</span>}<span className={`scout-browser-state ${isOpen?'open':'closed'}`}>{isOpen?t.browserOpenShort:t.browserClosedShort}</span></div><div className="scout-account-mini"><span>LV <b>{stats.level??'—'}</b></span><span>APK <b>{fmtNumber(stats.apk)}</b></span><span>TIX <b>{fmtNumber(stats.tix)}</b></span><span>TK <b>{fmtTk(data?.funds??stats.tk)}</b></span><span>{t.roster} <b>{data?.roster!=null?`${data.roster}/${data.rosterMax??'—'}`:(stats.roster!=null?`${stats.roster}/${stats.rosterMax??'—'}`:'—')}</b></span></div>{data&&<div className="scout-attempt-line"><span>{t.attempts} <b>{data.attempts??'—'}/{data.attemptsMax??'—'}</b></span><ScoutTimer data={data}/></div>}<div className="scout-row-actions">{!isOpen?<button className="btn primary small" disabled={isBusy||!!globalBusy} onClick={()=>runAccount(account.id,'open',()=>api.scout.open(account.id))}>{t.openScout}</button>:<><button className="btn ghost small" disabled={isBusy||!!globalBusy} onClick={()=>runAccount(account.id,'refresh',()=>api.scout.refresh(account.id))}><Icon name="refresh" size={14}/>{t.refreshScout}</button><button className="btn accent small" disabled={isBusy||!!globalBusy||data?.attempts===0} onClick={()=>runAccount(account.id,'callback',()=>api.scout.callback(account.id))}>{t.callback}</button><button className="btn ghost small" disabled={isBusy||!!globalBusy} onClick={()=>runAccount(account.id,'close',()=>api.scout.close(account.id))}>{t.close}</button></>}</div>{s.error&&<small className="scout-row-error">{s.error}</small>}</aside>
         <div className="scout-agent-area">{data?(agents.length?<div className="scout-agent-grid">{agents.map(agent=><article className={`scout-agent-card ${agent.signed?'signed':''}`} key={agent.key||agent.index} onClick={()=>setSelected({agent,accountName:account.name})}><div className="scout-agent-top"><div className="scout-agent-name"><b>{agent.name||agent.key}</b><span>{agent.team||'—'} · {agent.position||'—'}</span></div><span className={`grade-badge ${gradeToneClass(agent.grade)}`}>{agent.grade||'—'}</span></div><div className="scout-agent-price">{fmtTk(agent.price)}</div><div className="scout-agent-carddata">{agent.card?<><b><StarValue value={agent.card.stars}/> · {agent.card.team||agent.team||'—'}</b><ProgressValue progress={agent.card.progress} t={t}/>{agent.card.roles?.length>0&&<em className="inline-role-list">{agent.card.roles.map(r=><RoleBadge key={r.id} role={r} compact/>)}</em>}{agent.card.teamCritical&&<small>{agent.card.raisesTeamIfUpgraded?t.raisesTeam:t.teamNeeded}</small>}</>:<span className="muted-text">Star Card —</span>}</div><div className="scout-agent-actions"><button className="btn ghost small" onClick={e=>{e.stopPropagation();setSelected({agent,accountName:account.name})}}>{t.detail}</button><button className="btn primary small" disabled={!isOpen||!agent.canSign||isBusy||!!globalBusy||data.roster>=data.rosterMax} onClick={e=>{e.stopPropagation();if(confirm(t.signConfirm))runAccount(account.id,'sign',()=>api.scout.sign(account.id,agent.key))}}>{agent.signed?t.signed:t.buy}</button></div></article>)}</div>:<div className="scout-row-empty">{t.noScoutMatch}</div>):<div className="scout-row-empty"><span>{t.noScoutData}</span>{s.status&&s.status!=='idle'&&<small>{s.status}</small>}</div>}</div>

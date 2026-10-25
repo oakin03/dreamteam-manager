@@ -1,6 +1,7 @@
 const { GameSocket } = require('./game-socket.cjs');
 const { isNetError } = require('./game-health.cjs');
 const { TradeGameAccount, sleep, abortError } = require('./trade-game-client.cjs');
+const { OwnedSwap } = require('./owned-swap.cjs');
 const R = require('./trade-rules.cjs');
 
 // Auto Trade over the game's socket (no browser). Main scouts and turns its players
@@ -373,6 +374,7 @@ class AutoTradeEngine {
       }
       // Whatever came to main last is turned into cards before the cycle ends.
       if (this.conns.has(cfg.mainId)) await this._convertMain(signal);
+      await this._restoreParked(cfg.mainId, signal);
       this._acc(cfg.mainId).status = 'done';
       this._close(cfg.mainId);
       await this._cardScan(signal);
@@ -452,6 +454,7 @@ class AutoTradeEngine {
     this._log('info', 'at2.mainTurn', { name: this._name(id) }, `${this._name(id)} (main) scouting`, id);
     await this._scout(id, 'main', signal);
     await this._convertMain(signal);
+    await this._restoreParked(id, signal);
   }
 
   async _sideTurn(id, signal) {
@@ -460,12 +463,19 @@ class AutoTradeEngine {
     await this._open(this.state.config.mainId, signal);
     await this._applyBench(id, signal);
     this._log('info', 'at2.sideTurn', { name: this._name(id), funds: this._acc(id).funds }, `${this._name(id)} (side) · ${this._acc(id).funds} TK`, id);
-    let r = await this._tradeWithMain(id, signal);
-    if (r?.skipped) return r;
-    const scout = await this._scout(id, 'side', signal);
-    r = await this._tradeWithMain(id, signal);
-    if (r?.skipped) return r;
-    return scout?.skipped ? scout : {};
+    try {
+      let r = await this._tradeWithMain(id, signal);
+      if (r?.skipped) return r;
+      const scout = await this._scout(id, 'side', signal);
+      r = await this._tradeWithMain(id, signal);
+      if (r?.skipped) return r;
+      return scout?.skipped ? scout : {};
+    } finally {
+      if (!signal.aborted) {
+        await this._restoreParked(id, signal).catch(error => this._log('error', 'os.restoreFailed', { name: this._name(id), error: error.message }, error.message, id));
+        await this._restoreParked(this.state.config.mainId, signal).catch(() => {});
+      }
+    }
   }
 
   // Pre-existing bench players: list on the market / take part / leave them (user's choice).
@@ -504,6 +514,33 @@ class AutoTradeEngine {
     return roster.bench.filter(p => rows[p.id] && rows[p.id].dir === dir && !['converted', 'listed', 'none'].includes(rows[p.id].status) && !R.tradeBlock(p));
   }
 
+  _ownedSwap(id) {
+    const conn = this.conns.get(id);
+    return new OwnedSwap({ gs: conn.conn, userId: conn.userId, log: (level, code, params, message) => this._log(level, code, params, message, id) });
+  }
+
+  // Originals parked for an already-owned Scout player come back once the signed copy
+  // has left the roster (traded, turned into cards or listed). Kept in the run state, so
+  // a restart or a later listing still restores them.
+  async _restoreParked(id, signal) {
+    const acc = this._acc(id);
+    const ids = Object.keys(acc.parked || {});
+    if (!ids.length) return;
+    let opened = false;
+    try {
+      if (!this.conns.has(id)) { await this._open(id, signal); opened = true; }
+      const roster = R.rosterOf(await this.conns.get(id).roster());
+      for (const pid of ids) {
+        if (roster.ids.has(pid)) continue; // the signed copy is still here
+        const back = await this._ownedSwap(id).restore(acc.parked[pid]).catch(error => ({ ok: false, message: error.message }));
+        if (back.ok) { delete acc.parked[pid]; this._save(); }
+        else if (back.reason !== 'copyInRoster') this._log('error', 'os.restoreFailed', { name: acc.parked[pid].name, error: back.message || back.reason }, `${acc.parked[pid].name}: the original could not be brought back · ${back.message || back.reason}`, id);
+      }
+    } finally {
+      if (opened) this._close(id);
+    }
+  }
+
   async _scout(id, role, signal) {
     const conn = this.conns.get(id);
     const acc = this._acc(id);
@@ -518,7 +555,7 @@ class AutoTradeEngine {
       this.onScout?.(id, fa);
       let roster = R.rosterOf(await conn.roster());
       acc.funds = await conn.funds().catch(() => acc.funds);
-      const candidates = (fa?.freeAgents || []).filter(a => !a.isSigned && !roster.ids.has(a.id) && R.classify(a, cfg, roleMap));
+      const candidates = (fa?.freeAgents || []).filter(a => !a.isSigned && !(acc.parked || {})[a.id] && R.classify(a, cfg, roleMap));
       this._step('scouting', { name: this._name(id), candidates: candidates.length, attempts: acc.scout.attemptsLeft }, id);
       this._save();
       for (const agent of candidates) {
@@ -534,6 +571,20 @@ class AutoTradeEngine {
           if (role === 'main') throw new UserFixError(`Main has ${acc.funds} TK, ${agent.name} costs ${price} TK.`, 'at2.mainFunds', { name: this._name(id), funds: acc.funds, need: price });
           this._log('warning', 'at2.sideFunds', { name: this._name(id), funds: acc.funds, need: price }, `${this._name(id)}: not enough TK, account skipped`, id);
           return { skipped: true };
+        }
+        // Already in the roster: park our copy (equipment, skill, lineup remembered) so the
+        // Scout one can be signed; ours comes back once the new one has left the roster.
+        if (roster.ids.has(agent.id)) {
+          const os = this._ownedSwap(id);
+          const prep = await os.prepare(agent.id, agent.name).catch(error => ({ ok: false, reason: 'failed', message: error.message }));
+          if (!prep.ok) {
+            if (prep.reason === 'noListings') this._log('info', 'os.skipScout', { player: agent.name }, `${agent.name} is already in the roster and there is no own listing to make room · skipped`, id);
+            else this._log('warning', 'os.failed', { name: agent.name, error: prep.message || prep.reason }, `${agent.name}: the already-owned workaround failed · ${prep.message || prep.reason}`, id);
+            continue;
+          }
+          (acc.parked ||= {})[agent.id] = prep.record;
+          this._save();
+          roster = R.rosterOf(await conn.roster());
         }
         this._step('signing', { name: this._name(id), player: agent.name, price }, id);
         const r = await conn.sign(agent.id);
@@ -824,6 +875,7 @@ class AutoTradeEngine {
       if (temp) await this._open(accountId, signal);
       this._step('listing', { name: this._name(accountId), count: items.length }, accountId);
       await this._list(accountId, items, signal);
+      await this._restoreParked(accountId, signal).catch(error => this._log('error', 'os.restoreFailed', { name: this._name(accountId), error: error.message }, error.message, accountId));
     } finally {
       if (temp) this._close(accountId);
       if (prev) Object.assign(this.state, prev);

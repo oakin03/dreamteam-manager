@@ -1,14 +1,17 @@
-import React, { Children, cloneElement, isValidElement, useState } from 'react';
+import React, { Children, Fragment, cloneElement, isValidElement, useLayoutEffect, useRef, useState } from 'react';
 
 // Drop-in <table> that sorts by any column: click a header (again to flip). It reads
 // the cells' rendered text, so existing tables need no extra data:
 // numbers ("44.465", "7.200 / 7.000", "+20", "2/3", "12%") sort as numbers, dates
 // ("23.10.2026 21:00") and times ("21:01:47") chronologically, the rest by text (tr).
 // Empty / "—" cells always go last. A row whose first cell spans columns (a detail row)
-// stays under the row above it. Headers with their own onClick, empty headers and
+// stays under the row above it. The text of each cell is read from the page as it is
+// shown (cells drawn by a component, inputs, badges), so every column sorts by what you see. Headers with their own onClick, empty headers and
 // `data-nosort` headers are left alone. Rows drawn by a component pass sortValues.
 
 const flat = node => Children.toArray(node);
+// Cells may come inside <>…</> (e.g. {cond && <><th/><th/></>}): open the fragments.
+const flatCells = node => flat(node).flatMap(n => (isValidElement(n) && n.type === Fragment ? flatCells(n.props.children) : [n]));
 
 // Visible text of a React node (inputs: their value; badges: their children).
 export function textOf(node) {
@@ -25,6 +28,8 @@ export function textOf(node) {
   return '';
 }
 
+// Player grades sort by their order in the game (D- … S+), not alphabetically.
+const GRADES = ['N', 'D-', 'D', 'D+', 'C-', 'C', 'C+', 'B-', 'B', 'B+', 'A-', 'A', 'A+', 'S-', 'S', 'S+', 'X'];
 const DATE_RE = /^(\d{1,2})[./](\d{1,2})[./](\d{4})(?:[ ,T]+(\d{1,2}):(\d{2})(?::(\d{2}))?)?/;
 const TIME_RE = /^(\d{1,2}):(\d{2})(?::(\d{2}))?$/;
 
@@ -32,6 +37,8 @@ const TIME_RE = /^(\d{1,2}):(\d{2})(?::(\d{2}))?$/;
 export function sortKey(raw) {
   const s = String(raw || '').replace(/\s+/g, ' ').trim();
   if (!s || s === '—' || s === '-' || s === '–') return [2, 0];
+  const g = GRADES.indexOf(s.toUpperCase());
+  if (g >= 0) return [0, g];
   const d = DATE_RE.exec(s);
   if (d) return [0, Date.UTC(+d[3], +d[2] - 1, +d[1], +(d[4] || 0), +(d[5] || 0), +(d[6] || 0))];
   const t = TIME_RE.exec(s);
@@ -54,18 +61,38 @@ function compare(a, b) {
   return 0;
 }
 
-const cellsOf = row => (isValidElement(row) ? flat(row.props.children).filter(isValidElement) : []);
+const cellsOf = row => (isValidElement(row) ? flatCells(row.props.children).filter(isValidElement) : []);
 const isDetailRow = row => { const c = cellsOf(row); return c.length > 0 && Number(c[0].props.colSpan) > 1; };
 
 export default function SortTable({ children, className, ...rest }) {
   const [sort, setSort] = useState(null); // { col, dir: 1 | -1 }
+  // What each row shows, per column, read from the page after every render (row key → texts).
+  const bodyRef = useRef(null);
+  const shown = useRef(new Map());
+  useLayoutEffect(() => {
+    const tb = bodyRef.current;
+    if (!tb) return;
+    const map = new Map();
+    for (const tr of tb.rows) {
+      const k = tr.getAttribute('data-sk');
+      if (k == null) continue;
+      map.set(k, [...tr.cells].map(td => {
+        const field = td.querySelector('input:not([type=checkbox]):not([type=radio]), select');
+        if (field) return field.value;
+        const text = td.textContent.trim();
+        const box = !text && td.querySelector('input[type=checkbox]');
+        return box ? (box.checked ? '1' : '0') : text;
+      }));
+    }
+    shown.current = map;
+  });
   const parts = flat(children);
   const head = parts.find(p => isValidElement(p) && p.type === 'thead');
   const body = parts.find(p => isValidElement(p) && p.type === 'tbody');
   if (!head || !body) return <table className={className} {...rest}>{children}</table>;
 
   const headRow = flat(head.props.children).find(isValidElement);
-  const ths = headRow ? flat(headRow.props.children).filter(isValidElement) : [];
+  const ths = headRow ? flatCells(headRow.props.children).filter(isValidElement) : [];
   const hasControl = node => flat(node).some(n => isValidElement(n) && (['input', 'select', 'button'].includes(n.type) || (n.props?.children != null && hasControl(n.props.children))));
   const sortable = th => !th.props.onClick && th.props['data-nosort'] == null && !hasControl(th.props.children) && textOf(th.props.children).trim() !== '';
   const toggle = col => setSort(s => (s?.col === col ? (s.dir === 1 ? { col, dir: -1 } : null) : { col, dir: 1 }));
@@ -84,14 +111,19 @@ export default function SortTable({ children, className, ...rest }) {
   });
   const newHead = cloneElement(head, {}, cloneElement(headRow, {}, newThs));
 
-  let rows = flat(body.props.children);
+  let rows = flat(body.props.children).map(r => (isValidElement(r) && r.type === 'tr' ? cloneElement(r, { 'data-sk': String(r.key) }) : r));
+  const cellText = (r, col) => {
+    if (Array.isArray(r.props?.sortValues)) return r.props.sortValues[col];
+    const seen = shown.current.get(String(r.key));
+    return seen && col < seen.length ? seen[col] : textOf(cellsOf(r)[col]?.props.children);
+  };
   if (sort) {
     // Group detail rows with the row above, sort the groups, keep ties in their order.
     const groups = [];
     for (const r of rows) {
       if (groups.length && isDetailRow(r)) groups[groups.length - 1].rows.push(r);
       // A row drawn by its own component passes its values as sortValues={[...]} (one per column).
-      else groups.push({ rows: [r], key: sortKey(Array.isArray(r.props?.sortValues) ? r.props.sortValues[sort.col] : textOf(cellsOf(r)[sort.col]?.props.children)) });
+      else groups.push({ rows: [r], key: sortKey(cellText(r, sort.col)) });
     }
     groups.forEach((g, i) => { g.i = i; });
     groups.sort((a, b) => {
@@ -101,5 +133,5 @@ export default function SortTable({ children, className, ...rest }) {
     });
     rows = groups.flatMap(g => g.rows);
   }
-  return <table className={className} {...rest}>{newHead}{cloneElement(body, {}, rows)}</table>;
+  return <table className={className} {...rest}>{newHead}{cloneElement(body, { ref: bodyRef }, rows)}</table>;
 }
