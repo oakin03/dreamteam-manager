@@ -1,5 +1,6 @@
 const { GameSocket } = require('./game-socket.cjs');
 const { isNetError } = require('./game-health.cjs');
+const { matchStartSlot } = require('./match-start-gate.cjs');
 
 // Tower (Kule) over the game's sockets (captured 2026-10-22):
 //   /socket/            towerChallenge:getTowerData (no payload, session user) -> towerChallenge:towerData
@@ -159,6 +160,7 @@ class TowerService {
         const floor = (data.floorsByMode?.[t.modeId] || []).find(f => f.floorNumber === t.floor);
         if (!floor) { t.state = 'done'; t.reason = 'completed'; continue; }
         this._row(id, { status: 'starting', tower: t.label, floor: t.floor });
+        await matchStartSlot(signal, this.timing.startGapMs); // match ids are '<mode>-<ms>': no two starts in one ms
         const r = await conn.sim.ack('playTowerChallengeMatch', { userId: conn.userId, opponentId: floor.enemyUserId, floorNumber: t.floor, modeId: t.modeId, mode: t.mode }, { signal, timeoutMs: 20000 });
         if (!r?.success) {
           const msg = String(r?.message || r?.error || 'refused');

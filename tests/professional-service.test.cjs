@@ -76,7 +76,7 @@ function deps(game) {
     getAccountProfile: () => ({ accounts: { a1: { userId: 'u1' } } }),
     getSettings: () => settings, saveSettings: v => { settings = v; }
   };
-  return { logs, settings: () => settings, d: { store, activity: { add: e => logs.push(e) }, sessions: { get: async () => ({ userId: 'u1', cookieHeader: 'c=1' }) }, createSocket: game.createSocket, random: () => 0.7, timing: { pollMs: 1, appearGraceMs: 50 } } };
+  return { logs, settings: () => settings, d: { store, activity: { add: e => logs.push(e) }, sessions: { get: async () => ({ userId: 'u1', cookieHeader: 'c=1' }) }, createSocket: game.createSocket, random: () => 0.7, timing: { pollMs: 1, appearGraceMs: 50, startGapMs: 0 } } };
 }
 
 test('Professional starts a new season (random conference) and plays the scheduled games until the matches run out', async () => {

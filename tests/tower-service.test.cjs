@@ -60,7 +60,7 @@ function service(game, accounts) {
   const logs = [];
   let report = null;
   const store = { getAccounts: () => accounts.map(([id, name]) => ({ id, name })), getTowerReport: () => report, saveTowerReport: r => { report = r; } };
-  const svc = new TowerService({ store, activity: { add: e => logs.push(e) }, onChanged() {}, sessions: { get: async a => ({ userId: 'u-' + a.id, cookieHeader: 'session=' + a.id }) }, createSocket: game.createSocket, timing: { pollMs: 1, appearGraceMs: 50 } });
+  const svc = new TowerService({ store, activity: { add: e => logs.push(e) }, onChanged() {}, sessions: { get: async a => ({ userId: 'u-' + a.id, cookieHeader: 'session=' + a.id }) }, createSocket: game.createSocket, timing: { pollMs: 1, appearGraceMs: 50, startGapMs: 0 } });
   return { svc, logs, report: () => report };
 }
 
@@ -131,7 +131,7 @@ test('a game outage: the account waits for the shared check, then plays on from 
   const svc = new TowerService({
     store: { getAccounts: () => [{ id: 'a', name: 'Trophy3' }], getTowerReport: () => report, saveTowerReport: r => { report = r; } },
     activity: { add: e => logs.push(e) }, onChanged() {}, sessions: { get: async a => ({ userId: 'u-' + a.id, cookieHeader: 'session=' + a.id }) },
-    createSocket: game.createSocket, gameHealth: health, timing: { pollMs: 1, appearGraceMs: 50, cookieTryMs: 20 }
+    createSocket: game.createSocket, gameHealth: health, timing: { pollMs: 1, appearGraceMs: 50, cookieTryMs: 20, startGapMs: 0 }
   });
   await svc.runAndWait(['a']);
   assert.ok(logs.some(l => l.code === 'gh.down') && logs.some(l => l.code === 'gh.up'));

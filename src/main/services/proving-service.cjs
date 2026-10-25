@@ -1,5 +1,6 @@
 const { GameSocket } = require('./game-socket.cjs');
 const { isNetError } = require('./game-health.cjs');
+const { matchStartSlot } = require('./match-start-gate.cjs');
 
 // Proving Grounds modes against bots, 2 free attempts a day each (read from the game
 // client and tried live 2026-10-25):
@@ -206,6 +207,7 @@ class DailyBossService extends ProvingBase {
           sim = await GameSocket.open({ createSocket: this.createSocket, path: SIM_PATH, cookie: session.cookieHeader, signal });
         }
         this._row(id, { status: 'starting' });
+        await matchStartSlot(signal, this.timing.startGapMs);
         const r = await sim.ack('playDailyBossMatch', { userId, bossId: boss.id, opponentId: boss.botId }, { signal, timeoutMs: 20000 });
         if (!r?.success) {
           const msg = String(r?.error || r?.message || 'refused');
@@ -284,6 +286,7 @@ class EliteAscentService extends ProvingBase {
       while (info.left == null || info.left > 0) {
         if (!info.enemyId) throw new Error(`Floor ${info.floor} could not be read.`);
         this._row(id, { status: 'starting', enemy: info.enemy });
+        await matchStartSlot(signal, this.timing.startGapMs);
         const r = await sim.ack('playBackToPeakMatch', { userId, opponentId: info.enemyId, floorNumber: info.floor }, { signal, timeoutMs: 20000 });
         if (!r?.success) {
           const msg = String(r?.error || r?.message || 'refused');
@@ -606,6 +609,7 @@ class ProfessionalService extends ProvingBase {
         await this._waitOtherMatch(id, userId, signal);
         if (!sim) sim = await GameSocket.open({ createSocket: this.createSocket, path: SIM_PATH, cookie: session.cookieHeader, signal });
         this._row(id, { status: 'starting', enemy: opponent.name });
+        await matchStartSlot(signal, this.timing.startGapMs);
         const r = await sim.ack({ hof: 'playHOFMatch', honor: 'playHonorWayMatch', legacy: 'playLegacyWayMatch' }[info.stage] || 'playProfessionalMatch', payload, { signal, timeoutMs: 20000 });
         if (!r?.success) {
           const msg = String(r?.error || r?.message || 'refused');
