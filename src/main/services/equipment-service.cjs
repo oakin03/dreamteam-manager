@@ -415,8 +415,13 @@ class EquipmentService {
     const goal = target == null ? g.level + 1 : Number(target);
     let tries = 0; let fails = 0;
     const startLevel = g.level;
+    // Running out of the item's Refine Stone is a normal end, not an error: the run
+    // stops and a report says how far it got.
+    let noStone = null;
+    const stonesLeft = () => { try { return materialSummary(this.raw?.inventory || []).stone[g.rarity] ?? null; } catch { return null; } };
     while (g.level < goal) {
       if (signal.aborted) throw abortError();
+      if (stonesLeft() === 0) { noStone = 'none'; break; }
       if (++tries > MAX_ENHANCE_ATTEMPTS) throw new Error(`Stopped after ${MAX_ENHANCE_ATTEMPTS} tries.`);
       this._set({ step: 'enhance', stepParams: { name: g.name, level: g.level, target: goal, tries, fails } });
       const r = await this._write('enhance:item', { inventoryId, useGodsBlessing: false, godsBlessingInventoryId: null }, 'enhance:itemSuccess', signal);
@@ -433,6 +438,9 @@ class EquipmentService {
       } else if (/failed at/i.test(String(r?.message))) {
         fails++;
         this._log('info', 'eq.enhanceFailed', { name: g.name, level: g.level, message: r.message }, r.message);
+      } else if (/not enough|insufficient|don.?t have|do not have|no (refine )?stone|out of|required|need/i.test(String(r?.message || r?.error || ''))) {
+        noStone = String(r?.message || r?.error);
+        break;
       } else {
         throw new Error(r?.message || r?.error || 'Enhance refused');
       }
@@ -440,9 +448,10 @@ class EquipmentService {
     }
     await this._loadInventory(signal);
     g = this._gear(inventoryId);
-    this._set({ lastResult: { kind: 'enhance', ok: g.level >= goal, id: inventoryId, from: startLevel, level: g.level, tries, fails } });
-    if (target != null) this._log(g.level >= goal ? 'success' : 'warning', 'eq.enhanceDone', { name: g.name, from: startLevel, level: g.level, tries, fails }, `${g.name} +${startLevel} → +${g.level} · ${tries} tries`);
-    return { level: g.level, tries, fails };
+    this._set({ lastResult: { kind: 'enhance', ok: g.level >= goal, id: inventoryId, name: g.name, from: startLevel, level: g.level, target: goal, tries: noStone && noStone !== 'none' ? tries - 1 : tries, fails, noStone: Boolean(noStone), rarity: g.rarity, at: new Date().toISOString() } });
+    if (noStone) this._log('warning', 'eq.noStone', { name: g.name, from: startLevel, level: g.level, target: goal }, `${g.name}: Refine Stone ran out · +${startLevel} → +${g.level} (target +${goal})`);
+    else if (target != null) this._log(g.level >= goal ? 'success' : 'warning', 'eq.enhanceDone', { name: g.name, from: startLevel, level: g.level, tries, fails }, `${g.name} +${startLevel} → +${g.level} · ${tries} tries`);
+    return { level: g.level, tries, fails, noStone: Boolean(noStone) };
   }
 
   _applyGear(updated) {
@@ -540,7 +549,8 @@ class EquipmentService {
           made.set(step.ref, r.createdId);
         } else {
           const id = made.get(step.ref) || step.ref;
-          await this._enhanceTo(id, step.to, signal);
+          const er = await this._enhanceTo(id, step.to, signal);
+          if (er?.noStone) throw new Error(`Refine Stone ran out while enhancing ${step.name} (+${er.level} of +${step.to}).`);
         }
       }
       if (signal.aborted) throw abortError();

@@ -10,13 +10,14 @@
     "node": ">=20"
   },
   "scripts": {
-    "dev": "node scripts/ensure-runtime.cjs && concurrently -k \"vite --host 127.0.0.1\" \"wait-on http://127.0.0.1:5173 && cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron .\"",
+    "dev": "node scripts/ensure-runtime.cjs && concurrently -k \"vite --host 127.0.0.1 --strictPort\" \"wait-on http://127.0.0.1:5173 && cross-env VITE_DEV_SERVER_URL=http://127.0.0.1:5173 electron .\"",
     "build": "vite build",
-    "dist": "node scripts/ensure-runtime.cjs && npm run build && electron-builder --win nsis",
-    "dist:portable": "node scripts/ensure-runtime.cjs && npm run build && electron-builder --win portable",
+    "dist": "node scripts/ensure-runtime.cjs && node scripts/quiz-bundle.cjs && npm run build && electron-builder --win nsis",
+    "dist:portable": "node scripts/ensure-runtime.cjs && node scripts/quiz-bundle.cjs && npm run build && electron-builder --win portable",
     "postinstall": "node scripts/ensure-runtime.cjs",
     "repair-runtime": "node scripts/ensure-runtime.cjs",
-    "mcp:sync": "node src/main/services/mcp-sync.cjs"
+    "mcp:sync": "node src/main/services/mcp-sync.cjs",
+    "quiz:bundle": "node scripts/quiz-bundle.cjs"
   },
   "dependencies": {
     "playwright": "^1.55.0",
@@ -64,13 +65,17 @@
             "x64"
           ]
         }
-      ]
+      ],
+      "icon": "build/icon.ico"
     },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
-      "createStartMenuShortcut": true
+      "createStartMenuShortcut": true,
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "shortcutName": "DreamTeam Manager"
     }
   }
 }

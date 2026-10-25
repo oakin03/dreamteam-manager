@@ -23,8 +23,9 @@ function sleep(ms, signal) {
 }
 
 class TaskEngine {
-  constructor({ store, credentials, registry, browserService, activity, onChanged, beforeRun = null, beforeRunNextAt = null }) {
+  constructor({ store, credentials, registry, browserService, activity, onChanged, beforeRun = null, beforeRunNextAt = null, gameHealth = null }) {
     this.store = store;
+    this.gameHealth = gameHealth; // shared "is the game reachable?" (game-health.cjs)
     // Optional `async ({ account, taskId, signal }) => {}` run before a task's loop
     // (the daily routine) and again at `beforeRunNextAt(accountId)` while it runs.
     // Only an abort stops the task; other errors are ignored.
@@ -136,7 +137,13 @@ class TaskEngine {
       }),
       socket: {
         create: (url, options) => io(url, options)
-      }
+      },
+      // Plugins wait here while the game is unreachable instead of retrying on their own.
+      gameHealth: this.gameHealth ? {
+        isDown: () => this.gameHealth.isDown(),
+        reportDown: error => this.gameHealth.reportDown(`Auto Play · ${account.name}`, error),
+        waitUp: () => this.gameHealth.waitUp(signal)
+      } : null
     };
   }
 

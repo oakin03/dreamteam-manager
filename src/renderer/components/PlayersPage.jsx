@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import SortTable from './SortTable';
 
 const api = window.dreamteam;
 const GRADES = ['D-', 'D', 'D+', 'C-', 'C', 'C+', 'B-', 'B', 'B+', 'A-', 'A', 'A+', 'S-', 'S', 'S+'];
@@ -117,7 +118,7 @@ export default function PlayersPage({ state, t, toast }) {
         {picked.size > 0 && <><button className="btn success small" onClick={() => addToBuy(list.filter(p => picked.has(p.id)))}>{fill(x.addBuySel, { n: picked.size })}</button><button className="btn ghost small" onClick={() => setPicked(new Set())}>{x.clearSel}</button></>}
         <span className="pl-count">{fill(x.shown, { shown: rows.length, total: list.length })}</span>
       </div>
-      <div className="panel table-panel pl-table"><table>
+      <div className="panel table-panel pl-table"><SortTable>
         <thead><tr><th><input type="checkbox" checked={visible.length > 0 && visible.every(p => picked.has(p.id))} onChange={e => setPicked(prev => { const n = new Set(prev); for (const p of visible) e.target.checked ? n.add(p.id) : n.delete(p.id); return n; })} /></th>{th('name', x.player)}{th('team', x.team)}{th('position', x.position)}{th('rating', x.rating)}{th('value', x.value)}{th('base', x.base)}{th('change', x.change)}{th('gap', x.gap)}{th('roles', x.roles)}{th('card', x.card)}<th></th></tr></thead>
         <tbody>{visible.map(p => <tr key={p.id} className={p.isBase ? 'pl-base-row' : ''}>
           <td><input type="checkbox" checked={picked.has(p.id)} onChange={() => togglePick(p.id)} /></td>
@@ -139,7 +140,7 @@ export default function PlayersPage({ state, t, toast }) {
           <td>{p.card ? <span className="pl-card">{p.card.customTeam ? <em className="modified-badge">{x.modified}</em> : null}{p.card.noTeam && !p.card.customTeam ? x.noTeam : fill(x.stars, { s: p.card.stars ?? 0 })} · {fill(x.cards, { n: p.card.cardCount })}</span> : <span className="muted-text">—</span>}</td>
           <td className="actions">{inBuy.has(p.id) ? <span className="pill ok" title={x.inBuy}><i />Auto Buy</span> : <button className="btn ghost small" title={x.addBuy} onClick={() => addToBuy([p])}>+ Auto Buy</button>}</td>
         </tr>)}</tbody>
-      </table></div>
+      </SortTable></div>
       {pages > 1 && <div className="pl-pager"><button className="btn ghost small" disabled={page === 0} onClick={() => setPage(p => p - 1)}>‹</button><span>{fill(x.page, { p: Math.min(page, pages - 1) + 1, n: pages })}</span><button className="btn ghost small" disabled={page >= pages - 1} onClick={() => setPage(p => p + 1)}>›</button></div>}
     </>}
   </div>;

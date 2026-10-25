@@ -1,15 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { CardsService, resolvePlayer, disambiguatePlayerKeys } = require('../src/main/services/cards-service.cjs');
-const Module=require('node:module');
-const originalLoad=Module._load;
-Module._load=function(request,parent,isMain){
-  if(request==='./browser-service.cjs' && parent?.filename?.endsWith('scout-service.cjs'))return {AGENT_SELECTOR:''};
-  return originalLoad.call(this,request,parent,isMain);
-};
-let ScoutService;
-try{({ScoutService}=require('../src/main/services/scout-service.cjs'));}
-finally{Module._load=originalLoad;}
+const { ScoutService } = require('../src/main/services/scout-service.cjs');
 
 const players = [
   { key:'slug:seth-curry', name:'Seth Curry', imagePath:'/assets/players/seth-curry.webp', slug:'seth-curry', team:'GSW', grade:'D-', roleIds:[], active:true },
@@ -17,29 +9,13 @@ const players = [
   { key:'slug:trey-jemison', name:'Trey Jemison III', imagePath:'/assets/players/trey-jemison.webp', slug:'trey-jemison', team:'ABC', grade:'D', roleIds:['card'], active:true }
 ];
 
-test('Scout matches the two S. Curry portraits independently without using team or rating', () => {
+test('Scout matches cards only by the game player id, never by portrait or name', () => {
   const cards = Object.create(CardsService.prototype);
-  cards.snapshot = () => ({ players, teams:[] });
-  assert.deepEqual(cards.findForScout({name:'S. Curry',imagePath:'https://game.test/assets/players/seth-curry.webp?size=2',team:'OTHER',grade:'S+'}).roleIds,[]);
-  assert.deepEqual(cards.findForScout({name:'S. Curry',imagePath:'/other/players/stephen-curry.webp',team:'OTHER',grade:'D-'}).roleIds,['sellable']);
-  assert.equal(cards.findForScout({name:'S. Curry',team:'GSW',grade:'S-'}),null);
-});
-
-test('Jemison keeps the Kart role even when the Scout name is abbreviated', () => {
-  const cards = Object.create(CardsService.prototype);
-  cards.snapshot = () => ({ players, teams:[] });
-  assert.deepEqual(cards.findForScout({name:'T. Jemison III',imagePath:'/players/trey-jemison.webp',team:'ZZZ'}).roleIds,['card']);
-  assert.equal(cards.findForScout({name:'T. Jemison III',imagePath:'/players/new-season-jemison.webp',grade:'S+'}),null);
-  assert.equal(resolvePlayer(players,{name:'S. Curry',imagePath:'/players/unknown-curry.webp'}),null);
-});
-
-test('Old Scout portraits absent from Cards never inherit a role from a matching abbreviated name', () => {
-  const cards=Object.create(CardsService.prototype);
-  cards.snapshot=()=>({players,teams:[]});
-  assert.equal(cards.findForScout({name:'S. Curry',imagePath:'/players/old-curry.webp'}),null);
-  assert.equal(cards.findForScout({name:'T. Jemison III',imagePath:'/players/old-jemison.webp'}),null);
-  assert.equal(cards.findForScout({name:'S. Curry'}),null);
-  assert.deepEqual(cards.findForScout({name:'Trey Jemison III'}).roleIds,['card']);
+  cards.snapshot = () => ({ players: players.map((p, i) => ({ ...p, playerId: 'p' + i })), teams: [] });
+  assert.deepEqual(cards.findForScout({ playerId: 'p1', name: 'S. Curry' }).roleIds, ['sellable']);
+  assert.deepEqual(cards.findForScout({ playerId: 'p2', name: 'Someone Else' }).roleIds, ['card']);
+  assert.equal(cards.findForScout({ name: 'Trey Jemison III', imagePath: '/players/trey-jemison.webp' }), null);
+  assert.equal(cards.findForScout({ playerId: 'missing', name: 'Stephen Curry' }), null);
 });
 
 test('Cards refresh does not transfer a role by a shared initial and surname', () => {
@@ -59,7 +35,7 @@ test('An already open Scout shows current roles after the Cards role assignment 
   const scout=Object.create(ScoutService.prototype);
   scout.cards={findForScout:agent=>({roleIds:revision===1?['sellable']:['card'],team:null,stars:0})};
   scout.store={revision:()=>revision};
-  scout.states=new Map([['main',{status:'closed',session:null,data:{agents:[{name:'T. Jemison III',imagePath:'/players/trey-jemison.webp'}]}}]]);
+  scout.states=new Map([['main',{status:'idle',open:false,data:{agents:[{playerId:'p2',name:'T. Jemison III'}]}}]]);
   assert.deepEqual(scout.snapshot().main.data.agents[0].card.roleIds,['sellable']);
   revision=2;
   assert.deepEqual(scout.snapshot().main.data.agents[0].card.roleIds,['card']);

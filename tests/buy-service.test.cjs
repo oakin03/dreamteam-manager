@@ -38,12 +38,16 @@ function fakeGame({ users, listings }) {
       if (event === 'market:sellPlayer') {
         const t = { id: 'my' + (++st.seq), userId: me, playerId: p.playerId, price: p.price, paymentMode: p.paymentMode, status: 'LISTED' };
         st.my.push(t);
+        // Like the game: a listed player leaves the roster (it can be bought again).
+        const owner = st.users[me]; if (owner?.owned) owner.owned = owner.owned.filter(id => id !== p.playerId);
         return reply('market:sellResult', { success: true, playerId: p.playerId });
       }
       if (event === 'market:getMyPlayerListings') return reply('market:myPlayerListingsData', { tickets: st.my.filter(t => t.userId === me), total: 1 });
-      if (event === 'market:cancelPlayerListing') { const t = st.my.find(x => x.id === p.ticketId); t.status = 'CANCELLED'; return reply('cancelResult', { success: true, playerId: t.playerId }); }
+      if (event === 'market:cancelPlayerListing') { const t = st.my.find(x => x.id === p.ticketId); t.status = 'CANCELLED'; (st.users[me].owned ||= []).push(t.playerId); return reply('cancelResult', { success: true, playerId: t.playerId }); }
       return true;
     };
+    if (!options.extraHeaders) st.anonOpens = (st.anonOpens || 0) + 1;
+    if (!options.extraHeaders && st.failAnonConnects > 0 && st.anonOpens > (st.failAfter || 0)) { st.failAnonConnects--; setTimeout(() => emitLocal('connect_error', new Error('websocket error')), 1); return s; }
     setTimeout(() => { s.connected = true; emitLocal('connect'); }, 1);
     return s;
   };
@@ -144,3 +148,64 @@ test('Auto Buy: an account that already owns the player passes it to the next on
   assert.deepEqual(warned.map(w => w[0]), ['buyCannot']);
   assert.equal(svc.snapshot().auto.status, 'stopped', 'scanning went on until stopped');
 }, { timeout: 15000 });
+
+test('Auto Buy keeps running through a short game outage and logs when the connection is back', async () => {
+  const game = fakeGame({ users: { 'u-a': { apk: 25, tix: 0 } }, listings: [L('t1', 'p1', 'Jay Huff', 20, 40)] });
+  const { svc, logs, data } = service(game, [['a', 'Trophy3']]);
+  svc.timing.offlineRetryMs = 50;
+  svc.addWatch([{ id: 'p1', name: 'Jay Huff' }]);
+  svc.updateWatch(data().watch[0].id, { maxPrice: 20, maxSalary: 50, currency: 'APK' });
+  game.st.failAfter = 1; game.st.failAnonConnects = 2; // the balance read works; the scan loop meets two failures
+  await svc.startAuto({ accountIds: ['a'], intervalSec: 3 });
+  await svc.done;
+  assert.ok(logs.some(l => l.code === 'ab.offline'));
+  assert.ok(logs.some(l => l.code === 'ab.online'));
+  assert.equal(game.st.listings[0].status, 'SOLD', 'bought after the outage');
+  assert.equal(svc.snapshot().auto.status, 'noFunds');
+}, { timeout: 20000 });
+
+test('price hint: cheapest other listing of the player in that currency, our own listings left out', async () => {
+  const game = fakeGame({ users: { 'u-a': { apk: 0, tix: 0 } }, listings: [L('t1', 'p1', 'Jay Huff', 30, 40), L('t2', 'p1', 'Jay Huff', 25, 40, 'APK_TICKET', 'Trophy3'), L('t3', 'p1', 'Jay Huff', 28, 40), L('t4', 'p1', 'Jay Huff', 5, 40, 'TICKET')] });
+  const { svc } = service(game, [['a', 'Trophy3']]);
+  const r = await svc.cheapest({ playerId: 'p1', name: 'Jay Huff', currency: 'APK' });
+  assert.deepEqual(r, { currency: 'APK', cheapest: 28, count: 2, ownCheapest: 25, suggested: 27 });
+});
+
+test('a buy and a reprice sign in only for that work: the account is paused first, closed after, then resumed', async () => {
+  const game = fakeGame({ users: { 'u-a': { apk: 500, tix: 0 } }, listings: [L('t1', 'p1', 'Jay Huff', 200, 60)] });
+  const { svc, data } = service(game, [['a', 'Trophy3']]);
+  const steps = [];
+  svc.pauseAccount = async (id, task) => {
+    steps.push(`pause:${id}:${task}:open=${svc.conns.has(id)}`);
+    return async () => { steps.push(`resume:${id}:open=${svc.conns.has(id)}`); };
+  };
+  const r = await svc.buy('a', { id: 't1', playerId: 'p1', name: 'Jay Huff', price: 200, currency: 'APK', salary: 60 }, { source: 'auto', autoList: true });
+  assert.equal(r.ok, true);
+  assert.equal(data().bought[0].state, 'listed', 'parked on the market inside the same sign-in');
+  await svc.sell(data().bought[0].id, 150, 'APK');
+  assert.deepEqual(steps, ['pause:a:Auto Buy:open=false', 'resume:a:open=false', 'pause:a:Auto Buy:open=false', 'resume:a:open=false']);
+});
+
+test('quantity: unlimited by default, a number needs to be ≥ 1; Auto Buy stops buying a player at its quantity', async () => {
+  const { rowReady, rowDone } = require('../src/main/services/buy-service.cjs');
+  const base = { maxPrice: 20, maxSalary: 50, currency: 'APK' };
+  assert.ok(rowReady(base), 'no quantity needed while Unlimited (default)');
+  assert.ok(!rowReady({ ...base, unlimited: false, qty: '' }));
+  assert.ok(!rowReady({ ...base, unlimited: false, qty: 0 }));
+  assert.ok(rowReady({ ...base, unlimited: false, qty: 2 }));
+  assert.ok(rowDone({ ...base, unlimited: false, qty: 2, boughtCount: 2 }));
+  assert.ok(!rowDone({ ...base, boughtCount: 99 }), 'unlimited is never done');
+
+  // One account buys every copy: each bought player is parked on the market before the next buy.
+  const game = fakeGame({ users: { 'u-a': { apk: 500, tix: 0 } }, listings: [L('t1', 'p1', 'Jay Huff', 10, 40), L('t2', 'p1', 'Jay Huff', 11, 40), L('t3', 'p1', 'Jay Huff', 12, 40)] });
+  const { svc, logs, data } = service(game, [['a', 'Trophy3']]);
+  svc.addWatch([{ id: 'p1', name: 'Jay Huff' }]);
+  const w = data().watch[0];
+  await assert.rejects(svc.startAuto({ accountIds: ['a'], intervalSec: 3 }), /every player: Jay Huff/, 'an incomplete active row blocks the start');
+  svc.updateWatch(w.id, { maxSalary: 50, maxPrice: 20, unlimited: false, qty: 2 });
+  await svc.startAuto({ accountIds: ['a'], intervalSec: 3 });
+  await svc.done;
+  assert.equal(data().watch[0].boughtCount, 2);
+  assert.equal(game.st.listings.filter(l => l.status === 'LISTED').length, 1, 'the third listing was left alone');
+  assert.ok(logs.some(l => l.code === 'ab.rowDone') && logs.some(l => l.code === 'ab.allBought'));
+});

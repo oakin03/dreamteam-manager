@@ -1,4 +1,5 @@
 const { GameSocket } = require('./game-socket.cjs');
+const { isNetError } = require('./game-health.cjs');
 
 // PVP Arena over the game's sockets (captured 2026-10-22):
 //   /socket/            getPvpArenaStatus {}          -> pvpArenaStatus {success, isActive, nextSession: null | 'morning' | 'evening'}
@@ -30,8 +31,9 @@ function sleep(ms, signal) {
 class InactiveError extends Error {}
 
 class PvpService {
-  constructor({ store, activity, sessions, onChanged, createSocket, now = () => Date.now(), timing = {} }) {
+  constructor({ store, activity, sessions, onChanged, createSocket, gameHealth = null, now = () => Date.now(), timing = {} }) {
     this.store = store;
+    this.gameHealth = gameHealth;
     this.activity = activity;
     this.sessions = sessions;
     this.onChanged = onChanged || (() => {});
@@ -161,7 +163,9 @@ class PvpService {
   async _account(id, signal) {
     const account = this.store.getAccounts().find(a => a.id === id);
     let sim = null;
+    let retry = false;
     try {
+      if (this.gameHealth?.isDown()) { this._row(id, { status: 'waitingGame' }); await this.gameHealth.waitUp(signal); }
       let userId = this._userId(id);
       if (!userId) { this._row(id, { status: 'login' }); userId = (await this.sessions.get(account, { owner: 'pvp' })).userId; }
       let left = await this._attempts(userId, signal);
@@ -217,11 +221,24 @@ class PvpService {
         this._log(id, 'error', 'pvp.inactive', {}, 'PVP task stopped because PVP is not active right now');
         return;
       }
+      if (this.gameHealth && isNetError(error)) {
+        this.gameHealth.reportDown('PVP', error);
+        this._row(id, { status: 'waitingGame', message: '' });
+        try { this.anon?.close(); } catch {}
+        try { this.anonSim?.close(); } catch {}
+        this.anon = null; this.anonSim = null;
+        retry = true;
+        return;
+      }
       if (/auth|session|login/i.test(error.message)) this.sessions.invalidate?.(id);
       this._row(id, { status: 'error', reason: error.message });
       this._log(id, 'error', 'pvp.failed', { error: error.message }, `PVP stopped: ${error.message}`);
     } finally {
       try { sim?.close(); } catch {}
+      if (retry) {
+        try { await this.gameHealth.waitUp(signal); } catch { this._row(id, { status: 'stopped', reason: 'stopped' }); return; }
+        return this._account(id, signal);
+      }
       if (!Object.values(this.run?.accounts || {}).some(r => !['done', 'inactive', 'error', 'stopped'].includes(r.status))) {
         try { this.anon?.close(); } catch {}
         try { this.anonSim?.close(); } catch {}

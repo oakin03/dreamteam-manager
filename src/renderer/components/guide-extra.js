@@ -1,0 +1,94 @@
+// More detail for the Guide: extra buttons/tips per page (merged into GuidePage's
+// sections by id), corrected texts, and whole new sections. Plain language, no tech.
+export const GUIDE_EXTRA = {
+  tr: {
+    fix: {
+      activity: { what: "Uygulamanın yaptığı her şeyin kaydı: başarılı işler, uyarılar ve hatalar. Hesap, servis ve türe göre süzülebilir; her gün ayrı bir dosyada 30 gün saklanır." }
+    },
+    more: {
+      home: {
+        buttons: [["Hesap sağlığı ⚙", "Uyarı sınırlarını değiştirir: TK alt sınırı, maaş sınırının yüzde kaçında uyarılacağı ve kadro sayısı. Kaydettiğin değerler yeni varsayılan olur."], ["Şimdi kontrol et", "Bütün hesapların maaş, kadro ve TK durumunu hemen yeniden okur (normalde 10 dakikada bir okunur)."], ["Günlük özet", "Seçtiğin günde oynanan maçları, toplanan satışları, alımları, sentezleri ve hataları özetler."]],
+        tips: ["Maaş sınırını aşan hesaplar en üstte kırmızı görünür; bu hesaplarda Auto Play ve Kule maç başlatamaz.", "Sistem kartlarındaki rozet o servisin şu anki durumunu gösterir: Çalışıyor, Boşta, Hata…"]
+      },
+      accounts: { tips: ["Şifreler bilgisayarında şifrelenmiş olarak saklanır.", "Ana hesap; Auto Trade, Kartlar, Sentez ve Cheer gibi işlerde varsayılan hesaptır."] },
+      autoplay: {
+        buttons: [["Günlük durdurma", "Auto Play'i her gün belirlediğin saatte (TR) durdurur, istersen başka bir saatte yeniden başlatır."], ["Turnuva kaydını her gün otomatik başlat", "Her gün belirlediğin saatte (varsayılan 15:48) turnuva kaydını zamanlayıcıdaki gibi çalıştırır."], ["PVP görevini her gün otomatik başlat", "Her gün belirlediğin saatte (varsayılan 05:01) PVP Arena görevini zamanlayıcıdaki gibi çalıştırır."]],
+        tips: ["Üç günlük satır birbirinden bağımsızdır; biri kapalıyken diğerleri çalışır.", "Turnuva ve PVP satırları, ilgili sayfada en son seçtiğin hesapları kullanır (seçim yoksa hepsini)."]
+      },
+      schedule: { tips: ["Uygulama görev sırasında kapanırsa, açılınca durdurulmuş görevler yeniden başlatılır.", "Günlük turnuva ve PVP satırları da her gün buraya tek seferlik bir görev ekler; listede görebilirsin."] },
+      daily: {
+        buttons: [["Go-up · Durumu yenile", "Her hesabın ligini, sezon ve toplam puanını, kalan hakkını oyundan okur."], ["Quiz · şık düğmeleri", "Yeni bir soru geldiğinde kart sarı yanar ve sesli uyarı çalar; doğru bildiğin şıkka bas."], ["Cheer · Bugünkü Cheer hakları", "Her hesabın o gün kalan Cheer hakkını gösterir; her gün 19:10'da sıfırlanır."], ["Chat · Mesaj ekle", "Listeye yeni satır ekler; her satırda mesaj ve onu yazacak hesap seçilir, oklarla sıralanır."]],
+        tips: ["Go-up kuyruğu uzun sürebilir; kuyrukta ve maçta geçen süre canlı gösterilir.", "Quiz'de cevap verdiğin her yeni soru kalıcı olarak öğrenilir; bir dahaki sefere uygulama kendisi cevaplar.", "Chat mesajları en fazla 50 karakter olabilir ve mesajlar arası en az 11 saniye olmalı (oyunun sınırı)."]
+      },
+      pvp: { tips: ["Auto Play sayfasındaki günlük PVP satırı tikliyse PVP her gün kendiliğinden başlar.", "Haklar her gün 19:10'da yenilenir; günde 10 hak vardır."] },
+      tower: { tips: ["Takım maaş sınırını aşarsa kule o hesapta durur ve uyarı çıkar.", "Aynı katta üst üste 3 yenilgi gelirse bir sonraki kuleye geçilir."] },
+      autotrade: { tips: ["Çalışırken Duraklat'a basarsan iş güvenli bir noktada bekler; Devam Et ile kaldığı yerden sürer.", "Bitince \"Auto Trade tamamlandı\" kaydı alınan, karta çevrilen ve takas edilen oyuncu sayılarıyla yazılır."] },
+      scout: { tips: ["Kartlar ve roller oyuncunun oyundaki kimliğiyle eşleşir; isim benzerliğinden etkilenmez."] },
+      players: { tips: ["Değerler her gün 11:05'te (TR) değişir; uygulama açıksa yeni liste kendiliğinden alınır.", "Değeri Base'e ya da altına düşen oyuncular otomatik \"Base\" rozeti alır."] },
+      draft: { tips: ["Sıra sana geldiğinde bildirim çıkar; seçimini 30 saniye içinde yapmalısın.", "Drafttan alınan oyuncular, rolleri ve Base rozetiyle birlikte listelenmeye hazır görünür.", "Pazara konan oyuncu listeden kendiliğinden düşer; bir hesabın bütün oyuncuları pazara konunca o hesabın kartı da kalkar."] },
+      market: { tips: ["Tekrar listelemede \"Öner\" düğmesi pazardaki en ucuz rakip ilana göre fiyat önerir.", "Bir oyuncu pazardan çıkıp tekrar listelenemezse \"pazardan çıktı ama listelenemedi\" diye işaretlenir; kadroda durur."] },
+      trade: { buttons: [["Filtre grupları", "Oyuncu (ad, satıcı, mevki, grade), Maaş, Fiyat (para birimiyle), Base ve Auto Buy başlıkları altında toplanır; Sıfırla hepsini temizler."], ["Auto Buy · Etiketler", "Menüden hangi ilanların görüneceğini seç: Şartı karşılayanlar, İzleniyor · maaş eşleşti, İzleniyor, İzlenmeyenler. Yanlarında kaç ilan olduğu yazar; \"Tüm ilanlar\" hepsini gösterir."]], tips: ["\"İzlenmeyenler\" yalnızca yüklü ilanları sayar: Auto Buy taramasından sonra sadece izlenen oyuncular yüklüdür; diğerleri için \"Refresh Trading Hall\" ile tam tarama yap.", "\"İzleniyor · maaş eşleşti\" etiketi: maaş koşulu tutuyor, yalnızca fiyat ya da para birimi tutmuyor."] },
+      autobuy: { buttons: [["Adet", "Her oyuncu için kaç tane alınacağı. Sınırsız varsayılan olarak işaretlidir; işareti kaldırınca 1 ya da daha büyük bir sayı girilir (varsayılan 1). Alınan sayı adete ulaşınca o oyuncu taranmaz; ↺ ile sayaç sıfırlanır."]], tips: ["Listedeki her aktif oyuncu için Maaş ≤ ve Fiyat ≤ (Sınırsız işaretli değilse adet de) girilmeden Auto Buy başlamaz.", "Bir hesabın parası yetmezse ya da oyuncu zaten o hesaptaysa sıradaki hesap denenir.", "Alınan oyuncular 9.999.999 TIX fiyatla pazarda bekletilir; istediğin zaman fiyatını değiştirebilirsin."] },
+      tournament: { tips: ["Tablolarda yalnızca turnuvanın adı yazar (ör. APK MATCH); seviye aralığı Lv sütunundadır.", "Turnuva günleri: Pazartesi APK · Salı Materials · Çarşamba Stone · Perşembe Star · Cuma Exclusive · Cumartesi TK · Pazar Ticket, hepsi 15:00 (TR).", "Auto Play sayfasındaki günlük turnuva satırı tikliyse kayıt her gün kendiliğinden yapılır."] },
+      cards: { buttons: [["Sentez sekmesi", "Takımlı ya da takımsız kartları seçtiğin seviyelerde birleştirir; X oyunculara asla dokunmaz."]], tips: ["Sentez özetinde yeşil sayı başarılı, kırmızı sayı başarısız denemeleri gösterir.", "Başarısız sentezde kartlardan biri aynı seviyede geri verilir.", "Sonuç oyunun mesajına değil kart envanterine göre belirlenir: bir üst seviyede yeni kart oluşmadıysa deneme başarısız sayılır."] },
+      equipment: { tips: ["Basma (+) sırasında Refine Stone biterse işlem hata vermeden durur ve sekmede \"Son basma raporu\" çıkar: başlangıç ve ulaşılan seviye, deneme ve başarısız sayısı.", "Ekipman işleri hesaba bağlanır; o hesap oyunda açıksa oradan çıkış yapılabilir."] },
+      activity: { buttons: [["Gün seçimi ve arama", "Eski günlerin kayıtlarını açar ve bütün günlerde arama yapar."], ["Hata raporu kaydet", "Son günlerin uyarı ve hatalarını bir dosyaya kaydeder (şifre içermez)."], ["Kayıt klasörü", "Günlük kayıt dosyalarının bulunduğu klasörü açar."]] },
+      settings: { buttons: [["Menü düzeni", "Sol menüdeki listelerin adını, sırasını ve sayfaların yerini değiştirir; \"Varsayılana dön\" ile eski haline gelir."], ["Uygulama davranışı", "Pencere kapatılınca tepside çalışmaya devam etme ve Windows açılınca başlama seçenekleri."], ["Fabrika ayarları", "Uygulamayı ilk haline döndürür; \"Kayıtlı şifreleri koru\" işaretliyse hesaplar silinmez."]] }
+    },
+    add: [
+      { id: 'general', after: null, icon: '💡', name: 'Genel kullanım', what: "Uygulamanın her yerinde geçerli küçük kolaylıklar.",
+        buttons: [["Tablo başlıkları", "Her tabloda bir sütun başlığına tıklayınca o sütuna göre sıralanır; tekrar tıklayınca yön değişir, üçüncü tıklamada eski sıraya döner."], ["Tüm otomasyonları durdur", "Sol alttaki düğme; çalışan her şeyi durdurur, \"Devam ettir\" ile aynıları yeniden başlar."], ["Sarı şerit", "Oyuna bağlanılamadığında çıkar; bütün işler bekler ve oyun gelince kendiliğinden devam eder."]],
+        tips: ["Uygulamayı masaüstündeki ya da Başlat menüsündeki DreamTeam Manager kısayoluyla aç; görev çubuğuna sağ tıklayıp sabitleyebilirsin.", "Uygulama zaten açıkken kısayola tekrar basarsan yeni pencere açılmaz, açık olan öne gelir.", "Maç oynayan her otomasyon (Go-up, Quiz, PVP…) başlarken o hesaplardaki Auto Play'i durdurur ve bitince yeniden başlatır.", "Kule, PVP, Go-up, Daily Quiz, Sentez, tekrar listeleme ve Chat bitince Windows bildirimi gelir (Auto Trade'in kendi bildirimi zaten vardı)."] }
+    ]
+  },
+  en: {
+    fix: {
+      activity: { what: "A record of everything the app did: successes, warnings and errors, filterable by account, service and type; each day is kept in its own file for 30 days." }
+    },
+    more: {
+      home: {
+        buttons: [["Account health ⚙", "Changes the warning limits: lowest TK, percentage of the salary cap and roster size. Saved values become the new default."], ["Check now", "Reads salary, roster and TK of every account right away (normally every 10 minutes)."], ["Daily summary", "Matches, sales, buys, syntheses and errors of the chosen day."]],
+        tips: ["Accounts over the salary cap are red at the top; Auto Play and Tower cannot start matches there.", "The badge on each system card shows its current state: Running, Idle, Error…"]
+      },
+      accounts: { tips: ["Passwords are stored encrypted on your computer.", "The main account is the default for Auto Trade, Cards, Synthesis and Cheer."] },
+      autoplay: {
+        buttons: [["Daily stop", "Stops Auto Play every day at the chosen time (TR) and optionally starts it again later."], ["Start tournament registration every day", "Runs the tournament registration every day at the chosen time (default 15:48), like a schedule."], ["Start the PVP task every day", "Runs PVP Arena every day at the chosen time (default 05:01), like a schedule."]],
+        tips: ["The three daily lines are independent; one can be off while the others run.", "The tournament and PVP lines use the accounts last chosen on their pages (all when none)."]
+      },
+      schedule: { tips: ["If the app closes during a task, the stopped tasks start again when it opens.", "The daily tournament and PVP lines add a one-off task here every day; you can see it in the list."] },
+      daily: {
+        buttons: [["Go-up · Refresh status", "Reads every account's league, season and total points and attempts left."], ["Quiz · option buttons", "A new question turns its card yellow with a sound; click the answer you know."], ["Cheer · Cheers left today", "Shows every account's cheers left for the day; resets at 19:10."], ["Chat · Add message", "Adds a row; each row has the message and the account that writes it, ordered with the arrows."]],
+        tips: ["The Go-up queue can take long; the time in the queue and in the match is shown live.", "Every new Quiz question you answer is learned for good; next time the app answers it.", "Chat messages are at most 50 characters and at least 11 seconds apart (the game's limits)."]
+      },
+      pvp: { tips: ["With the daily PVP line ticked on the Auto Play page, PVP starts by itself every day.", "Attempts reset at 19:10 every day; there are 10 a day."] },
+      tower: { tips: ["Over the salary cap, the tower stops on that account with a warning.", "Three losses in a row on the same floor move on to the next tower."] },
+      autotrade: { tips: ["Pause waits at a safe point; Continue resumes from there.", "At the end an \"Auto Trade finished\" entry lists the players signed, turned into cards and traded."] },
+      scout: { tips: ["Cards and roles match by the player's game id; similar names do not matter."] },
+      players: { tips: ["Values change every day at 11:05 (TR); with the app open the new list is fetched by itself.", "Players at or below Base get the automatic \"Base\" badge."] },
+      draft: { tips: ["You get a notification on your turn; pick within 30 seconds.", "Drafted players are ready to list, with their roles and Base badge.", "A player put on the market leaves the list by itself; when all of an account's players are listed, its card disappears."] },
+      market: { tips: ["When relisting, \"Suggest\" proposes a price from the cheapest competing listing.", "A player taken off but not listed again is marked \"removed but not listed\"; it stays in the roster."] },
+      trade: { buttons: [["Filter groups", "Player (name, seller, position, grade), Salary, Price (with currency), Base and Auto Buy; Reset clears them all."], ["Auto Buy · Tags", "Pick which listings show: Meets conditions, Watched · salary matched, Watched, Not watched. Each shows its count; \"All listings\" shows everything."]], tips: ["\"Not watched\" counts only loaded listings: after an Auto Buy scan only watched players are loaded; a full Trading Hall refresh brings the others.", "\"Watched · salary matched\": the salary condition holds, only the price or currency does not."] },
+      autobuy: { buttons: [["Quantity", "How many to buy of each player. Unlimited is ticked by default; untick it to enter 1 or more (default 1). When the count is reached the player is no longer scanned; ↺ resets the counter."]], tips: ["Auto Buy starts only when every active player has Salary ≤ and Price ≤ (and a quantity unless Unlimited).", "If an account lacks funds or already owns the player, the next account is tried.", "Bought players are parked on the market at 9,999,999 TIX; change the price any time."] },
+      tournament: { tips: ["Tables show only the tournament name (e.g. APK MATCH); the level band is in the Lv column.", "Days: Monday APK · Tuesday Materials · Wednesday Stone · Thursday Star · Friday Exclusive · Saturday TK · Sunday Ticket, all at 15:00 (TR).", "With the daily tournament line ticked on the Auto Play page, registration happens by itself every day."] },
+      cards: { buttons: [["Synthesis tab", "Combines team or No Team cards at the chosen levels; X players are never touched."]], tips: ["In the synthesis summary green is success, red is failure.", "A failed synthesis gives one card back at the same level.", "The result comes from the card inventory, not the game's message: no new card one level up means it failed."] },
+      equipment: { tips: ["If the Refine Stone runs out while enhancing (+), it stops without an error and the tab shows a \"Last enhance report\": start and reached level, tries and failures.", "Equipment work connects as the account; if it is open in the game it may be signed out there."] },
+      activity: { buttons: [["Day and search", "Opens older days and searches all days."], ["Save error report", "Saves the warnings and errors of the last days to a file (no passwords)."], ["Log folder", "Opens the folder of the daily log files."]] },
+      settings: { buttons: [["Menu layout", "Renames and reorders the sidebar lists and moves pages; \"Reset to default\" brings it back."], ["App behaviour", "Keep running in the tray when closed, and start with Windows."], ["Factory reset", "Back to a fresh install; with \"Keep saved passwords\" the accounts stay."]] }
+    },
+    add: [
+      { id: 'general', after: null, icon: '💡', name: 'Everyday use', what: "Small conveniences that work everywhere in the app.",
+        buttons: [["Table headers", "Click a column header to sort by it; again to flip, a third time for the original order."], ["Stop all automations", "The button at the bottom left; stops everything, \"Resume\" starts the same again."], ["Yellow bar", "Shown when the game is unreachable; everything waits and continues by itself."]],
+        tips: ["Open the app with the DreamTeam Manager shortcut on the desktop or in the Start menu; right-click its taskbar button to pin it.", "Clicking the shortcut while the app is open brings the open window to the front.", "Every automation that plays (Go-up, Quiz, PVP…) stops Auto Play on its accounts first and starts it again afterwards.", "Tower, PVP, Go-up, Daily Quiz, Synthesis, relist and Chat show a Windows notification when they finish (Auto Trade already had one)."] }
+    ]
+  }
+};
+
+// Sections with the extra texts merged in; new sections go first.
+export function withExtras(sections, lang) {
+  const x = GUIDE_EXTRA[lang] || GUIDE_EXTRA.en;
+  const merged = sections.map(s => {
+    const more = x.more[s.id] || {};
+    return { ...s, ...(x.fix[s.id] || {}), buttons: [...s.buttons, ...(more.buttons || [])], tips: [...s.tips, ...(more.tips || [])] };
+  });
+  return [...x.add.map(({ after, ...s }) => s), ...merged];
+}

@@ -1,4 +1,5 @@
 const { GameSocket } = require('./game-socket.cjs');
+const { isNetError } = require('./game-health.cjs');
 const { TradeGameAccount, sleep, abortError } = require('./trade-game-client.cjs');
 const R = require('./trade-rules.cjs');
 
@@ -26,7 +27,8 @@ const ACCEPT_TRIES = 3;
 class UserFixError extends Error { constructor(message, code, params) { super(message); this.userFix = true; this.code = code; this.params = params || {}; } }
 
 class AutoTradeEngine {
-  constructor({ store, credentials, activity, sessions, accountProfile, onChanged, onAttention, onScout, onCycleEnd, createSocket, now = () => Date.now(), timing = {} }) {
+  constructor({ store, credentials, activity, sessions, accountProfile, onChanged, onAttention, onScout, onCycleEnd, createSocket, gameHealth = null, now = () => Date.now(), timing = {} }) {
+    this.gameHealth = gameHealth; // shared "is the game reachable?"
     this.store = store;
     this.credentials = credentials;
     this.activity = activity;
@@ -280,6 +282,14 @@ class AutoTradeEngine {
         this.state.status = 'stopped';
         this.state.step = 'stopped';
         this._log('warning', 'at2.stopped', {}, 'Auto Trade stopped');
+      } else if (this.gameHealth && isNetError(error)) {
+        // The game is unreachable: wait for the shared check, then continue from the
+        // same place by itself (the same as pressing Continue).
+        this.state.status = 'waitingGame';
+        this.state.step = 'waitingGame';
+        this._log('warning', 'at2.waitGame', { error: error.message }, `Game not reachable (${error.message}) · Auto Trade continues when it is back`);
+        this.gameHealth.reportDown('Auto Trade', error);
+        this.gameHealth.waitUp().then(() => { if (this.state?.status === 'waitingGame' && !this.controller) this.continue(); });
       } else {
         this.state.status = 'error';
         this.state.error = { message: error.message, code: error.code || null, params: error.params || {}, userFix: Boolean(error.userFix) };

@@ -70,7 +70,7 @@ function lastExpiryCutoff(now = Date.now()) {
 }
 
 class MarketService {
-  constructor({ store, activity, accountProfile = null, sessions, onChanged, createSocket, concurrency = ACCOUNT_CONCURRENCY, minRetryMs = 0 }) {
+  constructor({ store, activity, accountProfile = null, sessions, onChanged, createSocket, concurrency = ACCOUNT_CONCURRENCY, minRetryMs = 0, writeTimeoutMs = 15000 }) {
     this.store = store;
     this.activity = activity;
     this.accountProfile = accountProfile;
@@ -79,6 +79,7 @@ class MarketService {
     this.createSocket = createSocket;
     this.concurrency = concurrency;
     this.minRetryMs = minRetryMs;
+    this.writeTimeoutMs = writeTimeoutMs;
     this.accounts = new Map(); // accountId -> per-account state
     // rows: LISTED + EXPIRED listings of every scanned account (ticketId ->
     // row + relist state); lastRun: result per ticket of the latest relist.
@@ -160,10 +161,21 @@ class MarketService {
     this.set(account.id, { status: 'working', step: 'login', stepParams: {}, error: null });
     const session = await this.sessions.get(account, { owner: 'market', log: (level, message) => this.log(account, level, message) });
     if (signal.aborted) throw abortError();
-    holder.current = await GameSocket.open({ createSocket: this.createSocket, cookie: session.cookieHeader, signal });
-    // Market writes need the socket registered as the user (see GameSocket.register).
-    await holder.current.register(session.userId, { signal });
-    return { userId: session.userId, socket: holder.current };
+    const open = async () => {
+      holder.current = await GameSocket.open({ createSocket: this.createSocket, cookie: session.cookieHeader, signal });
+      // Market writes need the socket registered as the user (see GameSocket.register).
+      await holder.current.register(session.userId, { signal });
+      return holder.current;
+    };
+    const conn = { userId: session.userId, socket: await open() };
+    // A sign-in of the same account elsewhere (e.g. Daily Reward's browser at 21:00)
+    // kicks this socket and the game stops answering it: open a fresh one.
+    conn.reconnect = async () => {
+      try { holder.current?.close(); } catch {}
+      conn.socket = await open();
+      this.log(account, 'info', 'Market connection was taken over by another sign-in · reconnected.', 'mk.reconnected', {});
+    };
+    return conn;
   }
 
   // Writes answer "Please wait N seconds" with retryAfter: wait and repeat.
@@ -172,8 +184,17 @@ class MarketService {
   async _write(conn, event, payload, replyEvent, signal) {
     let reply = null;
     let reregistered = false;
+    let reconnected = false;
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
-      reply = await conn.socket.call(event, payload, replyEvent, { signal });
+      try {
+        reply = await conn.socket.call(event, payload, replyEvent, { signal, timeoutMs: this.writeTimeoutMs });
+      } catch (error) {
+        // No reply: the socket was kicked or dropped. Reconnect once and repeat.
+        if (reconnected || !conn.reconnect || error?.name === 'AbortError' || !/no reply|disconnect|closed/i.test(error?.message || '')) throw error;
+        reconnected = true;
+        await conn.reconnect();
+        continue;
+      }
       if (!reply?.success && !reregistered && /authentication required/i.test(reply?.message || '')) {
         reregistered = true;
         await conn.socket.register(conn.userId, { signal });

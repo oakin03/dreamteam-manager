@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import SortTable from './SortTable';
 
 const api = window.dreamteam;
 
@@ -7,7 +8,7 @@ const TEXT = {
     title: 'Auto Trade', subtitle: 'Scout · karta çevirme · Main ↔ Side takasları',
     start: 'Başlat', pause: 'Duraklat', resume: 'Devam ettir', stop: 'Durdur', cont: 'Kaldığı yerden devam et', reset: 'İlerlemeyi sıfırla',
     resetConfirm: 'Kayıtlı ilerleme silinecek ve Auto Trade sıfırdan başlayacak. Emin misin?', yes: 'Evet, sıfırla', cancel: 'Vazgeç', close: 'Kapat',
-    status: { idle: 'Hazır', running: 'Çalışıyor', paused: 'Duraklatıldı', stopping: 'Durduruluyor', stopped: 'Durduruldu', error: 'Hata · senin müdahalen gerekiyor', done: 'Tamamlandı', awaitingListing: 'Pazar listesi bekleniyor' },
+    status: { idle: 'Hazır', waitingGame: 'Oyun bekleniyor · gelince devam edecek', running: 'Çalışıyor', paused: 'Duraklatıldı', stopping: 'Durduruluyor', stopped: 'Durduruldu', error: 'Hata · senin müdahalen gerekiyor', done: 'Tamamlandı', awaitingListing: 'Pazar listesi bekleniyor' },
     accounts: 'Hesaplar', selectAll: 'Tümünü seç', mainBadge: 'Main', actingMain: 'Bu çalıştırmada Main gibi davranacak hesap', actingMainHint: 'Asıl Main seçili değil. Seçim sadece bu çalıştırma için; asıl Main değişmez.',
     routing: 'Roller', sideToMain: 'Side → Main', mainToSide: 'Main → Side', sideToMainNote: 'Side → Main yönündeki roller Main\'e geçer ve Main\'de karta çevrilir.', mainToSideNote: 'Main → Side yönündeki roller Side hesaplarda kalır; sonunda pazara listeleyebilirsin.',
     maxPrice: 'Maksimum fiyat (Scout Price)', maxPriceHint: 'Bu fiyat ve altındaki oyuncular rolüne bakılmadan Main\'e gider ve karta çevrilir. 0–2500; 50\'nin altı = sadece roller.',
@@ -50,7 +51,7 @@ const TEXT = {
     title: 'Auto Trade', subtitle: 'Scout · star cards · main ↔ side trades',
     start: 'Start', pause: 'Pause', resume: 'Resume', stop: 'Stop', cont: 'Continue from where it stopped', reset: 'Reset progress',
     resetConfirm: 'Saved progress is deleted and Auto Trade starts from scratch. Are you sure?', yes: 'Yes, reset', cancel: 'Cancel', close: 'Close',
-    status: { idle: 'Ready', running: 'Running', paused: 'Paused', stopping: 'Stopping', stopped: 'Stopped', error: 'Error · needs you', done: 'Finished', awaitingListing: 'Waiting for a market listing' },
+    status: { idle: 'Ready', waitingGame: 'Waiting for the game · continues when it is back', running: 'Running', paused: 'Paused', stopping: 'Stopping', stopped: 'Stopped', error: 'Error · needs you', done: 'Finished', awaitingListing: 'Waiting for a market listing' },
     accounts: 'Accounts', selectAll: 'Select all', mainBadge: 'Main', actingMain: 'Account acting as main for this run', actingMainHint: 'The real main is not selected. This choice is for this run only; the real main stays main.',
     routing: 'Roles', sideToMain: 'Side → Main', mainToSide: 'Main → Side', sideToMainNote: 'Roles routed side → main move to main and are turned into star cards there.', mainToSideNote: 'Roles routed main → side stay on the sides; you can list them on the market at the end.',
     maxPrice: 'Maximum price (Scout Price)', maxPriceHint: 'Players at or below this price go to main and become cards whatever their role. 0–2500; under 50 = roles only.',
@@ -173,7 +174,7 @@ export default function AutoTradePage({ state, t, toast, msgText, Modal, refresh
         {run?.status === 'running' && <button className="btn ghost" onClick={() => run_(() => api.autoTrade.pause())}>{x.pause}</button>}
         {run?.status === 'paused' && <button className="btn success" onClick={() => run_(() => api.autoTrade.resume())}>{x.resume}</button>}
         {running && <button className="btn danger-soft" onClick={() => run_(() => api.autoTrade.stop())}>{x.stop}</button>}
-        {!running && run && ['stopped', 'error'].includes(run.status) && <button className="btn success" onClick={() => run_(() => api.autoTrade.continue())}>{x.cont}</button>}
+        {!running && run && ['stopped', 'error', 'waitingGame'].includes(run.status) && <button className="btn success" onClick={() => run_(() => api.autoTrade.continue())}>{x.cont}</button>}
         {!running && run && <button className="btn ghost" onClick={() => setConfirmReset(true)}>{x.reset}</button>}
       </div>
     </div>
@@ -249,7 +250,7 @@ function Preflight({ pre, x, decisions, setDecisions, onCancel, onStart, playerI
     {pre.conflicts.length > 0 && <div className="at2-conflicts"><b>{x.conflictsTitle}</b><ul>{pre.conflicts.map((c, i) => <li key={i}>{x.conflict[c.kind] || c.kind}{c.name ? ` · ${c.name}` : ''}{c.accounts ? ` · ${c.accounts.join(', ')}` : ''}{c.startAt ? ` · ${new Date(c.startAt).toLocaleString()}` : ''}</li>)}</ul></div>}
     {withBench.length ? <><b>{x.benchTitle}</b><small className="muted-text">{x.benchHint}</small>
       {withBench.map(a => <div key={a.id} className="at2-bench"><h5>{a.name} · {num(a.funds)} TK</h5>
-        <table className="at2-bench-table"><colgroup><col className="c-name" /><col className="c-num" /><col className="c-num" /><col className="c-num" /><col className="c-role" /><col className="c-dir" /><col className="c-act" /></colgroup><tbody>{a.bench.map(p => {
+        <SortTable className="at2-bench-table"><colgroup><col className="c-name" /><col className="c-num" /><col className="c-num" /><col className="c-num" /><col className="c-role" /><col className="c-dir" /><col className="c-act" /></colgroup><tbody>{a.bench.map(p => {
           const d = decisions[a.id]?.[p.id] || { action: 'none' };
           return <tr key={p.id}><td><b>{p.name}</b> <span className="muted-text">{p.position} · {p.rating}</span>{isAtBase(moneyOf(p, playerIndex)) && <span className="base-badge">BASE</span>}</td><Money r={p} playerIndex={playerIndex} x={x} /><td>{p.roles.join(', ') || '—'}</td>
             <td>{p.block ? <span className="pill muted"><i />{x.blocked[p.block]}</span> : <span className={`muted-text ${p.dir ? '' : 'bad-text'}`}>{p.dir === 'main' ? x.fitsMain : p.dir === 'side' ? x.fitsSide : x.fitsNone}</span>}</td>
@@ -257,7 +258,7 @@ function Preflight({ pre, x, decisions, setDecisions, onCancel, onStart, playerI
               {[['list', x.actList], ['trade', x.actTrade], ['none', x.actNone]].map(([k, label]) => <label key={k}><input type="radio" name={`${a.id}-${p.id}`} checked={d.action === k} disabled={k === 'trade' && !p.dir} onChange={() => setD(a.id, p.id, { action: k })} />{label}</label>)}
               {d.action === 'list' && <span className="at2-price"><input type="number" min="1" value={d.price} onChange={e => setD(a.id, p.id, { price: e.target.value })} /><select value={d.currency} onChange={e => setD(a.id, p.id, { currency: e.target.value })}><option>APK</option><option>TIX</option></select></span>}
             </div>}</td></tr>;
-        })}</tbody></table></div>)}</> : <p className="muted-text">{x.noBench}</p>}
+        })}</tbody></SortTable></div>)}</> : <p className="muted-text">{x.noBench}</p>}
     <div className="modal-actions">
       <button className="btn ghost" onClick={onCancel}>{x.cancel}</button>
       {pre.conflicts.length ? <button className="btn danger-soft" onClick={() => onStart(true)}>{x.stopAndStart}</button> : <button className="btn primary" onClick={() => onStart(false)}>{x.startNow}</button>}
@@ -273,8 +274,8 @@ function AccountBoard({ acc, x, highlight, playerIndex }) {
       <span className={`pill ${acc.status === 'active' ? 'ok' : acc.status === 'skipped' ? 'bad' : 'muted'}`}><i />{x.accStatus[acc.status] || acc.status}</span>
     </div>
     <div className="at2-board-meta"><span>{x.tk}: <b>{num(acc.funds)}</b></span><span>{x.openTime}: <b>{dur(acc.openSeconds)}</b></span><span>{x.visits}: <b>{acc.visits}</b></span>{acc.scout?.attemptsLeft != null && <span>Call back: <b>{acc.scout.attemptsLeft}</b></span>}</div>
-    {rows.length ? <div className="at2-table"><table><thead><tr><th>{x.player}</th><th>{x.price}</th><th>{x.salary}</th><th>{x.base}</th><th>{x.role}</th><th>{x.stateCol}</th></tr></thead>
-      <tbody>{rows.map(r => <tr key={r.id}><td><b>{r.name}</b>{isAtBase(moneyOf(r, playerIndex)) && <span className="base-badge">BASE</span>}{r.from && <span className="muted-text"> · {x.from}: {r.from}</span>}</td><Money r={r} playerIndex={playerIndex} x={x} /><td>{r.roles?.join(', ') || (r.dir === 'main' ? '≤ ' + x.price : '—')}</td><td><span className={`pill ${STATUS_TONE[r.status] || 'muted'}`}><i />{x.pstatus[r.status] || r.status}</span></td></tr>)}</tbody></table></div>
+    {rows.length ? <div className="at2-table"><SortTable><thead><tr><th>{x.player}</th><th>{x.price}</th><th>{x.salary}</th><th>{x.base}</th><th>{x.role}</th><th>{x.stateCol}</th></tr></thead>
+      <tbody>{rows.map(r => <tr key={r.id}><td><b>{r.name}</b>{isAtBase(moneyOf(r, playerIndex)) && <span className="base-badge">BASE</span>}{r.from && <span className="muted-text"> · {x.from}: {r.from}</span>}</td><Money r={r} playerIndex={playerIndex} x={x} /><td>{r.roles?.join(', ') || (r.dir === 'main' ? '≤ ' + x.price : '—')}</td><td><span className={`pill ${STATUS_TONE[r.status] || 'muted'}`}><i />{x.pstatus[r.status] || r.status}</span></td></tr>)}</tbody></SortTable></div>
       : <p className="muted-text at2-noplayers">{x.noPlayers}</p>}
   </div>;
 }
@@ -282,8 +283,8 @@ function AccountBoard({ acc, x, highlight, playerIndex }) {
 function Summary({ run, x }) {
   const rows = run.config.accountIds.map(id => run.accounts[id]).filter(Boolean);
   return <><h3 className="section-title">{x.summary}</h3>
-    <div className="panel table-panel"><table><thead><tr><th></th><th>{x.bought}</th><th>{x.spent}</th><th>{x.converted}</th><th>{x.tradedOut}</th><th>{x.tradedIn}</th><th>{x.tkPaid}</th><th>{x.tkReceived}</th><th>{x.listed}</th><th>{x.tkNow}</th><th>{x.openTime}</th></tr></thead>
-      <tbody>{rows.map(a => <tr key={a.id}><td><b>{a.name}</b> <span className={`at2-role ${a.role}`}>{a.role === 'main' ? 'MAIN' : 'SIDE'}</span></td><td>{a.bought}</td><td>{num(a.spent)}</td><td>{a.converted}</td><td>{a.tradesOut}</td><td>{a.tradesIn}</td><td>{num(a.tkPaid)}</td><td>{num(a.tkReceived)}</td><td>{a.listed}</td><td>{num(a.fundsStart)} → <b>{num(a.funds)}</b></td><td>{dur(a.openSeconds)}</td></tr>)}</tbody></table></div></>;
+    <div className="panel table-panel"><SortTable><thead><tr><th></th><th>{x.bought}</th><th>{x.spent}</th><th>{x.converted}</th><th>{x.tradedOut}</th><th>{x.tradedIn}</th><th>{x.tkPaid}</th><th>{x.tkReceived}</th><th>{x.listed}</th><th>{x.tkNow}</th><th>{x.openTime}</th></tr></thead>
+      <tbody>{rows.map(a => <tr key={a.id}><td><b>{a.name}</b> <span className={`at2-role ${a.role}`}>{a.role === 'main' ? 'MAIN' : 'SIDE'}</span></td><td>{a.bought}</td><td>{num(a.spent)}</td><td>{a.converted}</td><td>{a.tradesOut}</td><td>{a.tradesIn}</td><td>{num(a.tkPaid)}</td><td>{num(a.tkReceived)}</td><td>{a.listed}</td><td>{num(a.fundsStart)} → <b>{num(a.funds)}</b></td><td>{dur(a.openSeconds)}</td></tr>)}</tbody></SortTable></div></>;
 }
 
 function CardCounts({ run, totals, x, Modal, toast }) {
@@ -293,7 +294,7 @@ function CardCounts({ run, totals, x, Modal, toast }) {
   const reset = async () => { try { await api.autoTrade.resetCards(); } catch (e) { toast(e.message, 'error'); } setConfirm(false); };
   const rows = ids.map(id => ({ id, name: run.cardCounts?.[id]?.name || totals[id]?.name, now: run.cardCounts?.[id]?.count || 0, total: totals[id]?.count || 0 })).sort((a, b) => b.now - a.now || b.total - a.total);
   return <><div className="at2-section-head"><h3 className="section-title">{x.cards}</h3><button className="btn ghost small" onClick={() => setConfirm(true)}>{x.resetCards}</button></div>
-    <div className="panel table-panel"><table><thead><tr><th>{x.player}</th><th>{x.thisRun}</th><th>{x.total}</th></tr></thead><tbody>{rows.map(r => <tr key={r.id}><td><b>{r.name}</b></td><td>{r.now}</td><td>{r.total}</td></tr>)}</tbody></table></div>
+    <div className="panel table-panel"><SortTable><thead><tr><th>{x.player}</th><th>{x.thisRun}</th><th>{x.total}</th></tr></thead><tbody>{rows.map(r => <tr key={r.id}><td><b>{r.name}</b></td><td>{r.now}</td><td>{r.total}</td></tr>)}</tbody></SortTable></div>
     {confirm && <Modal title={x.resetCards} onClose={() => setConfirm(false)}><p>{x.resetCardsConfirm}</p><div className="modal-actions"><button className="btn ghost" onClick={() => setConfirm(false)}>{x.cancel}</button><button className="btn danger-soft" onClick={reset}>{x.yes}</button></div></Modal>}</>;
 }
 
@@ -332,7 +333,7 @@ function ListingPanel({ run, x, defaults, toast, playerIndex }) {
   };
   return <><h3 className="section-title">{x.listTitle} <small>{x.listHint}</small></h3>
     {items.map(({ acc, rows }) => <div key={acc.id} className="panel table-panel at2-list"><div className="at2-list-head"><b>{acc.name}</b><button className="btn primary" disabled={busy === acc.id} onClick={() => list(acc, rows)}>{x.listSelected}</button></div>
-      <table><thead><tr><th></th><th>{x.player}</th><th>{x.salary}</th><th>{x.value}</th><th>{x.base}</th><th>{x.role}</th><th>{x.listPrice}</th><th></th></tr></thead><tbody>{rows.map(r => { const v = get(r); const m = moneyOf(r, playerIndex); return <tr key={r.id}><td><input type="checkbox" checked={v.checked} onChange={e => edit(r.id, { checked: e.target.checked })} /></td><td><b>{r.name}</b>{isAtBase(m) && <span className="base-badge">BASE</span>}</td><td>{num(m.salary)}</td><td>{num(m.value)}</td><td>{num(m.base)}</td><td>{r.roles?.join(', ')}</td><td><input className="eq-small" type="number" min="1" value={v.price} onChange={e => edit(r.id, { price: e.target.value })} /></td><td><select value={v.currency} onChange={e => edit(r.id, { currency: e.target.value })}><option>APK</option><option>TIX</option></select></td></tr>; })}</tbody></table></div>)}</>;
+      <SortTable><thead><tr><th></th><th>{x.player}</th><th>{x.salary}</th><th>{x.value}</th><th>{x.base}</th><th>{x.role}</th><th>{x.listPrice}</th><th></th></tr></thead><tbody>{rows.map(r => { const v = get(r); const m = moneyOf(r, playerIndex); return <tr key={r.id}><td><input type="checkbox" checked={v.checked} onChange={e => edit(r.id, { checked: e.target.checked })} /></td><td><b>{r.name}</b>{isAtBase(m) && <span className="base-badge">BASE</span>}</td><td>{num(m.salary)}</td><td>{num(m.value)}</td><td>{num(m.base)}</td><td>{r.roles?.join(', ')}</td><td><input className="eq-small" type="number" min="1" value={v.price} onChange={e => edit(r.id, { price: e.target.value })} /></td><td><select value={v.currency} onChange={e => edit(r.id, { currency: e.target.value })}><option>APK</option><option>TIX</option></select></td></tr>; })}</tbody></SortTable></div>)}</>;
 }
 
 function ListingModal({ req, x, Modal, playerIndex }) {
@@ -341,7 +342,7 @@ function ListingModal({ req, x, Modal, playerIndex }) {
   const send = items => api.autoTrade.respondListing(items);
   return <Modal title={fill(x.listingModal, { name: req.name })} onClose={() => {}} width={720}>
     <p className="muted-text">{x.listingModalHint}</p>
-    <table className="at2-modal-table"><thead><tr><th></th><th>{x.player}</th><th>{x.salary}</th><th>{x.value}</th><th>{x.base}</th><th>{x.role}</th><th>{x.listPrice}</th><th></th></tr></thead><tbody>{rows.map((r, i) => { const m = moneyOf(r, playerIndex); return <tr key={r.id}><td><input type="checkbox" checked={r.checked} onChange={e => edit(i, { checked: e.target.checked })} /></td><td><b>{r.name}</b>{isAtBase(m) && <span className="base-badge">BASE</span>}</td><td>{num(m.salary)}</td><td>{num(m.value)}</td><td>{num(m.base)}</td><td>{(r.roles || []).join(', ')}</td><td><input className="eq-small" type="number" min="1" value={r.price} onChange={e => edit(i, { price: e.target.value })} /></td><td><select value={r.currency} onChange={e => edit(i, { currency: e.target.value })}><option>APK</option><option>TIX</option></select></td></tr>; })}</tbody></table>
+    <SortTable className="at2-modal-table"><thead><tr><th></th><th>{x.player}</th><th>{x.salary}</th><th>{x.value}</th><th>{x.base}</th><th>{x.role}</th><th>{x.listPrice}</th><th></th></tr></thead><tbody>{rows.map((r, i) => { const m = moneyOf(r, playerIndex); return <tr key={r.id}><td><input type="checkbox" checked={r.checked} onChange={e => edit(i, { checked: e.target.checked })} /></td><td><b>{r.name}</b>{isAtBase(m) && <span className="base-badge">BASE</span>}</td><td>{num(m.salary)}</td><td>{num(m.value)}</td><td>{num(m.base)}</td><td>{(r.roles || []).join(', ')}</td><td><input className="eq-small" type="number" min="1" value={r.price} onChange={e => edit(i, { price: e.target.value })} /></td><td><select value={r.currency} onChange={e => edit(i, { currency: e.target.value })}><option>APK</option><option>TIX</option></select></td></tr>; })}</tbody></SortTable>
     <div className="modal-actions"><button className="btn ghost" onClick={() => send(null)}>{x.skipList}</button><button className="btn primary" onClick={() => send(rows.filter(r => r.checked).map(r => ({ id: r.id, price: Number(r.price), currency: r.currency })))}>{x.listAndGo}</button></div>
   </Modal>;
 }

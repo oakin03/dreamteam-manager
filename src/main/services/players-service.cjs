@@ -30,7 +30,8 @@ function playerRow(p) {
 }
 
 class PlayersService {
-  constructor({ store, activity, onChanged, createSocket, now = () => Date.now() }) {
+  constructor({ store, activity, onChanged, onRefreshed, createSocket, now = () => Date.now() }) {
+    this.onRefreshed = onRefreshed; // (players, previousById) after every new list
     this.store = store;
     this.activity = activity;
     this.createSocket = createSocket;
@@ -105,12 +106,14 @@ class PlayersService {
       const cut = lastUpdateCutoff(this.now());
       const day = dayKey(cut);
       const data = this._data();
+      const previousById = new Map((data.players || []).map(p => [p.id, p]));
       const history = { ...(data.history || {}), [day]: Object.fromEntries(players.map(p => [p.id, { rating: p.rating, value: p.value }])) };
       for (const d of Object.keys(history).sort().slice(0, -HISTORY_DAYS)) delete history[d];
       this.store.savePlayersData({ fetchedAt: new Date(this.now()).toISOString(), day, players, history });
       const up = players.filter(p => p.change > 0).length;
       const down = players.filter(p => p.change < 0).length;
       const base = players.filter(p => p.isBase).length;
+      try { this.onRefreshed?.(players, previousById, { day }); } catch {}
       this.activity.add({ level: 'success', code: automatic ? 'pl.autoFetched' : 'pl.fetched', params: { count: players.length, up, down, base }, message: `Player list updated · ${players.length} players · ${up} up · ${down} down · ${base} at base` });
       return this.snapshot();
     } catch (error) {

@@ -1,4 +1,5 @@
 const { GameSocket } = require('./game-socket.cjs');
+const { isNetError } = require('./game-health.cjs');
 
 // Tower (Kule) over the game's sockets (captured 2026-10-22):
 //   /socket/            towerChallenge:getTowerData (no payload, session user) -> towerChallenge:towerData
@@ -38,8 +39,9 @@ function nextTower(towers) {
 class SalaryCapError extends Error {}
 
 class TowerService {
-  constructor({ store, activity, sessions, onChanged, createSocket, now = () => Date.now(), timing = {} }) {
+  constructor({ store, activity, sessions, onChanged, createSocket, gameHealth = null, now = () => Date.now(), timing = {} }) {
     this.store = store;
+    this.gameHealth = gameHealth;
     this.activity = activity;
     this.sessions = sessions;
     this.onChanged = onChanged || (() => {});
@@ -134,7 +136,9 @@ class TowerService {
   async _account(id, signal) {
     const account = this.store.getAccounts().find(a => a.id === id);
     const conn = { main: null, sim: null, userId: null, registered: false };
+    let retry = false;
     try {
+      if (this.gameHealth?.isDown()) { this._row(id, { status: 'waitingGame' }); await this.gameHealth.waitUp(signal); }
       this._row(id, { status: 'login' });
       const session = await this.sessions.get(account, { owner: 'tower' });
       conn.userId = session.userId;
@@ -200,6 +204,13 @@ class TowerService {
         this._log(id, 'error', 'tw.salaryCap', { error: error.message }, `Tower stopped: ${error.message}`, 'salary-cap');
         return;
       }
+      // The game is unreachable: wait for the shared check, then pick up from the game's floors.
+      if (this.gameHealth && isNetError(error)) {
+        this.gameHealth.reportDown('Tower', error);
+        this._row(id, { status: 'waitingGame', message: error.message });
+        retry = true;
+        return;
+      }
       if (/auth|session|login/i.test(error.message)) this.sessions.invalidate?.(id);
       mark('error');
       this._row(id, { status: 'error', message: error.message });
@@ -207,9 +218,15 @@ class TowerService {
     } finally {
       try { conn.main?.close(); } catch {}
       try { conn.sim?.close(); } catch {}
-      this.controllers.delete(id);
+      if (!retry) this.controllers.delete(id);
       this.onChanged();
+      if (retry) await this._retryAfterOutage(id, signal);
     }
+  }
+
+  async _retryAfterOutage(id, signal) {
+    try { await this.gameHealth.waitUp(signal); } catch { this._row(id, { status: 'stopped' }); this.controllers.delete(id); return; }
+    await this._account(id, signal);
   }
 
   async _active(conn, signal) {

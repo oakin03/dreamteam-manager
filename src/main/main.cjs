@@ -1,6 +1,18 @@
-const { app, BrowserWindow, ipcMain, shell, globalShortcut, Notification } = require('electron');
+const { dialog, app, BrowserWindow, ipcMain, shell, globalShortcut, Notification, Tray, Menu, nativeImage } = require('electron');
 const path = require('path');
 const crypto = require('crypto');
+
+// Windows: own taskbar identity and DT icon (not Electron's), one window only — a second
+// start (desktop shortcut, taskbar pin) brings the open window to the front.
+// The installed app uses the build's appId; the development build has its own id so Windows
+// never matches it with an old installer's shortcut (that showed the old name and icon).
+const APP_ID = app.isPackaged ? 'com.dreamteam.automator' : 'com.dreamteam.manager.dev';
+const ICON_PNG = path.join(__dirname, 'assets', 'icon.png');
+const ICON_ICO = path.join(__dirname, 'assets', 'icon.ico');
+const LAUNCHER = path.join(__dirname, '..', '..', 'scripts', 'DreamTeam Manager.vbs');
+if (process.platform === 'win32') app.setAppUserModelId(APP_ID);
+const singleInstance = app.requestSingleInstanceLock();
+if (!singleInstance) app.quit();
 
 const { AppStore, ensureDir } = require('./services/store.cjs');
 const credentials = require('./services/credentials.cjs');
@@ -24,8 +36,17 @@ const { syncMcpConfig } = require('./services/mcp-sync.cjs');
 const { TournamentService } = require('./services/tournament-service.cjs');
 const { DailyRoutineService } = require('./services/daily-routine-service.cjs');
 const { PvpService } = require('./services/pvp-service.cjs');
+const { GoUpService } = require('./services/goup-service.cjs');
+const { QuizService } = require('./services/quiz-service.cjs');
+const { CheerService } = require('./services/cheer-service.cjs');
+const { ChatService } = require('./services/chat-service.cjs');
 const { BuyService } = require('./services/buy-service.cjs');
 const { TowerService } = require('./services/tower-service.cjs');
+const { SynthesisService } = require('./services/synthesis-service.cjs');
+const { AutoPlayStop } = require('./services/autoplay-stop.cjs');
+const { GameHealth } = require('./services/game-health.cjs');
+const { AccountHealth } = require('./services/account-health.cjs');
+const { watchAlerts } = require('./services/watch-alerts.cjs');
 const { EquipmentService } = require('./services/equipment-service.cjs');
 
 let mainWindow;
@@ -46,8 +67,17 @@ let gameSessions;
 let players;
 let draft;
 let pvp;
+let goup;
+let quiz;
+let cheer;
+let chat;
+let goupDone = null;
+let quizDone = null;
 let buy;
 let tower;
+let gameHealth;
+let accountHealth;
+let synthesis;
 let towerDone = null;
 let autoBuyDone = null;
 let pvpDone = null;
@@ -96,7 +126,15 @@ function snapshot({ incremental = false } = {}) {
     tournament: tournament?.snapshot() || { runtime: { status: 'idle' }, accounts: {}, events: [] },
     dailyRoutine: dailyRoutine?.snapshot() || { selected: [], accounts: {} },
     pvp: pvp?.snapshot() || { running: false, run: null, lastReport: null },
+    goup: goup?.snapshot() || { running: false, run: null, points: {}, event: null, lastReport: null },
+    quiz: quiz?.snapshot() || { running: false, run: null, bankSize: 0, lastReport: null },
+    cheer: cheer?.snapshot() || { busy: false, last: null },
+    chat: chat?.snapshot() || { running: false, run: null, limits: { minIntervalSec: 11, maxText: 50 }, lastReport: null },
     tower: tower?.snapshot() || { running: false, run: null, lastReport: null },
+    gameHealth: gameHealth?.snapshot() || { down: false },
+    globalPause: globalPauseSnapshot(),
+    accountHealth: accountHealth?.snapshot() || { rows: [] },
+    synthesis: synthesis?.snapshot() || { running: false, run: null, summary: {} },
     systemLocale,
     dataDir,
     taskDir: taskDir()
@@ -133,6 +171,29 @@ function emitState() {
 
 // Auto Trade asks for the user (an error, a market listing, the end of a run): bring
 // the window forward when minimized, flash the taskbar and show a Windows notification.
+// A finished automation gets a Windows notification (Auto Trade has its own "done").
+// Driven by the summary entry each service writes to Activity when it ends.
+const DONE_NOTES = {
+  'tw.summary': p => ({ tr: ['Kule bitti', `${p.count} hesap · ${p.wins} galibiyet`], en: ['Tower finished', `${p.count} account(s) · ${p.wins} win(s)`] }),
+  'pvp.summary': p => ({ tr: ['PVP bitti', `${p.done}/${p.total} hesap tamamladı · ${p.played} maç`], en: ['PVP finished', `${p.done}/${p.total} account(s) done · ${p.played} match(es)`] }),
+  'gu.summary': p => ({ tr: ['Go-up bitti', `${p.done}/${p.total} hesap tamamladı · ${p.played} maç`], en: ['Go-up finished', `${p.done}/${p.total} account(s) done · ${p.played} match(es)`] }),
+  'qz.summary': p => ({ tr: ['Daily Quiz bitti', `${p.done}/${p.total} hesap tamamladı`], en: ['Daily Quiz finished', `${p.done}/${p.total} account(s) done`] }),
+  'sy.done': p => ({ tr: ['Sentez bitti', `${p.ok} başarılı · ${p.fail} başarısız`], en: ['Synthesis finished', `${p.ok} success · ${p.fail} failed`] }),
+  'mk.relistDone': p => ({ tr: ['Tekrar listeleme bitti', `${p.listed} listelendi · ${(p.failed || 0) + (p.removedNotListed || 0)} sorunlu`], en: ['Relist finished', `${p.listed} listed · ${(p.failed || 0) + (p.removedNotListed || 0)} with problems`] }),
+  'cs.summary': p => ({ tr: ['Chat bitti', `${p.sent} mesaj gönderildi · ${p.failed} başarısız`], en: ['Chat finished', `${p.sent} message(s) sent · ${p.failed} failed`] })
+};
+function notifyDone(entry) {
+  const make = DONE_NOTES[entry?.code];
+  if (!make || !Notification.isSupported()) return;
+  try {
+    const tr = (store?.getSettings()?.language || 'tr') !== 'en';
+    const [title, body] = make(entry.params || {})[tr ? 'tr' : 'en'];
+    const n = new Notification({ title, body });
+    n.on('click', () => showMainWindow());
+    n.show();
+  } catch {}
+}
+
 function autoTradeAttention(kind, text) {
   try {
     if (mainWindow && !mainWindow.isDestroyed()) {
@@ -141,8 +202,8 @@ function autoTradeAttention(kind, text) {
     }
     if (Notification.isSupported()) {
       const tr = (store?.getSettings()?.language || 'tr') !== 'en';
-      const titles = { error: tr ? 'Auto Trade durdu' : 'Auto Trade stopped', listing: tr ? 'Auto Trade: pazara listeleme' : 'Auto Trade: market listing', draftTurn: tr ? 'Draft: sıra sende' : 'Draft: your turn', done: tr ? 'Auto Trade bitti' : 'Auto Trade finished', conflict: tr ? 'Auto Trade: hesaplar kullanımda' : 'Auto Trade: accounts in use', buyNoFunds: tr ? 'Auto Buy durdu' : 'Auto Buy stopped', buyCannot: tr ? 'Auto Buy: oyuncu alınamadı' : 'Auto Buy: could not buy', buyError: tr ? 'Auto Buy durdu' : 'Auto Buy stopped' };
-      const bodies = { listing: tr ? `${text} kadrosu doldu · hangi oyuncuların listeleneceğini seç` : `${text}'s roster is full · choose players to list`, done: tr ? 'Tüm hesaplar tamamlandı' : 'All accounts are done', draftTurn: tr ? `${text} seçim yapacak · 30 saniye` : `${text} picks now · 30 seconds`, buyNoFunds: tr ? `Hesapların ${text} miktarı yetersiz` : `The accounts do not have enough ${text}`, buyCannot: tr ? `${text} · hiçbir hesap alamadı (kadroda var / bakiye yetersiz) · tarama sürüyor` : `${text} · no account could buy it (already owned / not enough funds) · still scanning` };
+      const titles = { error: tr ? 'Auto Trade durdu' : 'Auto Trade stopped', listing: tr ? 'Auto Trade: pazara listeleme' : 'Auto Trade: market listing', draftTurn: tr ? 'Draft: sıra sende' : 'Draft: your turn', done: tr ? 'Auto Trade bitti' : 'Auto Trade finished', conflict: tr ? 'Auto Trade: hesaplar kullanımda' : 'Auto Trade: accounts in use', autoPlayStop: tr ? 'Auto Play durduruldu (günlük saat)' : 'Auto Play stopped (daily time)', watchAlert: tr ? 'İzleme listesi: değer değişimi' : 'Watch list: value change', buyNoFunds: tr ? 'Auto Buy durdu' : 'Auto Buy stopped', buyCannot: tr ? 'Auto Buy: oyuncu alınamadı' : 'Auto Buy: could not buy', buyError: tr ? 'Auto Buy durdu' : 'Auto Buy stopped' };
+      const bodies = { listing: tr ? `${text} kadrosu doldu · hangi oyuncuların listeleneceğini seç` : `${text}'s roster is full · choose players to list`, done: tr ? 'Tüm hesaplar tamamlandı' : 'All accounts are done', draftTurn: tr ? `${text} seçim yapacak · 30 saniye` : `${text} picks now · 30 seconds`, autoPlayStop: tr ? `${text} hesapta Auto Play durduruldu · turnuva öncesi` : `Auto Play stopped on ${text} account(s) · before the tournament`, watchAlert: text, buyNoFunds: tr ? `Hesapların ${text} miktarı yetersiz` : `The accounts do not have enough ${text}`, buyCannot: tr ? `${text} · hiçbir hesap alamadı (kadroda var / bakiye yetersiz) · tarama sürüyor` : `${text} · no account could buy it (already owned / not enough funds) · still scanning` };
       const n = new Notification({ title: titles[kind] || 'Auto Trade', body: bodies[kind] || String(text || '') });
       n.on('click', () => { if (mainWindow && !mainWindow.isDestroyed()) { mainWindow.show(); mainWindow.focus(); } });
       n.show();
@@ -184,18 +245,20 @@ async function pauseTasksFor(accountIds, taskName, prefix) {
 // Tower, PVP — and starts them again afterwards (Auto Play is handled by the scheduler).
 // Each stopped service first finishes, which also gives back the Auto Play it had
 // paused, so the scheduler then stops that Auto Play too and restores it in order.
-async function pauseServicesFor(accountIds, taskName) {
+// skipAutoBuy (a buy / listing of Auto Buy): Auto Buy itself goes on, and services that never
+// sign in (PVP, Go-up, Quiz: cookie only, not kicked by a sign-in) are left alone.
+async function pauseServicesFor(accountIds, taskName, { prefix = 'sc', logTask = 'Schedule', skipAutoBuy = false } = {}) {
   const ids = new Set(accountIds);
   const overlap = list => (list || []).some(id => ids.has(id));
   const resume = [];
-  const note = (level, code, service, extra = {}) => activity.add({ level, accountId: null, accountName: '', taskName: 'Schedule', code, params: { service, task: taskName, ...extra }, message: `${service} · ${code}` });
+  const note = (level, code, service, extra = {}) => activity.add({ level, accountId: null, accountName: '', taskName: logTask, code, params: { service, task: taskName, ...extra }, message: `${service} · ${code}` });
   const at = autoTrade.snapshot().run;
   if (at && ['running', 'paused', 'awaitingListing', 'stopping'].includes(at.status) && overlap(at.config?.accountIds)) {
     await autoTrade.stop();
     resume.push(['Auto Trade', () => autoTrade.continue()]);
   }
   const ab = buy.snapshot();
-  if (ab.auto?.status === 'running' && overlap(ab.config?.accountOrder)) {
+  if (!skipAutoBuy && ab.auto?.status === 'running' && overlap(ab.config?.accountOrder)) {
     const options = { accountIds: ab.config.accountOrder, intervalSec: ab.config.intervalSec };
     buy.stopAuto();
     await (autoBuyDone || buy.done)?.catch(() => {});
@@ -211,7 +274,7 @@ async function pauseServicesFor(accountIds, taskName) {
     }
   }
   const pv = pvp.snapshot();
-  if (pv.running) {
+  if (!skipAutoBuy && pv.running) {
     const active = Object.values(pv.run?.accounts || {}).filter(r => !['done', 'inactive', 'error', 'stopped'].includes(r.status)).map(r => r.accountId);
     if (overlap(active)) {
       pvp.stop();
@@ -219,14 +282,154 @@ async function pauseServicesFor(accountIds, taskName) {
       resume.push(['PVP', () => startPvpManual(active)]);
     }
   }
-  for (const [service] of resume) note('info', 'sc.servicePaused', service);
+  const gu = goup.snapshot();
+  if (!skipAutoBuy && gu.running) {
+    const active = Object.values(gu.run?.accounts || {}).filter(r => !['done', 'noAttempts', 'inactive', 'error', 'stopped'].includes(r.status)).map(r => r.accountId);
+    if (overlap(active)) {
+      const options = { mode: gu.run?.mode, gapSec: gu.run?.gapSec };
+      goup.stop();
+      await goupDone?.catch(() => {});
+      resume.push(['Go-up', () => startGoUpManual(active, options)]);
+    }
+  }
+  if (!skipAutoBuy && quiz.snapshot().running && overlap(Object.keys(quiz.snapshot().run?.accounts || {}))) {
+    quiz.stop();
+    await quizDone?.catch(() => {});
+  }
+  for (const [service] of resume) note('info', `${prefix}.servicePaused`, service);
   return async () => {
     for (const [service, start] of resume) {
-      try { await start(); note('success', 'sc.serviceResumed', service); }
-      catch (error) { note('error', 'sc.serviceResumeFailed', service, { error: error.message }); }
+      try { await start(); note('success', `${prefix}.serviceResumed`, service); }
+      catch (error) { note('error', `${prefix}.serviceResumeFailed`, service, { error: error.message }); }
     }
   };
 }
+
+// "Stop all automations" switch (turned on by hand, e.g. before the 15:00 tournament):
+// stops Auto Play on every account and every other service (Auto Trade, Auto Buy, Tower,
+// PVP, Market jobs, Synthesis) and remembers what ran; "Resume" starts the same again.
+let globalPause = null; // { at, resume: async () => {}, autoPlay: [...] }
+// ---- System tray and start with Windows (settings.closeToTray, settings.openAtLogin) ----
+// Closing the window hides it to the tray when closeToTray is on; automations keep
+// running. "Quit" in the tray menu really quits. Services are never started on their own.
+let tray = null;
+function trayMenu() {
+  const tr = (store?.getSettings()?.language || 'tr') !== 'en';
+  const paused = Boolean(globalPause);
+  return Menu.buildFromTemplate([
+    { label: tr ? 'DreamTeam Manager\'ı göster' : 'Show DreamTeam Manager', click: showMainWindow },
+    { type: 'separator' },
+    paused
+      ? { label: tr ? 'Otomasyonları devam ettir' : 'Resume automations', click: () => resumeAll().then(updateTray).catch(() => {}) }
+      : { label: tr ? 'Tüm otomasyonları durdur' : 'Stop all automations', click: () => pauseAll().then(updateTray).catch(() => {}) },
+    { type: 'separator' },
+    { label: tr ? 'Çıkış' : 'Quit', click: () => { app.__reallyQuit = true; app.quit(); } }
+  ]);
+}
+function updateTray() { try { tray?.setContextMenu(trayMenu()); } catch {} }
+// Brings the window back: from the tray (hidden), minimized or behind other windows.
+// A second start of the app lands here too (single-instance lock), never a second copy.
+function showMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) { if (app.isReady() && engine) createWindow(); return; }
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  if (!mainWindow.isVisible()) mainWindow.show();
+  // Windows may refuse to bring a background window forward: a short always-on-top does it.
+  mainWindow.setAlwaysOnTop(true);
+  mainWindow.show();
+  mainWindow.focus();
+  app.focus({ steal: true });
+  setTimeout(() => { try { if (!mainWindow.isDestroyed()) mainWindow.setAlwaysOnTop(false); } catch {} }, 300);
+}
+function setupTray() {
+  if (tray) return;
+  try {
+    tray = new Tray(nativeImage.createFromPath(path.join(__dirname, 'assets', 'tray.png')).resize({ width: 16, height: 16 }));
+    tray.setToolTip('DreamTeam Manager');
+    tray.on('click', showMainWindow);
+    updateTray();
+  } catch (error) { console.warn('[tray]', error?.message || error); }
+}
+function applyLoginItem(enabled) {
+  try {
+    app.setLoginItemSettings({ openAtLogin: Boolean(enabled), path: process.execPath, args: app.isPackaged ? [] : [app.getAppPath()] });
+  } catch (error) { console.warn('[login item]', error?.message || error); }
+}
+
+async function pauseAll() {
+  if (globalPause) return globalPauseSnapshot();
+  const ids = store.getAccounts().map(a => a.id);
+  const resumeServices = await pauseServicesFor(ids, 'stop all', { prefix: 'gp', logTask: 'Automations' });
+  const autoPlay = [];
+  for (const id of ids) {
+    const worker = engine.workers.get(id);
+    const prepared = engine.prepared.get(id);
+    const active = worker && ['running', 'preparing', 'starting'].includes(worker.status) ? worker : prepared;
+    if (!active) continue;
+    autoPlay.push({ accountId: id, taskId: active.taskId, taskName: active.taskName, visibleBrowser: Boolean(active.visibleBrowser), config: active.config || null });
+    try { await engine.stopAccount(id, { reason: 'Stop all automations', quiet: true }); } catch {}
+  }
+  try { await market?.stop(); } catch {}
+  try { synthesis?.stop(); } catch {}
+  try { chat?.stop(); } catch {}
+  globalPause = { at: new Date().toISOString(), autoPlay, resumeServices };
+  activity.add({ level: 'warning', accountId: null, accountName: '', taskName: 'Automations', code: 'gp.paused', params: { autoPlay: autoPlay.length }, message: `All automations stopped · Auto Play on ${autoPlay.length} account(s)` });
+  emitState();
+  updateTray();
+  return globalPauseSnapshot();
+}
+async function resumeAll() {
+  const p = globalPause;
+  if (!p) return globalPauseSnapshot();
+  globalPause = null;
+  let started = 0;
+  for (const item of p.autoPlay) {
+    try { await engine.startAccount(item.accountId, item.taskId, { visibleBrowser: item.visibleBrowser, forceFresh: false, config: item.config }); started++; } catch {}
+  }
+  try { await p.resumeServices?.(); } catch {}
+  activity.add({ level: 'success', accountId: null, accountName: '', taskName: 'Automations', code: 'gp.resumed', params: { autoPlay: started }, message: `Automations started again · Auto Play on ${started} account(s)` });
+  emitState();
+  updateTray();
+  return globalPauseSnapshot();
+}
+function globalPauseSnapshot() { return globalPause ? { active: true, at: globalPause.at, autoPlay: globalPause.autoPlay.length } : { active: false }; }
+
+// Go-up and Daily Quiz connect the accounts to the game: Auto Play on them is stopped
+// first and started again when they are over (rule for every automation).
+async function startGoUpManual(accountIds, options = {}) {
+  if (!accountIds.length) throw new Error('Select at least one account.');
+  if (goup.snapshot().running) throw new Error('Go-up is already running.');
+  const resume = await pauseTasksFor(accountIds, 'Go-up', 'gu');
+  goupDone = goup.runAndWait(accountIds, { source: 'manual', mode: options.mode, gapSec: options.gapSec }).catch(() => {}).finally(resume);
+  return goup.snapshot();
+}
+async function startQuizManual(accountIds) {
+  if (!accountIds.length) throw new Error('Select at least one account.');
+  if (quiz.snapshot().running) throw new Error('Daily Quiz is already running.');
+  const resume = await pauseTasksFor(accountIds, 'Daily Quiz', 'qz');
+  quizDone = quiz.runAndWait(accountIds, { source: 'manual' }).catch(() => {}).finally(resume);
+  return quiz.snapshot();
+}
+
+// Daily lines (Auto Play page): a one-off schedule of a built-in task for the accounts
+// last chosen on its page (all accounts when none). The scheduler stops what runs on
+// them, runs the task and starts the stopped tasks again.
+async function addDailySchedule(taskId, name, settingsKey) {
+  const all = store.getAccounts().map(a => a.id);
+  const chosen = (store.getSettings()[settingsKey] || []).filter(id => all.includes(id));
+  const schedules = store.getSchedules();
+  if (schedules.some(s => s.taskId === taskId && s.daily && !s.completed)) throw new Error(`${name} is already running.`);
+  const item = {
+    id: crypto.randomUUID(), name, taskId, taskName: BUILTIN_TASKS[taskId].name,
+    scheduleType: 'task', accountIds: chosen.length ? chosen : all, startAt: new Date().toISOString(), preparationMinutes: 0,
+    executionMode: 'parallel', delaySeconds: 0, visibleBrowser: false, enabled: true, prepared: false, started: false, completed: false,
+    daily: true, createdAt: new Date().toISOString()
+  };
+  if (!item.accountIds.length) throw new Error('No accounts.');
+  schedules.push(item); store.saveSchedules(schedules); emitState();
+  return item;
+}
+const addDailyTournamentSchedule = () => addDailySchedule('tournament-register', 'Turnuva kaydı (günlük)', 'tournamentAccountIds');
+const addDailyPvpSchedule = () => addDailySchedule('pvp-arena', 'PVP Arena (günlük)', 'pvpAccountIds');
 
 async function startPvpManual(accountIds) {
   if (!accountIds.length) throw new Error('Select at least one account.');
@@ -244,18 +447,20 @@ async function startTower(accountIds) {
   return tower.snapshot();
 }
 
+// Auto Buy scans without signing in, so it runs next to the other automations. Only
+// for a buy / listing it signs in on one account: pauseAccountForBuy stops what runs
+// there (Auto Play and the other automations, never Auto Buy itself) and the returned
+// function starts them again once the account is closed.
 async function startAutoBuy(options) {
-  const ids = Array.isArray(options?.accountIds) ? options.accountIds : [];
   if (buy.snapshot().auto.status === 'running') throw new Error('Auto Buy is already running.');
-  const resume = await pauseTasksFor(ids, 'Auto Buy', 'ab');
-  try {
-    const snap = await buy.startAuto(options);
-    autoBuyDone = buy.done.finally(resume);
-    return snap;
-  } catch (error) {
-    await resume();
-    throw error;
-  }
+  const snap = await buy.startAuto(options);
+  autoBuyDone = buy.done;
+  return snap;
+}
+async function pauseAccountForBuy(accountId, taskName) {
+  const resumeServices = await pauseServicesFor([accountId], taskName, { prefix: 'ab', logTask: taskName, skipAutoBuy: true });
+  const resumeTasks = await pauseTasksFor([accountId], taskName, 'ab');
+  return async () => { await resumeTasks(); await resumeServices(); };
 }
 
 function autoTradeConflicts(accountIds) {
@@ -265,7 +470,6 @@ function autoTradeConflicts(accountIds) {
   for (const [id, r] of Object.entries(engine.states())) {
     if (ids.has(id) && ['running', 'preparing', 'starting'].includes(r.status)) out.push({ kind: 'autoplay', accountId: id, name: name(id) });
   }
-  for (const [id, sc] of Object.entries(scout.snapshot() || {})) if (ids.has(id) && sc.browserOpen) out.push({ kind: 'scout', accountId: id, name: name(id) });
   if (equipment?.accountId && ids.has(equipment.accountId)) out.push({ kind: 'equipment', accountId: equipment.accountId, name: name(equipment.accountId) });
   if (market?.snapshot()?.busy) out.push({ kind: 'market' });
   if (tournament?.snapshot()?.runtime?.status === 'running') out.push({ kind: 'tournament' });
@@ -280,7 +484,6 @@ async function stopAutoTradeConflicts(accountIds) {
   for (const [id, r] of Object.entries(engine.states())) {
     if (ids.has(id) && ['running', 'preparing', 'starting'].includes(r.status)) await engine.stopAccount(id, { reason: 'Stopped for Auto Trade' });
   }
-  for (const [id, sc] of Object.entries(scout.snapshot() || {})) if (ids.has(id) && sc.browserOpen) await scout.close(id).catch(() => {});
   if (equipment?.accountId && ids.has(equipment.accountId)) await equipment.close();
   if (market?.snapshot()?.busy) await market.stop();
   if (tournament?.snapshot()?.runtime?.status === 'running') await tournament.stop();
@@ -294,6 +497,7 @@ function createWindow() {
     minHeight: 700,
     backgroundColor: '#F4F6F8',
     title: 'DreamTeam Manager',
+    icon: ICON_PNG,
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
@@ -301,6 +505,16 @@ function createWindow() {
       nodeIntegration: false,
       sandbox: false
     }
+  });
+  // Development build: pinning the taskbar button relaunches through the launcher with the DT icon.
+  if (process.platform === 'win32' && !app.isPackaged) {
+    try { mainWindow.setAppDetails({ appId: APP_ID, appIconPath: ICON_ICO, appIconIndex: 0, relaunchCommand: `wscript.exe "${LAUNCHER}"`, relaunchDisplayName: 'DreamTeam Manager' }); } catch {}
+  }
+  setupTray();
+  mainWindow.on('close', event => {
+    if (app.__reallyQuit || app.__closingTasks || !store?.getSettings()?.closeToTray) return;
+    event.preventDefault();
+    mainWindow.hide();
   });
   const devUrl = process.env.VITE_DEV_SERVER_URL;
   if (devUrl) mainWindow.loadURL(devUrl);
@@ -315,7 +529,10 @@ function initServices() {
   store = new AppStore(dataDir);
   // Trading Hall is session-only: old scan results must never survive an app restart.
   store.saveTradingRows([]);
-  activity = new ActivityService(store, emitState);
+  activity = new ActivityService(store, emitState, { logDir: path.join(dataDir, 'logs') });
+  const addActivity = activity.add.bind(activity);
+  activity.add = entry => { const r = addActivity(entry); notifyDone(entry); return r; };
+  gameHealth = new GameHealth({ activity, onChanged: emitState });
   accountProfile = new AccountProfileService({ store, onChanged: emitState, activity });
   registry = new TaskRegistry({ taskDir: taskDir(), bundledTaskDir: bundledTasksDir() });
   browserService = new BrowserService({
@@ -328,21 +545,38 @@ function initServices() {
   cards = new CardsService({ store, activity, accountProfile, sessions: gameSessions, onChanged: emitState });
   dailyRoutine = new DailyRoutineService({ store, activity, sessions: gameSessions, onChanged: emitState });
   engine = new TaskEngine({
+    gameHealth,
     store, credentials, registry, browserService, activity, onChanged: emitState,
     beforeRun: ({ account, signal }) => dailyRoutine.runIfDue(account, { signal }),
     beforeRunNextAt: accountId => dailyRoutine.nextDueAt(accountId)
   });
   scheduler = new SchedulerService({ store, engine, activity, onChanged: emitState, pauseServices: (ids, name) => pauseServicesFor(ids, name) });
-  scout = new ScoutService({ store, credentials, browserService, activity, cardsService: cards, accountProfile, onChanged: emitState });
+  scout = new ScoutService({ store, activity, sessions: gameSessions, cardsService: cards, accountProfile, gameHealth, onChanged: emitState });
   trading = new TradingHallService({ store, credentials, browserService, activity, onChanged: emitState });
   dailyRewards = new DailyRewardService({ store, credentials, browserService, activity, engine, onChanged: emitState });
-  autoTrade = new AutoTradeEngine({ store, credentials, activity, sessions: gameSessions, accountProfile, onChanged: emitState, onAttention: autoTradeAttention, onScout: (id, reply) => scout.showSocketScout?.(id, reply), onCycleEnd: () => cards.refresh() });
+  autoTrade = new AutoTradeEngine({ gameHealth, store, credentials, activity, sessions: gameSessions, accountProfile, onChanged: emitState, onAttention: autoTradeAttention, onScout: (id, reply) => scout.showSocketScout?.(id, reply), onCycleEnd: () => cards.refresh() });
   market = new MarketService({ store, activity, accountProfile, sessions: gameSessions, onChanged: emitState });
-  players = new PlayersService({ store, activity, onChanged: emitState });
-  tower = new TowerService({ store, activity, sessions: gameSessions, onChanged: emitState });
-  buy = new BuyService({ store, activity, sessions: gameSessions, accountProfile, onChanged: emitState, onAttention: autoTradeAttention, onScan: (ids, currency, tickets) => trading.mergeTickets(ids, currency, tickets) });
-  pvp = new PvpService({ store, activity, sessions: gameSessions, onChanged: emitState });
-  draft = new DraftService({ store, activity, sessions: gameSessions, accountProfile, onChanged: emitState, onAttention: autoTradeAttention });
+  const alertedDays = new Map(); // playerId -> day already reported
+  players = new PlayersService({
+    store, activity, onChanged: emitState,
+    onRefreshed: (list, previousById, { day }) => {
+      const hits = watchAlerts(buy?.snapshot().watch, list, previousById).filter(h => alertedDays.get(h.playerId) !== day);
+      for (const h of hits) {
+        alertedDays.set(h.playerId, day);
+        activity.add({ level: 'warning', accountId: null, accountName: '', taskName: 'Auto Buy', code: 'wl.alert', params: { name: h.name, value: h.value, base: h.base, pct: h.pct, kind: h.becameBase ? 'base' : 'drop' }, message: `Watched ${h.name}: ${h.becameBase ? 'fell to its Base' : `value ${h.pct}%`} · ${h.value} (Base ${h.base})` });
+      }
+      if (hits.length) autoTradeAttention('watchAlert', hits.map(h => `${h.name} ${h.becameBase ? 'Base' : h.pct + '%'}`).join(', '));
+    }
+  });
+  synthesis = new SynthesisService({ store, activity, sessions: gameSessions, onChanged: emitState, onDone: () => cards.refresh() });
+  tower = new TowerService({ store, activity, gameHealth, sessions: gameSessions, onChanged: emitState });
+  buy = new BuyService({ store, activity, gameHealth, sessions: gameSessions, accountProfile, onChanged: emitState, onAttention: autoTradeAttention, onScan: (ids, currency, tickets) => trading.mergeTickets(ids, currency, tickets), pauseAccount: pauseAccountForBuy });
+  pvp = new PvpService({ store, activity, gameHealth, sessions: gameSessions, onChanged: emitState });
+  goup = new GoUpService({ store, activity, gameHealth, sessions: gameSessions, onChanged: emitState });
+  quiz = new QuizService({ store, activity, gameHealth, sessions: gameSessions, onChanged: emitState });
+  cheer = new CheerService({ store, activity, gameHealth, sessions: gameSessions, onChanged: emitState });
+  chat = new ChatService({ store, activity, gameHealth, sessions: gameSessions, onChanged: emitState });
+  draft = new DraftService({ store, activity, gameHealth, sessions: gameSessions, accountProfile, onChanged: emitState, onAttention: autoTradeAttention });
   equipment = new EquipmentService({ store, activity, sessions: gameSessions, onChanged: emitState });
   tournament = new TournamentService({ store, credentials, browserService, accountProfile, activity, sessions: gameSessions, onChanged: emitState });
   scheduler.registerBuiltin('tournament-register', (accountIds, { signal }) => tournament.runAndWait(accountIds, { signal }));
@@ -352,8 +586,12 @@ function initServices() {
     try { await market.claim(accountIds); } finally { signal?.removeEventListener('abort', onAbort); }
   });
   scheduler.registerBuiltin('pvp-arena', (accountIds, { signal }) => pvp.runAndWait(accountIds, { signal, source: 'schedule' }));
+  scheduler.registerBuiltin('goup', (accountIds, { signal }) => goup.runAndWait(accountIds, { signal, source: 'schedule', mode: store.getSettings()?.goupMode, gapSec: store.getSettings()?.goupGapSec }));
   scheduler.registerBuiltin('market-relist', (accountIds, { signal }) => market.relistRecent(accountIds, { signal }));
   scheduler.start();
+  new AutoPlayStop({ store, engine, activity, onChanged: emitState, onAttention: autoTradeAttention, scheduleTournament: addDailyTournamentSchedule, schedulePvp: addDailyPvpSchedule }).start();
+  accountHealth = new AccountHealth({ store, engine, gameHealth, onChanged: emitState });
+  accountHealth.start();
   players.start();
   dailyRewards.start();
   syncMcpServers();
@@ -558,12 +796,44 @@ function registerIpc() {
     const settings = { ...store.getSettings(), ...patch };
     store.saveSettings(settings);
     if ('dailyRoutineAccountIds' in (patch || {})) for (const id of Object.keys(engine.states())) engine.recheckBeforeRun(id);
+    if ('openAtLogin' in (patch || {})) applyLoginItem(patch.openAtLogin);
+    if ('language' in (patch || {})) updateTray();
     emitState(); return settings;
   });
+  ipcMain.handle('activity:days', async () => activity.days());
+  ipcMain.handle('summary:day', async (_event, day) => { const { summarize } = require('./services/daily-summary.cjs'); const d = day || activity.days()[0]; return { day: d || null, days: activity.days(), summary: summarize(d ? activity.readDay(d) : []) }; });
+  ipcMain.handle('activity:day', async (_event, day) => activity.readDay(day));
+  ipcMain.handle('activity:search', async (_event, text) => activity.search(text));
+  ipcMain.handle('activity:open-folder', async () => shell.openPath(path.join(dataDir, 'logs')));
+  // Error report: warnings and errors of the last days plus a short environment summary
+  // (no passwords or cookies), saved where the user chooses.
+  ipcMain.handle('activity:export', async () => {
+    const os = require('os');
+    const days = activity.days().slice(0, 3);
+    const entries = days.flatMap(d => activity.readDay(d)).filter(e => e.level === 'error' || e.level === 'warning').slice(0, 1000);
+    const lines = [
+      'DreamTeam Manager · error report',
+      `Created: ${new Date().toISOString()}`,
+      `App: ${app.getVersion()} · Electron ${process.versions.electron} · ${os.type()} ${os.release()}`,
+      `Accounts: ${store.getAccounts().length} · days: ${days.join(', ')}`,
+      `Running: Auto Play ${Object.values(engine.states()).filter(w => w.status === 'running').length} · Auto Buy ${buy?.snapshot().auto?.status || '-'} · Auto Trade ${autoTrade?.snapshot().run?.status || '-'} · game reachable ${!gameHealth?.isDown()}`,
+      '',
+      ...entries.map(e => `${e.at} [${e.level}] ${e.taskName || ''} ${e.accountName || ''} ${e.code || ''} · ${e.message}`)
+    ];
+    const result = await dialog.showSaveDialog(mainWindow, { defaultPath: `dreamteam-hata-raporu-${new Date().toISOString().slice(0, 10)}.txt`, filters: [{ name: 'Text', extensions: ['txt'] }] });
+    if (result.canceled || !result.filePath) return null;
+    require('fs').writeFileSync(result.filePath, lines.join('\r\n'), 'utf8');
+    return result.filePath;
+  });
+  ipcMain.handle('health:refresh', async () => accountHealth.refresh());
+  ipcMain.handle('app:pause-all', async () => pauseAll());
+  ipcMain.handle('app:resume-all', async () => resumeAll());
+  ipcMain.handle('app:factory-reset', async (_event, options) => { setTimeout(() => factoryReset(options || {}).catch(error => console.warn('[factory reset]', error)), 300); return true; });
   ipcMain.handle('settings:open-data-folder', async () => shell.openPath(dataDir));
   ipcMain.handle('activity:clear', async () => { activity.clear(); return true; });
   ipcMain.handle('players:refresh', async () => players.refresh());
   ipcMain.handle('buy:buy', async (_event, { accountId, ticket }) => buy.buy(accountId, ticket));
+  ipcMain.handle('buy:cheapest', async (_event, query) => buy.cheapest(query || {}));
   ipcMain.handle('buy:sell', async (_event, { entryId, price, currency }) => buy.sell(entryId, price, currency));
   ipcMain.handle('buy:remove-bought', async (_event, ids) => buy.removeBought(ids || []));
   ipcMain.handle('buy:add-watch', async (_event, players) => buy.addWatch(players || []));
@@ -572,11 +842,22 @@ function registerIpc() {
   ipcMain.handle('buy:set-config', async (_event, patch) => buy.setConfig(patch || {}));
   ipcMain.handle('buy:start-auto', async (_event, options) => startAutoBuy(options || {}));
   ipcMain.handle('buy:stop-auto', async () => buy.stopAuto());
+  ipcMain.handle('synthesis:start', async (_event, options) => synthesis.start(options || {}));
+  ipcMain.handle('synthesis:stop', async () => synthesis.stop());
   ipcMain.handle('tower:start', async (_event, accountIds) => startTower(Array.isArray(accountIds) ? accountIds : []));
   ipcMain.handle('tower:stop', async (_event, accountIds) => tower.stop(Array.isArray(accountIds) && accountIds.length ? accountIds : null));
   ipcMain.handle('pvp:stop', async () => { pvp.stop(); return pvp.snapshot(); });
   ipcMain.handle('pvp:status', async (_event, accountIds) => pvp.status(Array.isArray(accountIds) ? accountIds : store.getAccounts().map(a => a.id)));
   ipcMain.handle('pvp:start', async (_event, accountIds) => startPvpManual(Array.isArray(accountIds) ? accountIds : []));
+  ipcMain.handle('goup:start', async (_event, { accountIds, mode, gapSec } = {}) => startGoUpManual(Array.isArray(accountIds) ? accountIds : [], { mode, gapSec }));
+  ipcMain.handle('goup:stop', async () => { goup.stop(); return goup.snapshot(); });
+  ipcMain.handle('goup:status', async (_event, accountIds) => goup.status(Array.isArray(accountIds) ? accountIds : null));
+  ipcMain.handle('quiz:start', async (_event, accountIds) => startQuizManual(Array.isArray(accountIds) ? accountIds : []));
+  ipcMain.handle('quiz:stop', async () => { quiz.stop(); return quiz.snapshot(); });
+  ipcMain.handle('quiz:answer', async (_event, { accountId, letter } = {}) => quiz.answer(accountId, letter));
+  ipcMain.handle('cheer:send', async (_event, { fromIds, targetId } = {}) => cheer.cheer(Array.isArray(fromIds) ? fromIds : [], targetId));
+  ipcMain.handle('chat:start', async (_event, config) => { chat.runAndWait(config || {}).catch(() => {}); await new Promise(r => setTimeout(r, 50)); if (!chat.snapshot().running) throw new Error(chat.snapshot().lastReport?.lastError || 'Chat could not start.'); return chat.snapshot(); });
+  ipcMain.handle('chat:stop', async () => { chat.stop(); return chat.snapshot(); });
   ipcMain.handle('draft:watch', async () => draft.watch());
   ipcMain.handle('draft:unwatch', async () => draft.unwatch());
   ipcMain.handle('draft:join', async (_event, { accountId, slot }) => draft.join(accountId, slot));
@@ -586,10 +867,68 @@ function registerIpc() {
   ipcMain.handle('players:set-roles', async (_event, { playerId, roleIds }) => cards.setRolesById(playerId, roleIds));
 }
 
+app.on('second-instance', () => showMainWindow());
+
 app.whenReady().then(() => {
+  if (!singleInstance) return;
   initServices(); registerIpc(); createWindow();
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });
+
+// Stops every service (and their Chromium processes). Used when quitting and before a
+// factory reset.
+async function shutdownServices() {
+  // Each step on its own: one failing service must not leave the others
+  // (or their Chromium processes) running.
+  const steps = [
+    () => scheduler?.stop(),
+    () => trading?.stop(),
+    () => autoTrade?.shutdown?.(),
+    () => market?.shutdown(),
+    () => players?.stop(),
+    () => draft?.shutdown(),
+    () => pvp?.stop(),
+    () => goup?.stop(),
+    () => quiz?.stop(),
+    () => chat?.stop(),
+    () => cheer?.stop(),
+    () => tower?.stop(),
+    () => gameHealth?.shutdown(),
+    () => accountHealth?.stop(),
+    () => activity?.flushArchive(),
+    () => synthesis?.stop(),
+    () => buy?.shutdown(),
+    () => tournament?.shutdown(),
+    () => equipment?.shutdown(),
+    () => dailyRewards?.stop(),
+    () => engine.stopAll(),
+    () => scout.shutdown(),
+    () => browserService.closeAll()
+  ];
+  for (const step of steps) {
+    try { await step(); } catch (error) { console.warn('[shutdown]', error?.message || error); }
+  }
+}
+
+// Factory reset: everything back to a fresh install — settings, saved data, logs,
+// browser logins. Saved accounts/passwords are kept when asked (default). The app
+// restarts afterwards.
+const KEEP_ON_RESET = ['accounts.json', 'trade-account.json', 'player-market-account.json'];
+async function factoryReset({ keepPasswords = true } = {}) {
+  app.__closingTasks = true;
+  if (pendingState) clearTimeout(pendingState);
+  pendingState = null;
+  await shutdownServices();
+  store.freeze();
+  // Learned Daily Quiz answers are game knowledge, not personal data: always kept.
+  const keep = new Set(['mcp-profiles', 'quiz-bank.json', ...(keepPasswords ? KEEP_ON_RESET : [])]);
+  for (const name of require('fs').readdirSync(dataDir)) {
+    if (keep.has(name)) continue;
+    try { require('fs').rmSync(path.join(dataDir, name), { recursive: true, force: true, maxRetries: 3 }); } catch (error) { console.warn('[factory reset]', name, error?.message || error); }
+  }
+  app.relaunch();
+  app.exit(0);
+}
 
 app.on('before-quit', async (event) => {
   if (!engine || app.__closingTasks) return;
@@ -598,28 +937,7 @@ app.on('before-quit', async (event) => {
     try { store?.flush(); } catch {}
     if (pendingState) clearTimeout(pendingState);
     pendingState = null;
-    // Each step on its own: one failing service must not leave the others
-    // (or their Chromium processes) running.
-    const steps = [
-      () => scheduler?.stop(),
-      () => trading?.stop(),
-      () => autoTrade?.shutdown?.(),
-      () => market?.shutdown(),
-      () => players?.stop(),
-      () => draft?.shutdown(),
-      () => pvp?.stop(),
-      () => tower?.stop(),
-      () => buy?.shutdown(),
-      () => tournament?.shutdown(),
-      () => equipment?.shutdown(),
-      () => dailyRewards?.stop(),
-      () => engine.stopAll(),
-      () => scout.shutdown(),
-      () => browserService.closeAll()
-    ];
-    for (const step of steps) {
-      try { await step(); } catch (error) { console.warn('[shutdown]', error?.message || error); }
-    }
+    await shutdownServices();
     try { globalShortcut.unregisterAll(); } catch {}
   } finally { try { store?.flush(); } catch {} app.quit(); }
 });

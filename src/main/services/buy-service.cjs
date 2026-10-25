@@ -17,6 +17,8 @@ const PARK_PRICE = 9999999;   // Auto Buy lists a bought player here until the u
 const PAYMENT_MODE = { APK: 'APK_TICKET', TIX: 'TICKET' };
 const CURRENCY = { APK_TICKET: 'APK', TICKET: 'TIX' };
 const DEFAULT_INTERVAL_SEC = 10;
+const OFFLINE_RETRY_SEC = 120;
+const OFFLINE_GIVE_UP_MS = 60 * 60 * 1000;
 const MAX_BOUGHT = 500;
 
 function abortError() { const e = new Error('Aborted'); e.name = 'AbortError'; return e; }
@@ -30,8 +32,15 @@ function sleep(ms, signal) {
 }
 const finite = v => v !== '' && v != null && Number.isFinite(Number(v));
 
-// A watch row is used only when both limits are set (all conditions must hold).
-function rowReady(row) { return finite(row.maxPrice) && Number(row.maxPrice) >= 1 && finite(row.maxSalary) && Number(row.maxSalary) >= 0 && PAYMENT_MODE[row.currency]; }
+// A watch row is used only when both limits are set (all conditions must hold), and the
+// quantity too unless "unlimited" is ticked (the default). qty = how many to buy in total.
+const isUnlimited = row => row.unlimited !== false;
+function rowReady(row) {
+  return finite(row.maxPrice) && Number(row.maxPrice) >= 1 && finite(row.maxSalary) && Number(row.maxSalary) >= 0 && PAYMENT_MODE[row.currency]
+    && (isUnlimited(row) || (finite(row.qty) && Number(row.qty) >= 1 && Number.isInteger(Number(row.qty))));
+}
+// Bought as many as asked: the row is left out of the scans.
+function rowDone(row) { return !isUnlimited(row) && Number(row.boughtCount || 0) >= Number(row.qty); }
 
 // Listings of the watched player that satisfy every limit, cheapest first.
 function matchingTickets(row, tickets, ownTeams = new Set()) {
@@ -62,16 +71,20 @@ function affordableCurrencies(rows, order, balances) {
 }
 
 class BuyService {
-  constructor({ store, activity, sessions, accountProfile, onChanged, onAttention, onScan, createSocket, now = () => Date.now(), timing = {} }) {
+  constructor({ store, activity, sessions, accountProfile, onChanged, onAttention, onScan, pauseAccount = null, gameHealth = null, createSocket, now = () => Date.now(), timing = {} }) {
     this.store = store;
+    // (accountId, taskName) → async resume(): stops what runs on that account (Auto Play,
+    // other automations) while Auto Buy is signed in there, and starts it again afterwards.
+    this.pauseAccount = pauseAccount;
     this.activity = activity;
     this.sessions = sessions;
     this.accountProfile = accountProfile;
     this.onAttention = onAttention;
     this.onScan = onScan;            // (playerIds, currency, tickets) → Trading Hall rows
+    this.gameHealth = gameHealth;    // shared "is the game reachable?"
     this.createSocket = createSocket;
     this.now = now;
-    this.timing = { buyGapMs: BUY_GAP_MS, idleCloseMs: IDLE_CLOSE_MS, ...timing };
+    this.timing = { buyGapMs: BUY_GAP_MS, idleCloseMs: IDLE_CLOSE_MS, offlineRetryMs: OFFLINE_RETRY_SEC * 1000, ...timing };
     this.revision = 0;
     this.onChanged = () => { this.revision++; onChanged?.(); };
     this.conns = new Map();      // accountId -> { userId, socket, timer }
@@ -178,6 +191,16 @@ class BuyService {
     return p;
   }
 
+  // Signed in on an account only for one buy / listing: the account's automations are
+  // paused first; afterwards the connection is closed and they start again.
+  async _withAccount(accountId, task, fn) {
+    const resume = this.pauseAccount ? await this.pauseAccount(accountId, task).catch(() => null) : null;
+    try { return await fn(); } finally {
+      this._close(accountId);
+      if (resume) await resume().catch(() => {});
+    }
+  }
+
   // ticket: a Trading Hall row or a market ticket ({id, playerId, name, price, currency, salary, base, ...}).
   async buy(accountId, ticket, { source = 'hall', autoList = false, signal = null } = {}) {
     const t = normTicket(ticket);
@@ -187,7 +210,7 @@ class BuyService {
     this.onChanged();
     const task = source === 'auto' ? 'Auto Buy' : 'Trading Hall';
     try {
-      return await this._queueBuy(async () => {
+      return await this._queueBuy(() => this._withAccount(accountId, task, async () => {
         const conn = await this._conn(accountId, signal);
         const r = await this._write(conn, 'market:buyPlayer', { userId: conn.userId, ticketId: t.id }, 'market:buyResult', signal);
         if (!r?.success) {
@@ -203,7 +226,7 @@ class BuyService {
         await this._balance(accountId, conn, signal).catch(() => null);
         if (autoList) await this._sell(conn, entry.id, PARK_PRICE, 'TIX', signal, task).catch(error => this._log('warning', 'by.parkFailed', { name: t.name, error: error.message }, `${t.name} could not be listed: ${error.message}`, accountId, task));
         return { ok: true, entryId: entry.id };
-      });
+      }));
     } finally {
       delete this.busy[t.id];
       this.onChanged();
@@ -219,8 +242,11 @@ class BuyService {
     this.busy[entryId] = true;
     this.onChanged();
     try {
-      const conn = await this._conn(entry.accountId);
-      return await this._sell(conn, entryId, price, currency, null, entry.source === 'auto' ? 'Auto Buy' : 'Trading Hall');
+      const task = entry.source === 'auto' ? 'Auto Buy' : 'Trading Hall';
+      return await this._withAccount(entry.accountId, task, async () => {
+        const conn = await this._conn(entry.accountId);
+        return this._sell(conn, entryId, price, currency, null, task);
+      });
     } finally { delete this.busy[entryId]; this.onChanged(); }
   }
 
@@ -267,6 +293,21 @@ class BuyService {
     return null;
   }
 
+  // Price hint for listing: the cheapest other listing of this player in this currency
+  // (our own accounts' listings left out), read without logging in.
+  async cheapest({ playerId, name, currency }) {
+    if (!PAYMENT_MODE[currency]) throw new Error('Invalid currency.');
+    const own = new Set(this._accounts().map(a => a.name));
+    const conn = await GameSocket.open({ createSocket: this.createSocket });
+    try {
+      const r = await conn.call('market:getMarketPlayers', { page: 1, search: String(name || ''), sort: 'asc', paymentMode: PAYMENT_MODE[currency], basePlayersOnly: false }, 'market:marketPlayersData', { timeoutMs: 15000 });
+      const list = (r?.tickets || []).filter(t => (t.playerId || t.player?.id) === playerId && (!t.status || t.status === 'LISTED'));
+      const others = list.filter(t => !own.has(t.user?.teamName)).map(t => Number(t.price)).sort((a, b) => a - b);
+      const mine = list.filter(t => own.has(t.user?.teamName)).map(t => Number(t.price)).sort((a, b) => a - b);
+      return { currency, cheapest: others[0] ?? null, count: others.length, ownCheapest: mine[0] ?? null, suggested: others.length ? Math.max(1, others[0] - 1) : null };
+    } finally { conn.close(); }
+  }
+
   removeBought(entryIds) {
     const ids = new Set(entryIds);
     const data = this._data();
@@ -282,7 +323,7 @@ class BuyService {
     let added = 0;
     for (const p of players || []) {
       if (!p?.id || have.has(p.id)) continue;
-      data.watch.push({ id: crypto.randomUUID(), playerId: p.id, name: p.name, team: p.team || null, position: p.position || null, rating: p.rating || null, value: p.value ?? null, base: p.base ?? null, maxSalary: '', maxPrice: '', currency: 'APK', enabled: true });
+      data.watch.push({ id: crypto.randomUUID(), playerId: p.id, name: p.name, team: p.team || null, position: p.position || null, rating: p.rating || null, value: p.value ?? null, base: p.base ?? null, maxSalary: '', maxPrice: '', currency: 'APK', unlimited: true, qty: 1, boughtCount: 0, enabled: true });
       have.add(p.id);
       added++;
     }
@@ -293,9 +334,19 @@ class BuyService {
     const data = this._data();
     const row = data.watch.find(w => w.id === id);
     if (!row) throw new Error('Row not found.');
-    for (const k of ['maxSalary', 'maxPrice', 'currency', 'enabled']) if (k in patch) row[k] = patch[k];
+    for (const k of ['maxSalary', 'maxPrice', 'currency', 'enabled', 'unlimited', 'qty']) if (k in patch) row[k] = patch[k];
+    if ('resetCount' in patch) row.boughtCount = 0;
     this._save(data);
     return this.snapshot();
+  }
+  // One more bought for this watch row; with a quantity, the row is done at the limit.
+  _countBought(row) {
+    const data = this._data();
+    const w = data.watch.find(x => x.id === row.id);
+    if (!w) return;
+    w.boughtCount = Number(w.boughtCount || 0) + 1;
+    this._save(data);
+    if (rowDone(w)) this._log('success', 'ab.rowDone', { name: w.name, count: w.boughtCount }, `${w.name}: ${w.boughtCount} bought · the asked quantity is reached`);
   }
   removeWatch(ids) {
     const s = new Set(ids);
@@ -316,8 +367,11 @@ class BuyService {
     if (this.controller) throw new Error('Auto Buy is already running.');
     const order = (accountIds || []).filter(id => this._accounts().some(a => a.id === id));
     if (!order.length) throw new Error('Select at least one account.');
-    const rows = this._data().watch.filter(r => r.enabled !== false && rowReady(r));
-    if (!rows.length) throw new Error('Fill in Salary ≤, Price ≤ and the currency for at least one player.');
+    const active = this._data().watch.filter(r => r.enabled !== false);
+    const incomplete = active.filter(r => !rowReady(r));
+    if (incomplete.length) throw new Error(`Fill in Salary ≤, Price ≤ and the quantity (or tick Unlimited) for every player: ${incomplete.map(r => r.name).join(', ')}`);
+    const rows = active.filter(r => !rowDone(r));
+    if (!rows.length) throw new Error('Every player on the list was already bought in the asked quantity.');
     const interval = Math.max(3, Math.min(600, Math.round(Number(intervalSec) || DEFAULT_INTERVAL_SEC)));
     this.setConfig({ accountOrder: order, intervalSec: interval });
     this.controller = new AbortController();
@@ -353,7 +407,13 @@ class BuyService {
     const ownTeams = new Set(this._accounts().map(a => a.name));
     for (;;) {
       if (signal.aborted) throw abortError();
-      const rows = this._data().watch.filter(r => r.enabled !== false && rowReady(r));
+      const ready = this._data().watch.filter(r => r.enabled !== false && rowReady(r));
+      const rows = ready.filter(r => !rowDone(r));
+      if (ready.length && !rows.length) {
+        this.auto.status = 'done';
+        this._log('success', 'ab.allBought', { count: ready.length }, 'Auto Buy finished · every player was bought in the asked quantity');
+        return;
+      }
       const ok = affordableCurrencies(rows, order, balances);
       if (!rows.length || !ok.size) {
         const currencies = [...new Set(rows.map(r => r.currency))].join(' / ') || 'APK';
@@ -365,7 +425,42 @@ class BuyService {
       }
       this.auto.cycle += 1;
       this.onChanged();
-      const anon = await this._anonSocket(signal);
+      // The game can be unreachable for a few minutes (seen 04:00–04:04 TR): wait and
+      // try again instead of stopping Auto Buy.
+      if (this.gameHealth?.isDown()) { this.auto.offlineSince = this.auto.offlineSince || new Date(this.now()).toISOString(); this.onChanged(); await this.gameHealth.waitUp(signal); }
+      let anon;
+      try {
+        anon = await this._anonSocket(signal);
+        if (this.auto.offlineSince) {
+          this._log('success', 'ab.online', {}, 'Connection to the game is back · Auto Buy continues');
+          this.auto.offlineSince = null;
+          this.auto.message = null;
+        }
+      } catch (error) {
+        if (error?.name === 'AbortError') throw error;
+        if (!this.auto.offlineSince) {
+          this.auto.offlineSince = new Date(this.now()).toISOString();
+          this._log('warning', 'ab.offline', { error: error.message }, `Game not reachable (${error.message}) · retrying every ${OFFLINE_RETRY_SEC} s`);
+        }
+        this.auto.message = error.message;
+        try { this.anon?.close(); } catch {}
+        this.anon = null;
+        // With the shared check, wait until one probe gets through (every 2 minutes).
+        if (this.gameHealth) {
+          this.gameHealth.reportDown('Auto Buy', error);
+          this.auto.nextScanAt = null;
+          this.onChanged();
+          await this.gameHealth.waitUp(signal);
+          continue;
+        }
+        if (this.now() - Date.parse(this.auto.offlineSince) > OFFLINE_GIVE_UP_MS) throw new Error(`The game was not reachable for ${Math.round(OFFLINE_GIVE_UP_MS / 60000)} minutes: ${error.message}`);
+        this.auto.nextScanAt = new Date(this.now() + this.timing.offlineRetryMs).toISOString();
+        this.onChanged();
+        try { this.anon?.close(); } catch {}
+        this.anon = null;
+        await sleep(this.timing.offlineRetryMs, signal);
+        continue;
+      }
       for (const row of rows) {
         if (signal.aborted) throw abortError();
         if (!ok.has(row.currency)) continue;
@@ -388,6 +483,7 @@ class BuyService {
             if (r.ok) {
               this.auto.bought += 1;
               this.auto.spent[row.currency] += price;
+              this._countBought(row);
               bought = true;
               break;
             }
@@ -396,7 +492,7 @@ class BuyService {
             // "already own this player", not enough funds, roster full: try the next account.
             reasons.add(/already own/i.test(r.message || '') ? 'owned' : /insufficient|not enough|balance|fund/i.test(r.message || '') ? 'funds' : 'other');
           }
-          if (bought) continue;
+          if (bought) { if (rowDone(this._data().watch.find(w => w.id === row.id) || row)) break; continue; }
           failedTickets.add(ticket.id);
           if (gone) continue;
           // No account could buy it (they already own the player and/or cannot pay):
@@ -433,4 +529,4 @@ function ticketFromMarket(t) {
   return { id: t.id, playerId: t.playerId || p.id, name: String(p.visualName || p.name || '').trim(), position: p.position || null, grade: p.rating || null, salary: Number(t.signedSalary), base: Number(p.newBaseSalary) || null, price: Number(t.price), currency: CURRENCY[t.paymentMode] };
 }
 
-module.exports = { BuyService, rowReady, matchingTickets, pickAccount, affordableCurrencies, PARK_PRICE };
+module.exports = { BuyService, rowReady, rowDone, matchingTickets, pickAccount, affordableCurrencies, PARK_PRICE };

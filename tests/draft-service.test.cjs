@@ -27,6 +27,7 @@ function fakeDraft() {
     s.emit = (event, p) => {
       world.calls.push({ event, payload: p, cookie: s.cookie });
       if (event === 'getLiveDraftStatus') return push('liveDraftStatus', world.slots);
+      if (event === 'joinDraftSlot' && world.refuseJoin) { push('draftError', world.refuseJoin); return true; }
       if (event === 'joinDraftSlot') { world.room = s; world.slots[0].users.push(p.userId); push('draftJoined', { slotNumber: p.slotNumber, players: pool }); push('draftUsersUpdate', [{ userId: p.userId, teamName: 'Trophy4', signed: false }, { userId: 'x', teamName: 'Stranger', signed: false }]); return true; }
       if (event === 'signDraftPlayer' && world.refuseSigns > 0) { world.refuseSigns--; push('draftError', world.refuseMessage || 'It is not your turn yet'); return true; }
       if (event === 'signDraftPlayer') { pool.find(x => x.id === p.playerId).signed = true; world.attempts[p.userId] -= 1; push('signDraftPlayerResponse', { success: true, playerId: p.playerId }); push('draftPlayersUpdate', pool.map(x => ({ ...x }))); return true; }
@@ -106,4 +107,52 @@ test('a pick refused right when the turn arrives (draftError) is retried; a hard
   await assert.rejects(svc.pick('a1', 'p2'), /already signed/);
   assert.ok(logs.some(l => l.code === 'df.pickFailed'));
   svc.unwatch(); svc.shutdown();
+});
+
+test('a refused join shows the reason from the game at once; a busy account (slot users as objects) gets no join button', async () => {
+  const { world, createSocket } = fakeDraft();
+  const logs = []; const mem = { d: null };
+  const svc = new DraftService({
+    store: { getAccounts: () => [{ id: 'a1', name: 'Trophy4' }], getAccountProfile: () => ({ accounts: { a1: { userId: 'u1', level: 34 } } }), getDraftData: () => mem.d, saveDraftData: v => { mem.d = v; } },
+    activity: { add: e => logs.push(e) }, onChanged() {}, onAttention() {},
+    sessions: { get: async () => ({ userId: 'u1', cookieHeader: 'session=abc' }), invalidate() {} }, createSocket
+  });
+  await svc.watch();
+  await new Promise(r => setTimeout(r, 20));
+  world.refuseJoin = 'You are already in a draft';
+  const t0 = Date.now();
+  await assert.rejects(svc.join('a1', 8), /already in a draft/);
+  assert.ok(Date.now() - t0 < 3000, 'no 15 s wait');
+  assert.ok(logs.some(l => l.code === 'df.joinFailed'));
+  assert.equal(svc.snapshot().accounts[0].inSlot, null);
+  assert.equal(svc.snapshot().rooms.length, 0);
+  world.slots[0].users = [{ userId: 'u1', teamName: 'Trophy4' }];
+  await svc._readSlots();
+  assert.deepEqual(svc.snapshot().accounts[0].joinable, []);
+  assert.equal(svc.snapshot().accounts[0].inSlot, 8);
+  svc.unwatch(); svc.shutdown();
+});
+
+test('drafted players put on the market leave the list; an emptied account is dropped', async () => {
+  const createSocket = () => {
+    const s = new EventEmitter(); s.off = s.removeListener; s.close = () => {}; s.connected = true;
+    const local = EventEmitter.prototype.emit.bind(s);
+    s.emit = (event, p) => {
+      if (event === 'register') setTimeout(() => local('registrationSuccess', {}), 1);
+      if (event === 'market:sellPlayer') setTimeout(() => local('market:sellResult', p.playerId === 'bad' ? { success: false, message: 'Salary cap' } : { success: true }), 1);
+      return true;
+    };
+    setTimeout(() => local('connect'), 1);
+    return s;
+  };
+  const mem = { d: { drafted: { a1: [{ id: 'p1', name: 'Marcus Bagley' }, { id: 'bad', name: 'Kept' }], a2: [{ id: 'p2', name: 'Scoot Henderson' }], a3: [{ id: 'old', name: 'Listed before', listed: true }] } } };
+  const svc = new DraftService({
+    store: { getAccounts: () => [{ id: 'a1', name: 'Trophy5' }, { id: 'a2', name: 'Trophy4' }], getAccountProfile: () => ({ accounts: {} }), getDraftData: () => mem.d, saveDraftData: v => { mem.d = v; } },
+    activity: { add() {} }, onChanged() {}, sessions: { get: async () => ({ userId: 'u1', cookieHeader: 'c' }) }, createSocket
+  });
+  assert.equal(svc._drafted().a3, undefined, 'rows listed earlier are gone');
+  await svc.listPlayers('a1', [{ id: 'p1', price: 20, currency: 'APK' }, { id: 'bad', price: 20, currency: 'APK' }]);
+  assert.deepEqual(svc._drafted().a1.map(p => p.id), ['bad'], 'only the listed one left the list');
+  await svc.listPlayers('a2', [{ id: 'p2', price: 20, currency: 'APK' }]);
+  assert.equal(svc._drafted().a2, undefined, 'all listed: the account card disappears');
 });

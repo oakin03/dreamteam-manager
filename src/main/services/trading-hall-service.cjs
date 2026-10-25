@@ -82,6 +82,8 @@ class TradingHallService {
     const keep = this.rows.filter(r => !(ids.has(r.playerId) && r.currency === currency && r.price <= cutoff));
     const seen = new Set(keep.map(r => r.id));
     this.rows = [...keep, ...fresh.filter(r => !seen.has(r.id))].sort((a, b) => a.price - b.price);
+    // The listing counter at the top follows the rows Auto Buy brought in.
+    this.runtime = { ...this.runtime, count: this.rows.length, mergedAt: new Date().toISOString() };
     this.onChanged?.();
   }
 

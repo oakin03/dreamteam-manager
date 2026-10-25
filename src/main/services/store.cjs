@@ -52,8 +52,14 @@ class AppStore {
       playersData: path.join(baseDir, 'players-data.json'),
       draftData: path.join(baseDir, 'draft.json'),
       pvpReport: path.join(baseDir, 'pvp-report.json'),
+      goUpReport: path.join(baseDir, 'goup-report.json'),
+      quizBank: path.join(baseDir, 'quiz-bank.json'),
+      quizReport: path.join(baseDir, 'quiz-report.json'),
+      cheerReport: path.join(baseDir, 'cheer-report.json'),
+      chatReport: path.join(baseDir, 'chat-report.json'),
       buyData: path.join(baseDir, 'buy.json'),
       towerReport: path.join(baseDir, 'tower-report.json'),
+      synthesisData: path.join(baseDir, 'synthesis.json'),
       playerMarketData: path.join(baseDir, 'player-market.json'),
       playerMarketAccount: path.join(
         baseDir,
@@ -84,7 +90,11 @@ class AppStore {
     if (!this.cache.has(key)) this.cache.set(key, readJson(this.files[key], fallback));
     return this.cache.get(key);
   }
+  // Factory reset: after the files are deleted nothing may be written back.
+  freeze() { this.frozen = true; if (this.flushTimer) clearTimeout(this.flushTimer); this.flushTimer = null; this.dirty.clear(); }
+
   _save(key, value) {
+    if (this.frozen) return;
     writeJsonAtomic(this.files[key], value);
     this.cache.set(key, value);
     this.revisions.set(key, (this.revisions.get(key) || 0) + 1);
@@ -94,6 +104,7 @@ class AppStore {
   // Frequent writers (the activity log) update the cache and revision at
   // once and reach the disk in batches; flush() writes whatever is pending.
   _saveDeferred(key, value, delayMs = 400) {
+    if (this.frozen) return;
     this.cache.set(key, value);
     this.revisions.set(key, (this.revisions.get(key) || 0) + 1);
     this.dirty.add(key);
@@ -104,6 +115,7 @@ class AppStore {
   }
 
   flush() {
+    if (this.frozen) return;
     if (this.flushTimer) clearTimeout(this.flushTimer);
     this.flushTimer = null;
     for (const key of this.dirty) writeJsonAtomic(this.files[key], this.cache.get(key));
@@ -161,12 +173,24 @@ class AppStore {
   getAutoTrade2() { return this._get('autoTrade2', null); }
   getPlayersData() { return this._get('playersData', null); }
   savePlayersData(v) { this._save('playersData', v); }
+  getSynthesisData() { return this._get('synthesisData', null); }
+  saveSynthesisData(v) { this._save('synthesisData', v); }
   getTowerReport() { return this._get('towerReport', null); }
   saveTowerReport(v) { this._save('towerReport', v); }
   getBuyData() { return this._get('buyData', null); }
   saveBuyData(v) { this._saveDeferred('buyData', v); }
   getPvpReport() { return this._get('pvpReport', null); }
   savePvpReport(v) { this._save('pvpReport', v); }
+  getGoUpReport() { return this._get('goUpReport', null); }
+  saveGoUpReport(v) { this._save('goUpReport', v); }
+  getQuizBank() { return this._get('quizBank', null); }
+  saveQuizBank(v) { this._save('quizBank', v); }
+  getQuizReport() { return this._get('quizReport', null); }
+  saveQuizReport(v) { this._save('quizReport', v); }
+  getCheerReport() { return this._get('cheerReport', null); }
+  saveCheerReport(v) { this._save('cheerReport', v); }
+  getChatReport() { return this._get('chatReport', null); }
+  saveChatReport(v) { this._save('chatReport', v); }
   getDraftData() { return this._get('draftData', null); }
   saveDraftData(v) { this._save('draftData', v); }
   // Written often while a run moves players; batched like the activity log.

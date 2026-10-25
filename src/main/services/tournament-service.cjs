@@ -68,19 +68,38 @@ function trTime(iso) {
   return new Date(iso).toLocaleString('tr-TR', { timeZone: 'Europe/Istanbul', weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
 }
 
+// The game's startsAt is stale for some types (seen 2026-10-25: Materials on Wednesday,
+// Stone on Friday, Star on Sunday, Ticket on Saturday). The real week, at 15:00 TR:
+// Mon APK · Tue Materials · Wed Stone · Thu Star · Fri Exclusive · Sat TK · Sun Ticket.
+const WEEKDAY_BY_TYPE = { APK_MATCH: 1, MATERIALS_MATCH: 2, STONE_MATCH: 3, STAR_MATCH: 4, EXCLUSIVE_MATCH: 5, TK_MATCH: 6, TICKET_MATCH: 0 };
+const TR_OFFSET_MS = 3 * 3600 * 1000;
+// Next 15:00 TR on that weekday (today while today's tournament is still on).
+function startFor(type, status, now = Date.now()) {
+  const day = WEEKDAY_BY_TYPE[type];
+  if (day == null) return null;
+  const tr = new Date(now + TR_OFFSET_MS);
+  let start = Date.UTC(tr.getUTCFullYear(), tr.getUTCMonth(), tr.getUTCDate(), 15, 0) - TR_OFFSET_MS;
+  let add = (day - tr.getUTCDay() + 7) % 7;
+  if (add === 0 && status === 'REGISTRATION' && now >= start) add = 7;
+  start += add * 24 * 3600 * 1000;
+  return new Date(start).toISOString();
+}
+// "APK MATCH - Rising Star" → "APK MATCH" (the level band has its own column).
+const cleanName = name => String(name || '').replace(/\s*-\s*(Rookie|Rising Star|All-Star|All Star|Legend|Elite(?: II)?)\s*$/i, '').trim();
+
 function normalizeEvent(raw) {
   const registrations = Array.isArray(raw?.registrations) ? raw.registrations.map(r => r?.userId).filter(Boolean) : [];
   const count = Number(raw?._count?.registrations ?? registrations.length);
   return {
     id: raw.id,
-    name: String(raw.name || raw.type || 'Tournament'),
+    name: cleanName(raw.name || raw.type || 'Tournament') || 'Tournament',
     type: raw.type || null,
     status: raw.status || null,
     minLevel: Number(raw.minLevel),
     maxLevel: Number(raw.maxLevel),
     maxPlayers: Number(raw.maxPlayers || 0),
     count,
-    startsAt: raw.startsAt || null,
+    startsAt: startFor(raw.type, raw.status) || raw.startsAt || null,
     userIds: new Set(registrations)
   };
 }
@@ -486,4 +505,4 @@ class TournamentService {
   async shutdown() { await this.stop(); }
 }
 
-module.exports = { TournamentService, planAccount, normalizeEvent, trTime };
+module.exports = { startFor, cleanName,  TournamentService, planAccount, normalizeEvent, trTime };

@@ -15,6 +15,7 @@ contextBridge.exposeInMainWorld('dreamteam', {
   buy: {
     buy: (accountId, ticket) => ipcRenderer.invoke('buy:buy', { accountId, ticket }),
     sell: (entryId, price, currency) => ipcRenderer.invoke('buy:sell', { entryId, price, currency }),
+    cheapest: (query) => ipcRenderer.invoke('buy:cheapest', query),
     removeBought: (ids) => ipcRenderer.invoke('buy:remove-bought', ids),
     addWatch: (players) => ipcRenderer.invoke('buy:add-watch', players),
     updateWatch: (id, patch) => ipcRenderer.invoke('buy:update-watch', { id, patch }),
@@ -23,9 +24,46 @@ contextBridge.exposeInMainWorld('dreamteam', {
     startAuto: (options) => ipcRenderer.invoke('buy:start-auto', options),
     stopAuto: () => ipcRenderer.invoke('buy:stop-auto')
   },
+  activityArchive: {
+    days: () => ipcRenderer.invoke('activity:days'),
+    day: (day) => ipcRenderer.invoke('activity:day', day),
+    search: (text) => ipcRenderer.invoke('activity:search', text),
+    openFolder: () => ipcRenderer.invoke('activity:open-folder'),
+    exportReport: () => ipcRenderer.invoke('activity:export'),
+    summary: (day) => ipcRenderer.invoke('summary:day', day)
+  },
+  health: {
+    refresh: () => ipcRenderer.invoke('health:refresh')
+  },
+  app: {
+    factoryReset: (options) => ipcRenderer.invoke('app:factory-reset', options),
+    pauseAll: () => ipcRenderer.invoke('app:pause-all'),
+    resumeAll: () => ipcRenderer.invoke('app:resume-all')
+  },
+  synthesis: {
+    start: (options) => ipcRenderer.invoke('synthesis:start', options),
+    stop: () => ipcRenderer.invoke('synthesis:stop')
+  },
   tower: {
     start: (accountIds) => ipcRenderer.invoke('tower:start', accountIds),
     stop: (accountIds) => ipcRenderer.invoke('tower:stop', accountIds)
+  },
+  goup: {
+    start: (accountIds, options = {}) => ipcRenderer.invoke('goup:start', { accountIds, ...options }),
+    stop: () => ipcRenderer.invoke('goup:stop'),
+    status: (accountIds) => ipcRenderer.invoke('goup:status', accountIds)
+  },
+  quiz: {
+    start: (accountIds) => ipcRenderer.invoke('quiz:start', accountIds),
+    stop: () => ipcRenderer.invoke('quiz:stop'),
+    answer: (accountId, letter) => ipcRenderer.invoke('quiz:answer', { accountId, letter })
+  },
+  cheer: {
+    send: (fromIds, targetId) => ipcRenderer.invoke('cheer:send', { fromIds, targetId })
+  },
+  chat: {
+    start: (config) => ipcRenderer.invoke('chat:start', config),
+    stop: () => ipcRenderer.invoke('chat:stop')
   },
   pvp: {
     start: (accountIds) => ipcRenderer.invoke('pvp:start', accountIds),

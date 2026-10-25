@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import SortTable from './SortTable';
 
 const api = window.dreamteam;
 // Orders as the game shows them: rarity low → high in Craft / Convert / materials,
@@ -34,7 +35,7 @@ const TEXT = {
     craftGear: 'Ekipman üret', craftMaterial: 'Materyal yükselt', count: 'Adet', craft: 'Üret', needs: 'Gerekenler', have: 'var', exclusive: 'Oyuncuya özel',
     pickItem: 'Ekipman seç', current: 'Şu an', successRate: 'Başarı', oneTry: '1 kez bas', untilLevel: '+{level} olana kadar bas', target: 'Hedef',
     enchantHint: 'Sadece Epic, Legendary ve Mythic ekipman. Her deneme 1 Scroll of Enhancement harcar; değerler rastgele değişir.', noRecipes: 'Bu tür ve nadirlikte tarif yok.', doEnchant: 'Enchant', lastEnchant: 'Son sonuç: %{pct} · ATK {off} · DEF {def}',
-    enhanceHint: 'Her deneme ekipmanın nadirliğindeki Refine Stone\'u harcar. Başarısız deneme seviyeyi düşürmez.', eventRewards: 'Etkinlik ödülü alınan basma: {count}',
+    enhanceHint: 'Her deneme ekipmanın nadirliğindeki Refine Stone\'u harcar. Başarısız deneme seviyeyi düşürmez.', reportTitle: 'Son basma raporu', reportLine: '+{from} → +{level} · {tries} deneme · {fails} başarısız', reportNoStone: '{rarity} Refine Stone bitti; basma burada durdu. Taş ekleyince kaldığın yerden devam edebilirsin.', reportOk: 'Hedef seviyeye ulaşıldı.', eventRewards: 'Etkinlik ödülü alınan basma: {count}',
     refineHint: 'Refine Ore harcar. Yüksek seviyelerde başarısız olursa seviye düşebilir.', nextRefine: 'Sonraki: Refine {level} · başarı %{rate} · {cost} Ore · düşme şansı %{down}', doRefine: 'Refine',
     setsDone: 'Tamamlanan', setsOpen: 'Devam eden', setsReady: 'Teslime hazır', search: 'Ara', bonus: 'Bonus', status: 'Durum', register: 'Teslim et', prepare: 'Hazırla',
     complete: 'Tamamlandı', ready: '{count} parça teslime hazır', open: '{done}/{total} teslim edildi',
@@ -52,7 +53,7 @@ const TEXT = {
     craftGear: 'Craft equipment', craftMaterial: 'Upgrade materials', count: 'Count', craft: 'Craft', needs: 'Needs', have: 'owned', exclusive: 'Player exclusive',
     pickItem: 'Select equipment', current: 'Now', successRate: 'Success', oneTry: 'Enhance once', untilLevel: 'Enhance until +{level}', target: 'Target',
     enchantHint: 'Epic, Legendary and Mythic gear only. Each try uses 1 Scroll of Enhancement; the values change randomly.', noRecipes: 'No recipes for this type and rarity.', doEnchant: 'Enchant', lastEnchant: 'Last result: {pct}% · ATK {off} · DEF {def}',
-    enhanceHint: 'Each try uses a Refine Stone of the item\'s rarity. A failed try keeps the level.', eventRewards: 'Tries with an event reward: {count}',
+    enhanceHint: 'Each try uses a Refine Stone of the item\'s rarity. A failed try keeps the level.', reportTitle: 'Last enhance report', reportLine: '+{from} → +{level} · {tries} tries · {fails} failed', reportNoStone: '{rarity} Refine Stone ran out; enhancing stopped here. Add stones to continue from this level.', reportOk: 'Target level reached.', eventRewards: 'Tries with an event reward: {count}',
     refineHint: 'Uses Refine Ore. At high levels a failure can lower the level.', nextRefine: 'Next: Refine {level} · {rate}% success · {cost} Ore · {down}% downgrade', doRefine: 'Refine',
     setsDone: 'Completed', setsOpen: 'In progress', setsReady: 'Ready to register', search: 'Search', bonus: 'Bonus', status: 'Status', register: 'Register', prepare: 'Prepare',
     complete: 'Completed', ready: '{count} piece(s) ready', open: '{done}/{total} registered',
@@ -138,7 +139,7 @@ export default function EquipmentPage({ state, t, toast, msgText }) {
         {tab === 'convert' && <ConvertTab m={m} x={x} busy={busy} run={run} />}
         {tab === 'craft' && <CraftTab recipes={recipes} m={m} gear={gear} x={x} busy={busy} run={run} />}
         {tab === 'enchant' && <EnchantTab gear={gear} m={m} x={x} busy={busy} run={run} selected={selected} setSelected={setSelected} last={eq.lastResult} />}
-        {tab === 'enhance' && <EnhanceTab gear={gear} m={m} x={x} busy={busy} run={run} selected={selected} setSelected={setSelected} eventRewards={eq.eventRewards} />}
+        {tab === 'enhance' && <EnhanceTab gear={gear} m={m} x={x} busy={busy} run={run} selected={selected} setSelected={setSelected} eventRewards={eq.eventRewards} last={eq.lastResult} />}
         {tab === 'refine' && <RefineTab gear={gear} m={m} x={x} busy={busy} run={run} selected={selected} setSelected={setSelected} />}
         {tab === 'collections' && <CollectionsTab sets={eq.collections || []} x={x} busy={busy} run={run} />}
       </>}
@@ -157,20 +158,20 @@ function GearTab({ gear, x, onSelect, selected }) {
       <select value={f.equipped} onChange={e => setF({ ...f, equipped: e.target.value })}><option value="">{x.all}</option><option value="yes">{x.equipped}</option><option value="no">{x.notEquipped}</option></select>
       <span className="eq-count">{rows.length} / {gear.length}</span>
     </div>
-    <div className="panel table-panel"><table><thead><tr><th>{x.name}</th><th>{x.rarity}</th><th>{x.type}</th><th>{x.level}</th><th>{x.refine}</th><th>{x.enchant}</th><th>{x.equippedBy}</th></tr></thead>
+    <div className="panel table-panel"><SortTable><thead><tr><th>{x.name}</th><th>{x.rarity}</th><th>{x.type}</th><th>{x.level}</th><th>{x.refine}</th><th>{x.enchant}</th><th>{x.equippedBy}</th></tr></thead>
       <tbody>{rows.map(g => <tr key={g.id} className={selected === g.id ? 'selected-row-soft' : ''} onClick={() => onSelect(g.id)}>
         <td><span className="eq-name"><Dot rarity={g.rarity} /><b>{g.name}</b></span></td><td><span className={`eq-rarity r-${g.rarity.toLowerCase()}`}>{rarityName(g.rarity)}</span></td><td>{typeName(g.type)}</td>
         <td><b>+{g.level}</b></td><td>{g.refine}</td><td>{enchantText(g)}</td><td>{g.equippedBy ? <span className="pill ok"><i />{g.equippedBy}</span> : <span className="muted-text">{x.inBag}</span>}</td>
-      </tr>)}</tbody></table></div>
+      </tr>)}</tbody></SortTable></div>
   </>;
 }
 
 function MaterialsTab({ m, x }) {
   return <>
     <div className="eq-cards"><div className="eq-card"><span>{x.ore}</span><b>{num(m.ore)}</b></div><div className="eq-card"><span>{x.scroll}</span><b>{num(m.scroll)}</b></div></div>
-    <div className="panel table-panel"><table><thead><tr><th>{x.rarity}</th><th>{x.fabric}</th><th>{x.stone}</th></tr></thead>
-      <tbody>{RARITIES.map(r => <tr key={r}><td><span className="eq-name"><Dot rarity={r} /><span className={`eq-rarity r-${r.toLowerCase()}`}>{rarityName(r)}</span></span></td><td>{num(m.fabric[r] || 0)}</td><td>{num(m.stone[r] || 0)}</td></tr>)}</tbody></table></div>
-    {m.other?.length > 0 && <><h3 className="section-title">{x.other}</h3><div className="panel table-panel"><table><tbody>{m.other.map(o => <tr key={o.name}><td>{o.name}</td><td>{num(o.quantity)}</td></tr>)}</tbody></table></div></>}
+    <div className="panel table-panel"><SortTable><thead><tr><th>{x.rarity}</th><th>{x.fabric}</th><th>{x.stone}</th></tr></thead>
+      <tbody>{RARITIES.map(r => <tr key={r}><td><span className="eq-name"><Dot rarity={r} /><span className={`eq-rarity r-${r.toLowerCase()}`}>{rarityName(r)}</span></span></td><td>{num(m.fabric[r] || 0)}</td><td>{num(m.stone[r] || 0)}</td></tr>)}</tbody></SortTable></div>
+    {m.other?.length > 0 && <><h3 className="section-title">{x.other}</h3><div className="panel table-panel"><SortTable><tbody>{m.other.map(o => <tr key={o.name}><td>{o.name}</td><td>{num(o.quantity)}</td></tr>)}</tbody></SortTable></div></>}
   </>;
 }
 
@@ -219,7 +220,7 @@ function CraftTab({ recipes, m, gear, x, busy, run }) {
       <div className="eq-tabrow"><span>{x.rarity}</span>{RARITIES.map(v => <button key={v} className={`${rarity === v ? 'active' : ''} t-${v.toLowerCase()}`} onClick={() => { setRarity(v); setSearch(''); }}><Dot rarity={v} />{rarityName(v)}</button>)}</div>
       {all > 8 && <div className="eq-row"><label><span>{x.search}</span><input value={search} onChange={e => setSearch(e.target.value)} /></label><span className="eq-count">{list.length} / {all}</span></div>}
     </div>
-    <div className="panel table-panel"><table><tbody>
+    <div className="panel table-panel"><SortTable><tbody>
       {!list.length && <tr><td className="muted-text">{x.noRecipes}</td></tr>}
       {list.map(r => {
         const c = Math.max(1, Math.floor(Number(counts[r.id]) || 1));
@@ -230,7 +231,7 @@ function CraftTab({ recipes, m, gear, x, busy, run }) {
           <td className="actions"><input className="eq-small" type="number" min="1" value={counts[r.id] ?? 1} onChange={e => setCounts({ ...counts, [r.id]: e.target.value })} /> <button className="btn ghost" disabled={max < 1} onClick={() => setCounts({ ...counts, [r.id]: Math.max(1, max) })}>{x.max}</button> <button className="btn primary" disabled={busy || c > max} onClick={() => run(() => window.dreamteam.equipment.craft(r.id, c))}>{x.craft}</button></td>
         </tr>;
       })}
-    </tbody></table></div>
+    </tbody></SortTable></div>
   </>;
 }
 
@@ -245,7 +246,7 @@ function EnchantTab({ gear, m, x, busy, run, selected, setSelected, last }) {
   </div>;
 }
 
-function EnhanceTab({ gear, m, x, busy, run, selected, setSelected, eventRewards }) {
+function EnhanceTab({ gear, m, x, busy, run, selected, setSelected, eventRewards, last }) {
   const g = gear.find(i => i.id === selected);
   const [rate, setRate] = useState(null);
   const [target, setTarget] = useState('');
@@ -262,6 +263,11 @@ function EnhanceTab({ gear, m, x, busy, run, selected, setSelected, eventRewards
         <button className="btn success" disabled={busy || rate === 0} onClick={() => run(() => window.dreamteam.equipment.enhance(g.id, goal))}>{fill(x.untilLevel, { level: goal })}</button>
       </div>
     </>}
+    {last?.kind === 'enhance' && <div className={`eq-report ${last.noStone ? 'warn' : last.ok ? 'ok' : ''}`}>
+      <b>{x.reportTitle}{last.name ? ` · ${last.name}` : ''}</b>
+      <span>{fill(x.reportLine, { from: last.from, level: last.level, tries: last.tries, fails: last.fails })}</span>
+      {last.noStone ? <span>{fill(x.reportNoStone, { rarity: rarityName(last.rarity || '') })}</span> : last.ok ? <span>{x.reportOk}</span> : null}
+    </div>}
   </div>;
 }
 
@@ -292,13 +298,13 @@ function CollectionsTab({ sets, x, busy, run }) {
       <input placeholder={x.search} value={search} onChange={e => setSearch(e.target.value)} />
       <span className="eq-count">{rows.length}</span>
     </div>
-    <div className="panel table-panel"><table><thead><tr><th>{x.name}</th><th>{x.bonus}</th><th>{x.tabGear}</th><th>{x.status}</th><th></th></tr></thead>
+    <div className="panel table-panel"><SortTable><thead><tr><th>{x.name}</th><th>{x.bonus}</th><th>{x.tabGear}</th><th>{x.status}</th><th></th></tr></thead>
       <tbody>{rows.map(s => <tr key={s.id}>
         <td><b>{s.name}</b></td><td className="eq-bonus">{bonusText(s.bonus)}</td>
         <td><div className="eq-set-items">{[...s.items].sort((a, b) => SLOT_ORDER.indexOf(a.slot) - SLOT_ORDER.indexOf(b.slot)).map(i => { const done = s.registered.includes(i.slot); return <button type="button" key={i.slot} disabled={done || busy} title={done ? '' : x.pieceHint} onClick={() => openPlan(s.id, i.slot)} className={`eq-chip ${done ? 'done' : s.available.includes(i.slot) ? 'ready' : ''}`}><Dot rarity={i.rarity} />{i.name}{i.minLevel ? ` +${i.minLevel}` : ''}</button>; })}</div></td>
         <td>{s.completed ? <span className="pill ok"><i />{x.complete}</span> : s.available.length ? <span className="pill warn"><i />{fill(x.ready, { count: s.available.length })}</span> : <span className="pill muted"><i />{fill(x.open, { done: s.registered.length, total: s.items.length })}</span>}</td>
         <td className="actions">{!s.completed && <>{s.available.length > 0 && <button className="btn ghost" disabled={busy} onClick={() => run(() => window.dreamteam.equipment.register(s.id))}>{x.register}</button>}<button className="btn primary" disabled={busy} onClick={() => openPlan(s.id)}>{x.prepare}</button></>}</td>
-      </tr>)}</tbody></table></div>
+      </tr>)}</tbody></SortTable></div>
     {plan && <PlanModal plan={plan} x={x} onClose={() => setPlan(null)} onRun={() => { const { id, slot } = plan; setPlan(null); run(() => window.dreamteam.equipment.prepare(id, slot)); }} />}
   </>;
 }

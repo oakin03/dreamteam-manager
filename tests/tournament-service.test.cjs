@@ -229,3 +229,18 @@ test('the run report says who registered and why the others did not, and is save
   // Every Tournament log carries a code so the page can show it in the selected language.
   assert.ok(logs.filter(l => l.taskName === 'Tournament').every(l => l.code), JSON.stringify(logs.filter(l => !l.code).map(l => l.message)));
 });
+
+test('tournament week and names: fixed weekday per type at 15:00 TR, level band left out of the name', () => {
+  const { startFor, cleanName } = require('../src/main/services/tournament-service.cjs');
+  const sunMorning = Date.parse('2026-10-25T08:00:00Z'); // Sunday 11:00 TR
+  const day = iso => new Date(iso).toLocaleDateString('en-GB', { timeZone: 'Europe/Istanbul', weekday: 'long' });
+  assert.equal(day(startFor('MATERIALS_MATCH', 'REGISTRATION', sunMorning)), 'Tuesday');
+  assert.equal(day(startFor('STONE_MATCH', 'REGISTRATION', sunMorning)), 'Wednesday');
+  assert.equal(day(startFor('STAR_MATCH', 'REGISTRATION', sunMorning)), 'Thursday');
+  assert.equal(day(startFor('TICKET_MATCH', 'REGISTRATION', sunMorning)), 'Sunday');
+  assert.equal(startFor('TICKET_MATCH', 'REGISTRATION', sunMorning), '2026-10-25T12:00:00.000Z', 'today before 15:00');
+  assert.equal(startFor('TICKET_MATCH', 'REGISTRATION', Date.parse('2026-10-25T13:00:00Z')), '2026-11-01T12:00:00.000Z', 'after 15:00 → next week');
+  assert.equal(startFor('TICKET_MATCH', 'ONGOING', Date.parse('2026-10-25T12:30:00Z')), '2026-10-25T12:00:00.000Z', 'the running one is today');
+  assert.equal(cleanName('APK MATCH - Rising Star'), 'APK MATCH');
+  assert.equal(cleanName('EXCLUSIVE MATCH - Elite II'), 'EXCLUSIVE MATCH');
+});

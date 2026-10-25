@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import SortTable from './SortTable';
 
 const api = window.dreamteam;
 const num = v => v == null ? '—' : Number(v).toLocaleString();
@@ -47,12 +48,12 @@ export default function DraftPage({ state, t, toast }) {
     <div className="panel df-warning">{x.warning}</div>
 
     <h3 className="section-title">{x.accounts}</h3>
-    <div className="panel table-panel"><table><thead><tr><th>{x.account}</th><th>{x.level}</th><th>{x.attempts}</th><th>{x.status}</th><th>{x.rooms}</th></tr></thead>
+    <div className="panel table-panel"><SortTable><thead><tr><th>{x.account}</th><th>{x.level}</th><th>{x.attempts}</th><th>{x.status}</th><th>{x.rooms}</th></tr></thead>
       <tbody>{(d.accounts || []).map(a => <tr key={a.id}>
         <td><b>{a.name}</b></td><td>{a.level ?? '—'}</td><td>{a.attempts ?? '—'}</td>
         <td>{a.inSlot != null ? <span className="pill warn"><i />{fill(a.inSlotFromGame ? x.inRoomGame : x.inRoom, { slot: a.inSlot })}</span> : <span className="pill muted"><i />{x.idle}</span>}</td>
         <td><div className="df-joins">{a.joinable?.length ? a.joinable.map(n => { const s = slotInfo(n); const key = `${a.id}:${n}`; return <button key={n} className="btn primary small" disabled={busy[key]} onClick={() => run(key, () => api.draft.join(a.id, n))}>{busy[key] ? x.joining : fill(x.join, { slot: n, from: s?.range?.[0], to: s?.range?.[1], users: s?.users ?? 0 })}</button>; }) : <span className="muted-text">{x.noRoom}</span>}</div></td>
-      </tr>)}</tbody></table></div>
+      </tr>)}</tbody></SortTable></div>
 
     <h3 className="section-title">{x.hall}</h3>
     <div className="df-hall">{(d.slots || []).filter(s => s.range).map(s => <div key={s.slotNumber} className={`df-slot ${s.hasStarted ? 'live' : s.cooldownRemaining > 0 ? 'cool' : 'open'}`}>
@@ -94,7 +95,7 @@ function Room({ room, x, players, roles, busy, run, now }) {
       {room.turn && !room.ended && <span className={`df-turn ${ourTurn ? 'mine' : ''}`}>{fill(ourTurn ? x.yourTurn : x.turnOf, { name: ourTurn ? ourTurn.name : nameOf(room.turn.userId), s: Math.max(0, Math.ceil((turnLeft ?? 0) / 1000)) })}</span>}
     </div>
     <div className="df-users">{room.users.map(u => <span key={u.userId} className={`df-user ${u.signed ? 'done' : ''} ${room.ours.some(o => o.userId === u.userId) ? 'ours' : ''} ${room.turn?.userId === u.userId ? 'turn' : ''}`}>{u.teamName}{u.signed ? ' ✓' : ''}</span>)}</div>
-    <div className="table-panel df-pool"><table><thead><tr><th>{x.player}</th><th>{x.pos}</th><th>{x.rating}</th><th className="sortable" onClick={() => ps.toggle('price')}>{x.value}{ps.arrow('price')}</th><th title={x.salaryHint}>{x.salary}</th><th>{x.base}</th><th>{x.change}</th><th className="sortable" onClick={() => ps.toggle('role')}>{x.roles}{ps.arrow('role')}</th><th>{x.card}</th><th></th></tr></thead>
+    <div className="table-panel df-pool"><SortTable><thead><tr><th>{x.player}</th><th>{x.pos}</th><th>{x.rating}</th><th className="sortable" onClick={() => ps.toggle('price')}>{x.value}{ps.arrow('price')}</th><th title={x.salaryHint}>{x.salary}</th><th>{x.base}</th><th>{x.change}</th><th className="sortable" onClick={() => ps.toggle('role')}>{x.roles}{ps.arrow('role')}</th><th>{x.card}</th><th></th></tr></thead>
       <tbody>{ps.order(room.players).map(p => { const info = players.get(p.id); const isBase = info?.isBase; const rl = (info?.roleIds || []).map(id => roles.find(r => r.id === id)).filter(Boolean);
         return <tr key={p.id} className={p.signed ? 'df-taken' : ''}>
           <td><b>{p.visualName || p.name}</b></td><td>{p.position}</td><td><span className="grade-badge">{p.rating}</span></td><td><b>{num(p.baseSalary)}</b></td><td title={x.salaryHint}>{num(p.baseSalary)}</td><td>{num(p.newBaseSalary)}{isAtBase(p.baseSalary, p.newBaseSalary) && <span className="base-badge">BASE</span>}</td>
@@ -103,7 +104,7 @@ function Room({ room, x, players, roles, busy, run, now }) {
           <td>{info?.card ? (info.card.noTeam && !info.card.customTeam ? x.noTeam : fill(x.stars, { s: info.card.stars ?? 0 })) + ' · ' + fill(x.cards, { n: info.card.cardCount }) : '—'}</td>
           <td className="actions">{p.signed ? <span className="pill muted"><i />{x.picked}</span> : room.ours.map(o => { const key = `pick:${o.id}:${p.id}`; const mine = room.turn?.userId === o.userId && !room.ended;
             return <button key={o.id} className="btn success small" disabled={!mine || busy[key] || o.picking} title={mine ? '' : x.waitingTurn} onClick={() => run(key, () => api.draft.pick(o.id, p.id))}>{busy[key] ? x.picking : fill(x.pick, { name: o.name })}</button>; })}</td>
-        </tr>; })}</tbody></table></div>
+        </tr>; })}</tbody></SortTable></div>
   </div>;
 }
 
@@ -124,12 +125,13 @@ function Drafted({ d, x, players, roles, toast }) {
     try { await api.draft.listPlayers(accountId, items); } catch (e) { toast(e.message, 'error'); } finally { setBusy(null); }
   };
   return <><h3 className="section-title">{x.drafted} <small>{x.draftedHint}</small></h3>
-    {entries.map(([accountId, rows]) => <div key={accountId} className="panel table-panel at2-list">
+    {entries.map(([accountId, rows]) => <div key={accountId} className="panel table-panel at2-list df-drafted">
       <div className="at2-list-head"><b>{accName(accountId)}</b><div className="toolbar"><button className="btn ghost small" onClick={() => api.draft.clearDrafted(accountId)}>{x.clear}</button><button className="btn primary" disabled={busy === accountId} onClick={() => list(accountId, rows)}>{x.list}</button></div></div>
-      <table><thead><tr><th></th><th>{x.player}</th><th>{x.value}</th><th>{x.salary}</th><th>{x.base}</th><th></th></tr></thead><tbody>{rows.map(p => { const v = get(p); const base = p.base ?? players.get(p.id)?.base; return <tr key={p.id + p.at}>
+      <SortTable><thead><tr><th></th><th>{x.player}</th><th>{x.value}</th><th>{x.salary}</th><th>{x.base}</th><th>{x.roles}</th><th></th></tr></thead><tbody>{rows.map(p => { const v = get(p); const info = players.get(p.id); const base = p.base ?? info?.base; const rl = (info?.roleIds || []).map(id => roles.find(r => r.id === id)).filter(Boolean); return <tr key={p.id + p.at}>
         <td>{p.listed ? null : <input type="checkbox" checked={v.checked} onChange={e => edit(p.id, { checked: e.target.checked })} />}</td>
         <td><b>{p.name}</b> <span className="muted-text">{p.position} · {p.rating}</span>{isAtBase(p.salary, base) && <span className="base-badge">BASE</span>}</td><td>{num(p.value)}</td><td>{num(p.salary)}</td><td>{num(base)}</td>
+        <td><div className="pl-roles">{info?.isBase && <span className="role-badge pl-base-badge">{x.baseBadge}</span>}{rl.map(r => <span key={r.id} className="role-badge" style={{ backgroundColor: r.color, borderColor: r.color }}>{r.name}</span>)}{!info?.isBase && !rl.length && <span className="muted-text">—</span>}</div></td>
         <td>{p.listed ? <span className="pill ok"><i />{x.listed}</span> : <><input className="eq-small" type="number" min="1" value={v.price} onChange={e => edit(p.id, { price: e.target.value })} /> <select value={v.currency} onChange={e => edit(p.id, { currency: e.target.value })}><option>APK</option><option>TIX</option></select></>}</td>
-      </tr>; })}</tbody></table>
+      </tr>; })}</tbody></SortTable>
     </div>)}</>;
 }

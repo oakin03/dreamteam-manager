@@ -1,3 +1,5 @@
+import AccountHealthPanel from './AccountHealthPanel';
+import DailySummary from './DailySummary';
 import { useMemo } from 'react';
 
 const num = v => v == null || Number.isNaN(Number(v)) ? '—' : Number(v).toLocaleString();
@@ -25,7 +27,7 @@ const TEXT = {
 };
 const fill = (s, p = {}) => String(s).replace(/\{(\w+)\}/g, (_, k) => p[k] ?? '');
 
-export default function HomePage({ state, t, go, msgText }) {
+export default function HomePage({ state, t, go, msgText, toast = () => {} }) {
   const x = TEXT[t.lang] || TEXT.en;
   const profile = state.accountProfile || {};
   const accounts = state.accounts || [];
@@ -92,8 +94,10 @@ export default function HomePage({ state, t, go, msgText }) {
       <PlayerList title={x.atBase} rows={atBase.slice(0, 6)} go={go} more={atBase.length > 6 ? fill(x.more, { n: atBase.length - 6 }) : null} base />
     </div>}
 
+    <AccountHealthPanel state={state} t={t} toast={toast} />
+    <DailySummary t={t} />
     <h3 className="section-title">{x.alerts}</h3>
-    <div className="panel home-alerts">{alerts.length ? alerts.map(e => <div key={e.id} className={`home-alert ${e.level}`}><span>{new Date(e.at).toLocaleTimeString()}</span><b>{e.accountName || e.taskName || ''}</b><em>{e.code ? msgText(t, e.code, e.params || {}, e.message) : e.message}</em></div>) : <span className="muted-text">{x.noAlerts}</span>}</div>
+    <div className="panel home-alerts">{alerts.length ? alerts.map(e => <div key={e.id} className={`home-alert ${e.level}`}><span>{new Date(e.at).toLocaleTimeString()}</span><b>{e.accountName || e.taskName || ''}</b><em>{msgText(t, e.code, e.params || {}, e.message)}</em></div>) : <span className="muted-text">{x.noAlerts}</span>}</div>
   </div>;
 }
 

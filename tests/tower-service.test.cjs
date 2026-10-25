@@ -49,6 +49,7 @@ function fakeGame({ users, outcome, needsRegister = false }) {
       }
       setTimeout(() => cb(null, reply), 1);
     } });
+    if (st.__failConnects > 0) { st.__failConnects--; setTimeout(() => emitLocal('connect_error', new Error('websocket error')), 1); return s; }
     setTimeout(() => emitLocal('connect'), 1);
     return s;
   };
@@ -118,4 +119,22 @@ test('stop selected stops only that account', async () => {
   const rows = Object.fromEntries(report().rows.map(r => [r.name, r]));
   assert.equal(rows.Trophy3.status, 'stopped');
   assert.notEqual(rows.Trophy4.status, 'stopped');
+});
+
+test('a game outage: the account waits for the shared check, then plays on from the game floors', async () => {
+  const { GameHealth } = require('../src/main/services/game-health.cjs');
+  const game = fakeGame({ users: { 'u-a': { floors: { 'm-ch': 60, 'm-th': 61, 'm-ri': 61 } } }, outcome: () => true });
+  game.st.__failConnects = 1;
+  const logs = [];
+  let report = null;
+  const health = new GameHealth({ activity: { add: e => logs.push(e) }, createSocket: game.createSocket, probeMs: 20 });
+  const svc = new TowerService({
+    store: { getAccounts: () => [{ id: 'a', name: 'Trophy3' }], getTowerReport: () => report, saveTowerReport: r => { report = r; } },
+    activity: { add: e => logs.push(e) }, onChanged() {}, sessions: { get: async a => ({ userId: 'u-' + a.id, cookieHeader: 'session=' + a.id }) },
+    createSocket: game.createSocket, gameHealth: health, timing: { pollMs: 1, appearGraceMs: 50, cookieTryMs: 20 }
+  });
+  await svc.runAndWait(['a']);
+  assert.ok(logs.some(l => l.code === 'gh.down') && logs.some(l => l.code === 'gh.up'));
+  assert.equal(report.rows[0].status, 'done', 'finished the last floor after the outage');
+  health.shutdown();
 });

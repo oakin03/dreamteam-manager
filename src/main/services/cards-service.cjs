@@ -87,7 +87,7 @@ function namesMatch(a, b) {
 // Team and grade change in game; neither is a player identity. The player
 // portrait slug is shared by Cards, Scout and the Home roster. If it is
 // missing or has changed, only an unambiguous name match is safe.
-function resolvePlayer(players, subject, { requirePortrait = false } = {}) {
+function resolvePlayer(players, subject) {
   const pool = (players || []).filter(p => p.active !== false);
   const unique = matches => matches.length === 1 ? matches[0] : null;
   const explicit = subject?.playerId || subject?.externalId || subject?.gameId;
@@ -107,15 +107,11 @@ function resolvePlayer(players, subject, { requirePortrait = false } = {}) {
       if (exactMatches.length) return unique(exactMatches);
       return unique(imageMatches.filter(p=>namesMatch(p.name,subject.name)));
     }
-    // A Scout portrait absent from Cards is often an older player. Never
-    // transfer a role from a different portrait with the same abbreviated name.
-    if (requirePortrait) return null;
   }
   const exact = normalizeName(subject?.name);
   if (!exact) return null;
   const exactMatches = pool.filter(p => normalizeName(p.name) === exact);
   if (exactMatches.length) return unique(exactMatches);
-  if (requirePortrait) return null;
   return unique(pool.filter(p => namesMatch(p.name, subject.name)));
 }
 
@@ -580,12 +576,11 @@ class CardsService {
     }
   }
 
-  // Scout still reads agents from the screen (portrait + name). Cards keeps
-  // the portrait path only for this lookup; X players have their own portraits.
+  // Scout agents come from the socket with the game's player id; only that id matches.
   findForScout(agent) {
+    if (!agent?.playerId) return null;
     const snap = this.snapshot();
-    const active = snap.players.filter(p => p.active !== false && !p.noTeam);
-    const player = (agent?.playerId && active.find(p => p.playerId === agent.playerId)) || resolvePlayer(active, agent, { requirePortrait: true });
+    const player = snap.players.find(p => p.active !== false && !p.noTeam && p.playerId === agent.playerId);
     if (!player) return null;
     const team = snap.teams.find(t => t.team === player.team);
     const blocker = team?.blockers?.find(b => b.key === player.key);

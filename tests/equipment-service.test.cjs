@@ -199,7 +199,7 @@ test('an enhance answered on enhance:itemError (cooldown) is waited out, not a 2
   const { s } = service(game);
   await s.open('a1');
   const t0 = Date.now();
-  assert.deepEqual(await s.enhance('g4', 2), { level: 2, tries: 2, fails: 0 });
+  assert.deepEqual(await s.enhance('g4', 2), { level: 2, tries: 2, fails: 0, noStone: false });
   assert.equal(game.calls.filter(c => c.event === 'enhance:item').length, 3, 'one cooldown answer, retried');
   assert.ok(Date.now() - t0 < 5000);
 });

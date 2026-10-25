@@ -12,7 +12,7 @@ function ticket(id, status, { price = 20, mode = 'APK_TICKET', playerId = `p-${i
 // Fake /socket/ game server for one user. `opts` shape the replies.
 function fakeGame(tickets, opts = {}) {
   const calls = [];
-  const state = { tickets: [...tickets], roster: new Set(opts.roster || []), cooldownOnce: new Set(opts.cooldownOnce || []), dropAuthOnce: new Set(opts.dropAuthOnce || []), registers: 0 };
+  const state = { tickets: [...tickets], roster: new Set(opts.roster || []), cooldownOnce: new Set(opts.cooldownOnce || []), dropAuthOnce: new Set(opts.dropAuthOnce || []), kickOnce: new Set(opts.kickOnce || []), registers: 0 };
   const WRITES = new Set(['market:settleTicket', 'market:cancelPlayerListing', 'market:sellPlayer']);
   const createSocket = () => {
     const s = new EventEmitter();
@@ -25,6 +25,9 @@ function fakeGame(tickets, opts = {}) {
       calls.push({ event, payload });
       // Like the game: writes only work on a socket registered as the user.
       if (event === 'register') { s.registered = payload?.userId === USER; state.registers++; return reply('registrationSuccess'); }
+      // Another sign-in took the account over: this socket gets no reply any more.
+      if (WRITES.has(event) && state.kickOnce.has(event)) { state.kickOnce.delete(event); s.kicked = true; }
+      if (s.kicked) return true;
       if (WRITES.has(event) && state.dropAuthOnce.has(event)) { state.dropAuthOnce.delete(event); s.registered = false; }
       if (WRITES.has(event) && !s.registered) return reply(replyName(event), { success: false, type: 'player', message: 'Authentication required' });
       if (state.cooldownOnce.has(event)) { state.cooldownOnce.delete(event); return reply(replyName(event), { success: false, message: 'Please wait 1 seconds before trying again.', retryAfter: 1 }); }
@@ -68,7 +71,7 @@ function service(game) {
     store: { getAccounts: () => [account] }, activity: { add: e => logs.push(e) },
     accountProfile: { merge: (id, d) => merges.push([id, d]) }, onChanged: () => {},
     sessions: { get: async () => ({ userId: USER, cookieHeader: 'session=x' }) },
-    createSocket: game.createSocket, minRetryMs: 0
+    createSocket: game.createSocket, minRetryMs: 0, writeTimeoutMs: 80
   });
   return { s, logs, merges };
 }
@@ -234,4 +237,14 @@ test('listing kind: on sale, was on sale yesterday, or stock', () => {
   assert.equal(listingKind({ status: 'EXPIRED', createdAt: '2026-10-19T20:00:00Z' }, now), 'recent');
   assert.equal(listingKind({ status: 'EXPIRED', createdAt: '2026-10-19T16:09:00Z' }, now), 'stock');
   assert.equal(listingKind({ status: 'SOLD', createdAt: '2026-10-19T20:00:00Z' }, now), null);
+});
+
+test('a socket taken over by another sign-in (no reply) is reconnected and the sale repeated', async () => {
+  const game = fakeGame([ticket('e1', 'EXPIRED'), ticket('e2', 'EXPIRED')], { kickOnce: ['market:sellPlayer'] });
+  const { s, logs } = service(game);
+  await s.loadRelist(['a1']);
+  const snap = await s.relistPlayers([{ ticketId: 'e1', price: 30, currency: 'APK' }, { ticketId: 'e2', price: 30, currency: 'APK' }]);
+  assert.deepEqual(Object.values(snap.relist.lastRun).map(r => r.state), ['listed', 'listed']);
+  assert.ok(logs.some(l => l.code === 'mk.reconnected'));
+  assert.ok(!logs.some(l => l.code === 'mk.failed'));
 });

@@ -241,7 +241,19 @@ async function run(ctx, prepared) {
   const retryMs = Math.max(10, Number(ctx.config?.retrySeconds || 30)) * 1000;
   ctx.setState({ mode: prepared.mode, message: prepared.mode === 'socket' ? 'Socket mode' : 'Browser mode' });
 
+  const netError = error => /could not connect|websocket error|disconnect|timed out|transport|ECONN|ENOTFOUND|EAI_AGAIN|ETIMEDOUT/i.test(String(error?.message || error));
+  // While the game is unreachable every account waits for the one shared check
+  // (every 2 minutes) instead of reconnecting on its own every few seconds.
+  const waitForGame = async () => {
+    if (prepared.socket) { try { prepared.socket.disconnect(); } catch {} }
+    ctx.setState({ message: 'Waiting for the game' });
+    await ctx.gameHealth.waitUp();
+    if (prepared.socket) { try { prepared.socket.connect(); } catch {} }
+    ctx.log('info', 'The game is reachable again · Quick Play continues.');
+  };
+
   while (!ctx.signal.aborted) {
+    if (ctx.gameHealth?.isDown()) { await waitForGame(); continue; }
     let success = false;
     try {
       success = prepared.mode === 'socket'
@@ -249,6 +261,12 @@ async function run(ctx, prepared) {
         : await doBrowserAction(ctx, prepared);
     } catch (error) {
       if (error?.name === 'AbortError' || error?.fatal) throw error;
+      if (ctx.gameHealth && netError(error)) {
+        ctx.log('warning', `Game not reachable (${error.message}) · waiting, checked every 2 minutes with one connection.`);
+        ctx.gameHealth.reportDown(error);
+        await waitForGame();
+        continue;
+      }
       ctx.log('error', `Quick Play error: ${error.message}`);
     }
 

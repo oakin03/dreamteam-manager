@@ -1,4 +1,5 @@
 const { GameSocket } = require('./game-socket.cjs');
+const { isNetError } = require('./game-health.cjs');
 
 // Live Draft over the game's /draft-socket/. Room states and attempts are read
 // without logging in; joining and picking use the account's session cookie (no
@@ -9,9 +10,14 @@ const PATH = '/draft-socket/';
 const SLOT_LEVELS = { 3: [1, 20], 4: [1, 20], 5: [21, 30], 6: [21, 30], 7: [21, 30], 8: [31, 50], 9: [31, 50], 10: [51, 70], 11: [51, 70], 12: [71, 100] };
 const ROOM_SIZE = 10;
 const POLL_MS = 2000;
+const JOIN_WAIT_MS = 10000;
+const ATTEMPT_REREAD_MS = 2000;
 const PICK_WAIT_MS = 6000;
 const PICK_TRIES = 3;
 const PICK_RETRY_MS = 700;
+
+// Slot users may come as ids or as {userId, …} objects.
+const slotUserIds = s => (s?.users || []).map(u => (typeof u === 'string' ? u : u?.userId)).filter(Boolean);
 
 function levelRange(slot) { return SLOT_LEVELS[slot] || null; }
 
@@ -25,7 +31,8 @@ function joinableSlots(slots, level, { attempts = 0, busy = false } = {}) {
 }
 
 class DraftService {
-  constructor({ store, activity, sessions, accountProfile, onChanged, onAttention, createSocket, now = () => Date.now() }) {
+  constructor({ store, activity, sessions, accountProfile, onChanged, onAttention, createSocket, gameHealth = null, now = () => Date.now() }) {
+    this.gameHealth = gameHealth;
     this.store = store;
     this.activity = activity;
     this.sessions = sessions;
@@ -55,7 +62,16 @@ class DraftService {
     this.activity.add({ level, accountId, accountName: accountId ? this._name(accountId) : '', taskName: 'Draft', code, params, message });
   }
 
-  _drafted() { return this.store.getDraftData()?.drafted || {}; }
+  // Drafted players waiting to be listed. A player put on the market leaves the list, and an
+  // account whose list is empty is dropped (also cleans rows saved as listed earlier).
+  _drafted() {
+    const out = {};
+    for (const [id, rows] of Object.entries(this.store.getDraftData()?.drafted || {})) {
+      const left = (rows || []).filter(r => !r.listed);
+      if (left.length) out[id] = left;
+    }
+    return out;
+  }
   _saveDrafted(drafted) { this.store.saveDraftData({ ...(this.store.getDraftData() || {}), drafted }); }
 
   snapshot() {
@@ -65,7 +81,7 @@ class DraftService {
       const level = this._level(a.id);
       // Also in a room the user joined in the game itself: a new draft waits until it ends.
       const userId = this._userId(a.id);
-      const inGame = this.slots.find(s => (s.users || []).includes(userId))?.slotNumber ?? null;
+      const inGame = this.slots.find(s => slotUserIds(s).includes(userId))?.slotNumber ?? null;
       const inSlot = j?.slot ?? inGame;
       return {
         id: a.id, name: a.name, level, userId, attempts: att?.draftAttempts ?? null,
@@ -87,7 +103,11 @@ class DraftService {
     if (this.watchers === 1) {
       await this._refreshAttempts().catch(() => {});
       const tick = async () => {
-        try { await this._readSlots(); this.error = null; } catch (error) { this.error = error.message; }
+        // While the game is unreachable the 2 s polling pauses; the shared check probes instead.
+        if (this.gameHealth?.isDown()) { this.error = 'game unreachable'; }
+        else {
+          try { await this._readSlots(); this.error = null; } catch (error) { this.error = error.message; if (isNetError(error)) { try { this.anon?.close(); } catch {} this.anon = null; this.gameHealth?.reportDown('Draft', error); } }
+        }
         this.onChanged();
         if (this.watchers > 0 || this.joined.size) this.poll = setTimeout(tick, POLL_MS);
       };
@@ -121,7 +141,8 @@ class DraftService {
     if (Array.isArray(slots)) { this.slots = slots; this.slotsAt = new Date(this.now()).toISOString(); }
   }
 
-  // Attempts are always re-read from the game (they sometimes don't drop), never counted locally.
+  // Attempts are always re-read from the game, never counted locally: after joining, when
+  // the draft starts and when it ends.
   async _refreshAttempts(ids = this._accounts().map(a => a.id)) {
     const anon = await this._anon();
     for (const id of ids) {
@@ -140,25 +161,45 @@ class DraftService {
     await this._readSlots();
     await this._refreshAttempts([accountId]);
     const level = this._level(accountId);
-    const busy = this.slots.some(s => (s.users || []).includes(this._userId(accountId)));
+    const busy = this.slots.some(s => slotUserIds(s).includes(this._userId(accountId)));
     if (!joinableSlots(this.slots, level, { attempts: this.attempts[accountId]?.draftAttempts ?? 0, busy }).includes(Number(slotNumber))) throw new Error('This room cannot be joined by this account now.');
-    const session = await this.sessions.get(account, { owner: 'draft' });
-    const conn = await GameSocket.open({ createSocket: this.createSocket, path: PATH, cookie: session.cookieHeader });
-    const entry = { conn, slot: Number(slotNumber), userId: session.userId };
-    this.joined.set(accountId, entry);
-    this._listen(accountId, entry);
-    const joined = new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('The game did not confirm joining the room.')), 15000);
-      conn.socket.once('draftJoined', d => { clearTimeout(timer); resolve(d); });
-    });
-    conn.socket.emit('joinDraftSlot', { userId: session.userId, slotNumber: Number(slotNumber), draftType: 'CURRENT' });
-    try {
-      await joined;
-    } catch (error) {
+    // The game refuses a join on "draftError" (e.g. already in a draft, room full); a
+    // join that is not answered at all is retried once with a fresh login.
+    let error = null;
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      if (attempt === 2) this.sessions.invalidate?.(accountId);
+      const session = await this.sessions.get(account, { owner: 'draft' });
+      const conn = await GameSocket.open({ createSocket: this.createSocket, path: PATH, cookie: session.cookieHeader });
+      const entry = { conn, slot: Number(slotNumber), userId: session.userId };
+      this.joined.set(accountId, entry);
+      this._listen(accountId, entry);
+      const answer = new Promise(resolve => {
+        const done = r => { clearTimeout(timer); conn.socket.off('draftJoined', ok); conn.socket.off('draftError', bad); resolve(r); };
+        const ok = d => done({ ok: true, d });
+        const bad = d => done({ ok: false, message: typeof d === 'string' ? d : (d?.message || d?.error || 'Draft error') });
+        const timer = setTimeout(() => done({ ok: false, timeout: true }), JOIN_WAIT_MS);
+        conn.socket.on('draftJoined', ok);
+        conn.socket.on('draftError', bad);
+      });
+      conn.socket.emit('joinDraftSlot', { userId: session.userId, slotNumber: Number(slotNumber), draftType: 'CURRENT' });
+      const r = await answer;
+      if (r.ok) { error = null; break; }
       this._leave(accountId);
-      throw error;
+      const rm = this._room(Number(slotNumber));
+      rm.ours = rm.ours.filter(id => id !== accountId);
+      if (!rm.ours.length) this.rooms.delete(Number(slotNumber));
+      error = r.timeout ? 'The game did not confirm joining the room.' : r.message;
+      if (!r.timeout) break;
+    }
+    if (error) {
+      this._log('warning', 'df.joinFailed', { slot: slotNumber, error }, `Could not join draft ${slotNumber}: ${error}`, accountId);
+      this.onChanged();
+      throw new Error(error);
     }
     this._log('success', 'df.joined', { slot: slotNumber }, `Joined draft room ${slotNumber}`, accountId);
+    // The game takes the attempt when the account joins (or when the draft starts), not at
+    // the end: read it again shortly after joining.
+    setTimeout(() => this._refreshAttempts([accountId]).catch(() => {}), ATTEMPT_REREAD_MS).unref?.();
     if (!this.poll) this.watch().then(() => this.unwatch());
     this.onChanged();
     return this.snapshot();
@@ -185,7 +226,7 @@ class DraftService {
       if (d?.currentPickingUserId && rm.turn?.userId !== d.currentPickingUserId) rm.turn = { index: d.currentPickIndex, seconds: d.pickTimer, userId: d.currentPickingUserId, at: new Date(this.now()).toISOString() };
       touch();
     });
-    s.on('draftStart', d => { Object.assign(room(), { started: true, pickOrder: d?.pickOrder || [] }); this._log('info', 'df.started', { slot: entry.slot, count: (d?.pickOrder || []).length }, `Draft ${entry.slot} started`, accountId); touch(); });
+    s.on('draftStart', d => { Object.assign(room(), { started: true, pickOrder: d?.pickOrder || [] }); setTimeout(() => this._refreshAttempts([accountId]).catch(() => {}), ATTEMPT_REREAD_MS).unref?.(); this._log('info', 'df.started', { slot: entry.slot, count: (d?.pickOrder || []).length }, `Draft ${entry.slot} started`, accountId); touch(); });
     s.on('draftPickTimer', d => {
       const rm = room();
       const before = rm.turn?.userId;
@@ -330,11 +371,12 @@ class DraftService {
           break;
         }
         const row = (drafted[accountId] || []).find(p => p.id === it.id);
-        if (r?.success && row) row.listed = true;
+        if (r?.success && row) drafted[accountId] = drafted[accountId].filter(p => p !== row);
         this._log(r?.success ? 'success' : 'warning', r?.success ? 'df.listed' : 'df.listFailed', { name: row?.name || it.id, price: it.price, currency: it.currency, error: r?.message || '' }, `${row?.name || it.id} ${r?.success ? 'listed' : 'not listed'}`, accountId);
       }
     } finally {
       conn.close();
+      if (!drafted[accountId]?.length) delete drafted[accountId];
       this._saveDrafted(drafted);
       this.onChanged();
     }

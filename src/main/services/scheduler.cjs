@@ -4,7 +4,8 @@ const BUILTIN_TASKS = {
   'tournament-register': { name: 'Turnuva kaydı / Tournament registration' },
   'market-claim': { name: 'Pazar: satışları topla / Market: claim sales' },
   'market-relist': { name: 'Pazar: dünkü ilanları tekrar listele / Market: relist yesterday\'s listings' },
-  'pvp-arena': { name: 'PVP Arena' }
+  'pvp-arena': { name: 'PVP Arena' },
+  'goup': { name: 'Go-up' }
 };
 
 const ACTIVE_WORKER = ['running', 'preparing', 'starting'];
