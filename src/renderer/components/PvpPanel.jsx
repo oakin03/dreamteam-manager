@@ -1,4 +1,5 @@
 import SortTable from './SortTable';
+import { filOf } from '../i18n-fil';
 const api = window.dreamteam;
 const TEXT = {
   tr: {
@@ -12,7 +13,8 @@ const TEXT = {
     schedule: 'Scheduled task', manual: 'Started manually', finished: '{done}/{total} account(s) finished · {played} match(es) in total',
     st: { waitingGame: 'Waiting for the game', queued: 'Queued', login: 'Signing in', finding: 'Finding a match', playing: 'In a match', done: 'Completed', inactive: 'Interrupted · PVP not active', error: 'Interrupted · error', stopped: 'Stopped' },
     msg: { pvp: 'PVP match in progress', otherMatch: 'Waiting for another match to end' }
-  }
+  },
+  get fil() { return filOf(this.en); }
 };
 const TONE = { waitingGame: 'warn', done: 'ok', playing: 'warn', finding: 'warn', login: 'muted', queued: 'muted', inactive: 'bad', error: 'bad', stopped: 'muted' };
 const fill = (s, p = {}) => String(s).replace(/\{(\w+)\}/g, (_, k) => p[k] ?? '');

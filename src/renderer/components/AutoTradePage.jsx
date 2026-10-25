@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import SortTable from './SortTable';
+import { filOf } from '../i18n-fil';
 
 const api = window.dreamteam;
 
@@ -89,7 +90,8 @@ const TEXT = {
     errorTitle: 'Auto Trade stopped', errorHint: 'Fix it in the game and press "Continue". The accounts are opened again and the run goes on from there.',
     cycle: 'Cycle {n}', waitScout: '{name} waits for its Scout · {time}',
     steps: { starting: 'Starting', opening: 'Opening {name}', scouting: '{name} Scout · {candidates} eligible · {attempts} callbacks', signing: '{name}: signing {player} ({price} TK)', callback: '{name}: Call back', converting: 'Main: converting {count} player(s)', trading: 'Trade with {side} · main gives {give}, gets {take} · {tk} TK', waitingScout: '{name} waits for its Scout refresh', cardScan: 'Scanning the cards of the main account', listing: '{name}: listing {count} player(s)', done: 'Done', stopped: 'Stopped' }
-  }
+  },
+  get fil() { return filOf(this.en); }
 };
 const fill = (s, p = {}) => String(s || '').replace(/\{(\w+)\}/g, (_, k) => p[k] ?? '');
 const num = v => v == null || v === '' ? '—' : Number(v).toLocaleString();

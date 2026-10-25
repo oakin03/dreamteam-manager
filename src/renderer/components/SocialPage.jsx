@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { filOf } from '../i18n-fil';
 
 const api = window.dreamteam;
 const SITE = 'https://www.dreamteamph.com';
@@ -31,7 +32,8 @@ const TEXT = {
     requests: { incoming: 'Incoming requests', outgoing: 'Sent requests', accept: 'Accept', decline: 'Decline', cancel: 'Cancel', noneIn: 'No incoming requests.', noneOut: 'No sent requests waiting.' },
     blocked: { unblock: 'Unblock', empty: 'No blocked players.' },
     done: { accept: 'Request accepted', decline: 'Request declined', cancel: 'Request cancelled', remove: 'Friend removed', unblock: 'Unblocked', claim: 'Rewards claimed', sent: 'Message sent' }
-  }
+  },
+  get fil() { return filOf(this.en); }
 };
 
 function Avatar({ url, name }) {
@@ -50,7 +52,7 @@ const when = (iso, lang) => {
 };
 
 export default function SocialPage({ state, t, toast }) {
-  const lang = t.lang === 'en' ? 'en' : 'tr';
+  const lang = t.lang === 'tr' ? 'tr' : t.lang === 'fil' ? 'fil-PH' : 'en';
   const x = TEXT[t.lang] || TEXT.en;
   const accounts = state.accounts || [];
   const mainId = state.accountProfile?.mainAccountId;

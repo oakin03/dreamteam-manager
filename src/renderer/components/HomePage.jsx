@@ -1,6 +1,7 @@
 import AccountHealthPanel from './AccountHealthPanel';
 import DailySummary from './DailySummary';
 import { useEffect, useMemo, useState } from 'react';
+import { filOf } from '../i18n-fil';
 
 const num = v => v == null || Number.isNaN(Number(v)) ? '—' : Number(v).toLocaleString();
 const TR_OFFSET_MS = 3 * 3600 * 1000;
@@ -43,7 +44,8 @@ const TEXT = {
     market: 'Market', marketLine: '{sold} sale(s) to claim · {listed} listed', trade: 'Trading Hall', tradeLine: '{count} listings', equipment: 'Equipment', equipmentLine: '{name} open', equipmentIdle: 'Closed',
     players: 'Players', playersLine: '▲ {up} · ▼ {down} · Base {base}', playersNever: 'No list yet', cards: 'Cards', cardsLine: '{players} players · {teams} teams', schedule: 'Scheduler', scheduleLine: 'Next: {name} · {at}', scheduleNone: 'Nothing scheduled',
     risers: 'Biggest risers today', fallers: 'Biggest drops today', atBase: 'At base', more: '+{n} more', noActivity: 'Nothing yet'
-  }
+  },
+  get fil() { return filOf(this.en); }
 };
 const fill = (s, p = {}) => String(s).replace(/\{(\w+)\}/g, (_, k) => p[k] ?? '');
 const AV = ['#e8661c', '#2b5cc0', '#187a47', '#965b05', '#6b4fbf', '#b8352a', '#0f7f86', '#4a5568'];

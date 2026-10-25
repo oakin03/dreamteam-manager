@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import SortTable from './SortTable';
+import { filOf } from '../i18n-fil';
 
 const api = window.dreamteam;
 const TEXT = {
@@ -32,7 +33,8 @@ const TEXT = {
       'On start, Auto Play on the selected accounts is stopped and started again when Tower ends. An account already in a match waits for it first.',
       'Over the salary cap: that account stops with a warning. Accounts play at the same time.'
     ]
-  }
+  },
+  get fil() { return filOf(this.en); }
 };
 const TONE = { waitingGame: 'warn', queued: 'muted', login: 'muted', waitingMatch: 'warn', starting: 'warn', playing: 'info', done: 'ok', finished: 'ok', stopped: 'muted', error: 'bad', salaryCap: 'bad' };
 const fill = (s, p = {}) => String(s).replace(/\{(\w+)\}/g, (_, k) => p[k] ?? '');

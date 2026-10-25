@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { withExtras } from './guide-extra';
+import { filOf } from '../i18n-fil';
 
 // "Rehber": plain-language help for every page of the app (no technical details).
 // Each section: what the page is for, what its buttons do, and short tips.
@@ -61,7 +62,7 @@ const GUIDE = {
         tips: ['Güçlendirme denemesinin başarısız olması oyunun normal şansıdır, hata değildir.', 'Koleksiyonlar parçayı tam istenen + seviyesinde kabul eder (+5, +4 yerine geçmez).'] },
       { id: 'activity', icon: '📜', name: 'Aktivite (Loglar)', what: 'Uygulamanın yaptığı her şeyin kaydı: başarılı işler, uyarılar ve hatalar; hesap ve servise göre süzülebilir. PVP çalıştıysa en üstte hesap hesap sonuç tablosu görünür.',
         buttons: [['Hesap / Servis / Tür filtreleri', 'Sadece istediğin kayıtları gösterir.']], tips: ['Bir şey ters gittiğinde ilk bakılacak yer burası.'] },
-      { id: 'settings', icon: '⚙️', name: 'Ayarlar', what: 'Uygulama dili ve veri klasörü gibi genel ayarlar. Bu rehbere buradan da ulaşabilirsin.', buttons: [['Dil', 'Türkçe, İngilizce ya da sistem diline göre otomatik.']], tips: [] }
+      { id: 'settings', icon: '⚙️', name: 'Ayarlar', what: 'Uygulama dili ve veri klasörü gibi genel ayarlar. Bu rehbere buradan da ulaşabilirsin.', buttons: [['Dil', 'Türkçe, İngilizce, Filipince ya da sistem diline göre otomatik.']], tips: [] }
     ]
   },
   en: {
@@ -89,9 +90,10 @@ const GUIDE = {
       { id: 'cards', icon: '🃏', name: 'Cards', what: 'The main account\'s Star Cards: teams, stars, card counts and what the next star needs. Player roles are set here.', buttons: [['Refresh', 'Scans the cards again.'], ['Add role / Bulk role', 'Creates roles and gives them to selected players.'], ['Assign team', 'Gives a player a team or removes it (NONE); changed players appear under "Modified".'], ['Reset card data', 'Clears scanned data (role names stay).'], ['Synthesis · team players', 'Combines 4 cards of the same player at the same level into the next level (9 cards → 2).'], ['Synthesis · No Team players', 'Uses one card each of the 4 different No Team players with the most cards; success gives a random next-level card.'], ['Synthesis · levels', '1★→2★ … 4★→5★; unticked levels are skipped.']], tips: ['Auto Trade reads roles and teams from here.'] },
       { id: 'equipment', icon: '🧤', name: 'Equipment', what: 'Shows the bag and materials of an account and does Convert, Craft, Enchant, Enhance, Refine and Collections without the game.', buttons: [['Scan', 'Reads the bag and collections.'], ['Convert / Craft / Enchant / Enhance / Refine', 'The same actions as in the game.'], ['Prepare (collection)', 'Makes the missing pieces, raises them to the needed + level and registers the set.'], ['Clicking a piece (collection)', 'Prepares and registers only that piece; the other pieces of the set are left alone.'], ['Close', 'Closes the account\'s session.']], tips: ['A failed enhance roll is the game\'s normal chance, not an error.', 'Collections take a piece only at exactly the required + level.'] },
       { id: 'activity', icon: '📜', name: 'Activity (Logs)', what: 'A record of everything the app did: successes, warnings and errors, filterable by account and service. After a PVP run, a per-account result table is shown at the top.', buttons: [['Account / Service / Type filters', 'Show only what you need.']], tips: ['The first place to look when something goes wrong.'] },
-      { id: 'settings', icon: '⚙️', name: 'Settings', what: 'Language, data folder and other general settings. This guide can be opened from here too.', buttons: [['Language', 'Turkish, English or automatic.']], tips: [] }
+      { id: 'settings', icon: '⚙️', name: 'Settings', what: 'Language, data folder and other general settings. This guide can be opened from here too.', buttons: [['Language', 'Turkish, English, Filipino or automatic.']], tips: [] }
     ]
-  }
+  },
+  get fil() { return filOf(this.en); }
 };
 
 export default function GuidePage({ t, initial }) {
@@ -100,9 +102,9 @@ export default function GuidePage({ t, initial }) {
   const [q, setQ] = useState('');
   const [open, setOpen] = useState(initial || g.sections[0].id);
   const list = useMemo(() => {
-    const s = q.trim().toLocaleLowerCase(t.lang === 'tr' ? 'tr-TR' : 'en-US');
+    const s = q.trim().toLocaleLowerCase(t.lang === 'tr' ? 'tr-TR' : t.lang === 'fil' ? 'fil-PH' : 'en-US');
     if (!s) return g.sections;
-    return g.sections.filter(sec => JSON.stringify(sec).toLocaleLowerCase(t.lang === 'tr' ? 'tr-TR' : 'en-US').includes(s));
+    return g.sections.filter(sec => JSON.stringify(sec).toLocaleLowerCase(t.lang === 'tr' ? 'tr-TR' : t.lang === 'fil' ? 'fil-PH' : 'en-US').includes(s));
   }, [q, g, t.lang]);
   const cur = list.find(s => s.id === open) || list[0];
   return <div className="page guide-page">

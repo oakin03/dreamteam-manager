@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import SortTable from './SortTable';
+import { filOf } from '../i18n-fil';
 
 const api = window.dreamteam;
 const GRADES = ['D-', 'D', 'D+', 'C-', 'C', 'C+', 'B-', 'B', 'B+', 'A-', 'A', 'A+', 'S-', 'S', 'S+'];
@@ -27,7 +28,8 @@ const TEXT = {
     roleAny: 'With a role', roleNone: 'Without a role', cardHas: 'With cards', cardNo: 'Without cards', cardNoTeam: 'No Team', injured: 'Injured', healthy: 'Healthy', health: 'Health',
     reset: 'Clear filters', player: 'Player', shown: '{shown} / {total} shown', page: 'Page {p} / {n}', noData: 'No list yet. Press "Refresh" to get it now; it is fetched automatically every day after 11:05.',
     baseBadge: 'Base', baseHint: 'Value at or below its base', ratingWas: 'was {g} yesterday', editRoles: 'Edit roles', addBuy: 'Add to Auto Buy', addBuySel: 'Add selected to Auto Buy ({n})', inBuy: 'On the Auto Buy list', addedBuy: '{n} player(s) added to Auto Buy', clearSel: 'Clear selection', noTeam: 'No Team', stars: '★{s}', cards: '{n} cards', modified: 'Modified'
-  }
+  },
+  get fil() { return filOf(this.en); }
 };
 const fill = (s, p = {}) => String(s).replace(/\{(\w+)\}/g, (_, k) => p[k] ?? '');
 const EMPTY = { q: '', team: '', position: '', ratingMin: '', ratingMax: '', valueMin: '', valueMax: '', change: '', base: '', role: '', card: '', health: '' };

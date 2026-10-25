@@ -17,7 +17,8 @@
     "postinstall": "node scripts/ensure-runtime.cjs",
     "repair-runtime": "node scripts/ensure-runtime.cjs",
     "mcp:sync": "node src/main/services/mcp-sync.cjs",
-    "quiz:bundle": "node scripts/quiz-bundle.cjs"
+    "quiz:bundle": "node scripts/quiz-bundle.cjs",
+    "i18n:missing": "node scripts/i18n-missing.cjs"
   },
   "dependencies": {
     "@fontsource/barlow": "^5.1.0",

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import PvpPanel from './PvpPanel';
+import { filOf } from '../i18n-fil';
 
 const api = window.dreamteam;
 const TEXT = {
@@ -30,7 +31,8 @@ const TEXT = {
       'On start, Auto Play running on the selected accounts is stopped and started again when PVP is over.',
       'The same task can be set for a time with "Schedule" on the Auto Play page.'
     ]
-  }
+  },
+  get fil() { return filOf(this.en); }
 };
 const fill = (s, p = {}) => String(s).replace(/\{(\w+)\}/g, (_, k) => p[k] ?? '');
 

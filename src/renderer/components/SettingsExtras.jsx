@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { filOf } from '../i18n-fil';
 
 const api = window.dreamteam;
 
@@ -55,7 +56,8 @@ const TEXT = {
     groupName: 'List name', noTitle: '(no title)', moveTo: 'Move to…', up: 'Up', down: 'Down', groupUp: 'List up', groupDown: 'List down', addGroup: 'New list', removeGroup: 'Delete list', removeHint: 'Its pages move to the first list', save: 'Save', reset: 'Reset to default', saved: 'Menu saved', resetDone: 'Menu reset to default', newGroup: 'New list',
     factoryTitle: 'Factory reset', factoryHint: 'Brings the app back to a fresh install: all settings, saved data (cards, roles, players, reports…), scheduled tasks, activity logs and game sessions are deleted. The app restarts afterwards.',
     factoryButton: 'Factory reset', factoryConfirm: 'Everything will be deleted and the app will restart. Are you sure?', keepPasswords: 'Keep saved passwords', keepHint: 'Ticked: accounts and saved logins (including the Trading Hall and Player Market accounts) are kept; unticked: they are deleted too.', cancel: 'Cancel', confirm: 'Yes, reset', resetting: 'Resetting…'
-  }
+  },
+  get fil() { return filOf(this.en); }
 };
 
 export function NavEditor({ state, t, toast }) {
@@ -110,7 +112,8 @@ export function FactoryReset({ t, toast }) {
 
 const BEHAVIOR = {
   tr: { title: 'Uygulama davranışı', tray: 'Pencere kapatılınca sistem tepsisinde çalışmaya devam et', trayHint: 'Çarpıya basınca uygulama kapanmaz; saat yanındaki DT simgesinden açılır. Tamamen kapatmak için simgeye sağ tıklayıp Çıkış.', login: 'Windows açılınca DreamTeam Manager\'ı başlat', loginHint: 'Yalnızca uygulama açılır; hiçbir servis kendiliğinden başlamaz.' },
-  en: { title: 'App behaviour', tray: 'Keep running in the system tray when the window is closed', trayHint: 'The close button does not quit; open it again from the DT icon next to the clock. Right-click the icon → Quit to exit.', login: 'Start DreamTeam Manager with Windows', loginHint: 'Only the app opens; no service starts by itself.' }
+  en: { title: 'App behaviour', tray: 'Keep running in the system tray when the window is closed', trayHint: 'The close button does not quit; open it again from the DT icon next to the clock. Right-click the icon → Quit to exit.', login: 'Start DreamTeam Manager with Windows', loginHint: 'Only the app opens; no service starts by itself.' },
+  get fil() { return filOf(this.en); }
 };
 export function AppBehavior({ state, t }) {
   const x = BEHAVIOR[t.lang] || BEHAVIOR.en;

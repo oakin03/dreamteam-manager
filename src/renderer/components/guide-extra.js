@@ -1,3 +1,4 @@
+import { filOf } from '../i18n-fil';
 // More detail for the Guide: extra buttons/tips per page (merged into GuidePage's
 // sections by id), corrected texts, and whole new sections. Plain language, no tech.
 export const GUIDE_EXTRA = {
@@ -88,7 +89,8 @@ export const GUIDE_EXTRA = {
         buttons: [["Table headers", "Click a column header to sort by it; again to flip, a third time for the original order. Numbers, dates and times sort by value, grade columns in the game's order (D- … S+)."], ["Stop all automations", "The button at the bottom left; stops everything, \"Resume\" starts the same again."], ["Yellow bar", "Shown when the game is unreachable; everything waits and continues by itself."]],
         tips: ["Open the app with the DreamTeam Manager shortcut on the desktop or in the Start menu; right-click its taskbar button to pin it.", "Clicking the shortcut while the app is open brings the open window to the front.", "Every automation that plays (Go-up, Quiz, PVP…) stops Auto Play on its accounts first and starts it again afterwards.", "Tower, PVP, Go-up, Daily Quiz, Synthesis, relist and Chat show a Windows notification when they finish (Auto Trade already had one)."] }
     ]
-  }
+  },
+  get fil() { return filOf(this.en); }
 };
 
 // Sections with the extra texts merged in; new sections go first.

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import SortTable from './SortTable';
+import { filOf } from '../i18n-fil';
 
 const api = window.dreamteam;
 // Orders as the game shows them: rarity low → high in Craft / Convert / materials,
@@ -60,7 +61,8 @@ const TEXT = {
     pieceHint: 'Click: prepare and register only this piece', planTitle: 'Prepare {name}', planCraft: 'Craft', planEnhance: 'Enhance', planMaterials: 'Materials used', planShort: 'Not enough', planMissing: 'No recipe', planRun: 'Start', planNothing: 'Nothing to craft or enhance; it will be registered directly.', cancel: 'Cancel',
     planWarn: 'Registered equipment leaves the bag. Equipped gear is never used.',
     scannedAt: 'Last scan {time}', jobs: { scan: 'Scanning', convert: 'Converting', craft: 'Crafting', enchant: 'Enchanting', enhance: 'Enhancing', refine: 'Refining', register: 'Registering', prepare: 'Preparing set' }
-  }
+  },
+  get fil() { return filOf(this.en); }
 };
 const fill = (s, p = {}) => String(s).replace(/\{(\w+)\}/g, (_, k) => p[k] ?? '');
 

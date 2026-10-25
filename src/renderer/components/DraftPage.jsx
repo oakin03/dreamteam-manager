@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import SortTable from './SortTable';
+import { filOf } from '../i18n-fil';
 
 const api = window.dreamteam;
 const num = v => v == null ? '—' : Number(v).toLocaleString();
@@ -23,7 +24,8 @@ const TEXT = {
     drafted: 'Drafted players', draftedHint: 'Choose price and currency and list the ones you want.', list: 'List selected', clear: 'Clear list', listed: 'Listed', none: 'No drafted players yet.',
     warning: 'Once in a room you stay until the draft ends; the game warns that leaving loses the attempt. Attempts are read again from the game after the draft fully ends.',
     noTeam: 'No Team', stars: '★{s}', cards: '{n} cards', baseBadge: 'Base'
-  }
+  },
+  get fil() { return filOf(this.en); }
 };
 const fill = (s, p = {}) => String(s).replace(/\{(\w+)\}/g, (_, k) => p[k] ?? '');
 const isAtBase = (salary, base) => salary != null && base > 0 && Number(salary) <= Number(base);

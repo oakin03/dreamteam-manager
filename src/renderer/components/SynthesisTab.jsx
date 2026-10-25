@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import SortTable from './SortTable';
+import { filOf } from '../i18n-fil';
 
 const api = window.dreamteam;
 const LEVELS = [1, 2, 3, 4];
@@ -19,7 +20,8 @@ const TEXT = {
     waiting: 'The game asks to wait · {s} s', stop: 'Stop', running: 'Running · {lv}★→{next}★', done: 'Completed', stopped: 'Stopped', error: 'Error', live: 'Now', lastResult: 'Last synthesis', used: 'The 4 cards used', got: 'Card received', fail: 'Failed', returned: 'given back', none: '—',
     history: 'Synthesis history (this run)', obtained: 'Cards obtained', obtainedHint: 'Cards this run gave you that you still own; cards used again later drop off the list.', noObtained: 'No cards obtained yet.',
     summary: 'Summary (last run)', account: 'Account', mode: 'Type', modeTeam: 'Team', modeNoTeam: 'No Team', summaryHint: 'green = success, red = fail', random: 'random'
-  }
+  },
+  get fil() { return filOf(this.en); }
 };
 const fill = (s, p = {}) => String(s).replace(/\{(\w+)\}/g, (_, k) => p[k] ?? '');
 const stars = n => `${n}★`;

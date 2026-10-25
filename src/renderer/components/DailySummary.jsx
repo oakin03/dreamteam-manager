@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import SortTable from './SortTable';
+import { filOf } from '../i18n-fil';
 
 const api = window.dreamteam;
 const num = v => Number(v || 0).toLocaleString();
@@ -13,7 +14,8 @@ const TEXT = {
     title: 'Daily summary', hint: 'calculated from the Activity archive', refresh: 'Refresh', none: 'No entries for this day.',
     quickPlay: 'Auto Play matches', pvp: 'PVP matches', tower: 'Tower (W/L)', sales: 'Sales claimed', relisted: 'Relisted', bought: 'Bought', spent: 'Spent', synth: 'Synthesis (ok/failed)', draft: 'Draft picks', autoTrade: 'Auto Trade (signed/cards/trades)', problems: 'Errors / warnings',
     perAccount: 'Per account', account: 'Account'
-  }
+  },
+  get fil() { return filOf(this.en); }
 };
 
 // Home: one day of work at a glance (default: today), any archived day selectable.

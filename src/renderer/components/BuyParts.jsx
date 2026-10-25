@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import SortTable from './SortTable';
+import { filOf } from '../i18n-fil';
 
 const api = window.dreamteam;
 const num = v => v == null || v === '' ? '—' : Number(v).toLocaleString();
@@ -17,13 +18,15 @@ export const BUY_TEXT = {
     account: 'Account', player: 'Player', paid: 'Paid', salary: 'Salary', base: 'Base', status: 'Status', newPrice: 'New price', from: 'From',
     owned: 'In roster', listed: 'On the market · {price} {cur}', parked: 'On the market · 9,999,999 TIX (waiting)', sell: 'List for sale', reprice: 'Update price', remove: 'Remove from list', hall: 'Trading Hall', auto: 'Auto Buy',
     filterAll: 'All', filterHall: 'Trading Hall', filterAuto: 'Auto Buy', okBought: '{name} bought', invalid: 'Invalid price'
-  }
+  },
+  get fil() { return filOf(this.en); }
 };
 const fill = (s, p = {}) => String(s).replace(/\{(\w+)\}/g, (_, k) => p[k] ?? '');
 
 const HINT = {
   tr: { ask: 'Öner', asking: '…', none: 'Pazarda başka ilan yok', cheapest: 'En ucuz rakip {p} {cur} ({n} ilan) · önerilen {s}', mine: 'senin en ucuzun {p}', fail: 'okunamadı' },
-  en: { ask: 'Suggest', asking: '…', none: 'No other listing on the market', cheapest: 'Cheapest other {p} {cur} ({n} listings) · suggested {s}', mine: 'your cheapest {p}', fail: 'could not read' }
+  en: { ask: 'Suggest', asking: '…', none: 'No other listing on the market', cheapest: 'Cheapest other {p} {cur} ({n} listings) · suggested {s}', mine: 'your cheapest {p}', fail: 'could not read' },
+  get fil() { return filOf(this.en); }
 };
 // "Suggest": reads the cheapest competing listing of the player in this currency and
 // fills the price one below it.

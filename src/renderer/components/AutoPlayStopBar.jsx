@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { filOf } from '../i18n-fil';
 
 const api = window.dreamteam;
 const TEXT = {
@@ -17,7 +18,8 @@ const TEXT = {
     tnEnable: 'Start tournament registration every day', tnHint: 'At this time a "Tournament registration" task is added to the scheduler: other tasks on the chosen accounts are paused, it waits until registration opens, and when registration is done the paused tasks start again. Accounts: the last selection on the Tournament page (all when none).',
     tnToday: 'Started today at {time}', tnNext: 'Next registration: {time} (TR)', tnAccounts: '{n} account(s)',
     pvpEnable: 'Start the PVP task every day', pvpHint: 'At this time a "PVP Arena" task is added to the scheduler: other tasks on the chosen accounts are paused, an account in a match is waited for, every account plays until its 10 daily attempts are used, then the paused tasks start again. Accounts: the last selection on the PVP page (all when none).', pvpNext: 'Next PVP: {time} (TR) · starts when the arena opens'
-  }
+  },
+  get fil() { return filOf(this.en); }
 };
 const fill = (s, p = {}) => String(s).replace(/\{(\w+)\}/g, (_, k) => p[k] ?? '');
 const trToday = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Istanbul' }).format(new Date());

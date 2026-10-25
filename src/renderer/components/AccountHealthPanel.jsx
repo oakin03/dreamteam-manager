@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import SortTable from './SortTable';
+import { filOf } from '../i18n-fil';
 
 const api = window.dreamteam;
 const num = v => v == null ? '—' : Number(v).toLocaleString();
@@ -13,7 +14,8 @@ const TEXT = {
     title: 'Account health', hint: 'checked every 10 minutes', refresh: 'Check now', checking: 'Checking…', account: 'Account', salary: 'Salary / Cap', roster: 'Roster', tk: 'TK', status: 'Status', ok: 'No problems', none: 'Not checked yet.', onlyIssues: 'Only accounts with problems', allGood: 'Every account is fine.',
     limits: 'Warning limits', lowTk: 'Warn when TK is below', nearCap: 'Warn at this % of the salary cap', rosterWarn: 'Warn when the roster reaches', save: 'Save', reset: 'Reset to default', saved: 'Warning limits saved', defaultsHint: 'The values you save become the new default.',
     issue: { overCap: 'Over the salary cap', nearCap: 'Close to the salary cap', rosterFull: 'Roster full', lowTk: 'Low TK', autoPlayError: 'Auto Play error' }
-  }
+  },
+  get fil() { return filOf(this.en); }
 };
 
 const FALLBACK = { lowTk: 5000, nearCapPct: 97, rosterWarn: 11 };

@@ -746,3 +746,5 @@ input,select,textarea{color:var(--d-ink)}
 :where(input:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=color]),select,textarea){background-color:var(--d-surface);color:var(--d-ink)}
 :where(input,select,textarea)::placeholder{color:var(--d-muted)}
 .theme-switch button.active{box-shadow:inset 0 0 0 1px var(--d-accent);color:var(--d-accent)}
+
+.page-title h1{white-space:nowrap}

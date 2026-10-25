@@ -193,7 +193,7 @@ function notifyDone(entry) {
   const make = DONE_NOTES[entry?.code];
   if (!make || !Notification.isSupported()) return;
   try {
-    const tr = (store?.getSettings()?.language || 'tr') !== 'en';
+    const tr = !['en', 'fil'].includes(store?.getSettings()?.language || 'tr');
     const [title, body] = make(entry.params || {})[tr ? 'tr' : 'en'];
     const n = new Notification({ title, body });
     n.on('click', () => showMainWindow());
@@ -208,7 +208,7 @@ function autoTradeAttention(kind, text) {
       if (!mainWindow.isFocused()) mainWindow.flashFrame(true);
     }
     if (Notification.isSupported()) {
-      const tr = (store?.getSettings()?.language || 'tr') !== 'en';
+      const tr = !['en', 'fil'].includes(store?.getSettings()?.language || 'tr');
       const titles = { error: tr ? 'Auto Trade durdu' : 'Auto Trade stopped', listing: tr ? 'Auto Trade: pazara listeleme' : 'Auto Trade: market listing', draftTurn: tr ? 'Draft: sıra sende' : 'Draft: your turn', done: tr ? 'Auto Trade bitti' : 'Auto Trade finished', conflict: tr ? 'Auto Trade: hesaplar kullanımda' : 'Auto Trade: accounts in use', autoPlayStop: tr ? 'Auto Play durduruldu (günlük saat)' : 'Auto Play stopped (daily time)', watchAlert: tr ? 'İzleme listesi: değer değişimi' : 'Watch list: value change', buyNoFunds: tr ? 'Auto Buy durdu' : 'Auto Buy stopped', buyCannot: tr ? 'Auto Buy: oyuncu alınamadı' : 'Auto Buy: could not buy', buyError: tr ? 'Auto Buy durdu' : 'Auto Buy stopped' };
       const bodies = { listing: tr ? `${text} kadrosu doldu · hangi oyuncuların listeleneceğini seç` : `${text}'s roster is full · choose players to list`, done: tr ? 'Tüm hesaplar tamamlandı' : 'All accounts are done', draftTurn: tr ? `${text} seçim yapacak · 30 saniye` : `${text} picks now · 30 seconds`, autoPlayStop: tr ? `${text} hesapta Auto Play durduruldu · turnuva öncesi` : `Auto Play stopped on ${text} account(s) · before the tournament`, watchAlert: text, buyNoFunds: tr ? `Hesapların ${text} miktarı yetersiz` : `The accounts do not have enough ${text}`, buyCannot: tr ? `${text} · hiçbir hesap alamadı (kadroda var / bakiye yetersiz) · tarama sürüyor` : `${text} · no account could buy it (already owned / not enough funds) · still scanning` };
       const n = new Notification({ title: titles[kind] || 'Auto Trade', body: bodies[kind] || String(text || '') });
@@ -321,7 +321,7 @@ let globalPause = null; // { at, resume: async () => {}, autoPlay: [...] }
 // running. "Quit" in the tray menu really quits. Services are never started on their own.
 let tray = null;
 function trayMenu() {
-  const tr = (store?.getSettings()?.language || 'tr') !== 'en';
+  const tr = !['en', 'fil'].includes(store?.getSettings()?.language || 'tr');
   const paused = Boolean(globalPause);
   return Menu.buildFromTemplate([
     { label: tr ? 'DreamTeam Manager\'ı göster' : 'Show DreamTeam Manager', click: showMainWindow },

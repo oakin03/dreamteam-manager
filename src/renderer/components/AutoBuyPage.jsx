@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { BoughtList } from './BuyParts';
 import SortTable from './SortTable';
+import { filOf } from '../i18n-fil';
 
 const api = window.dreamteam;
 const num = v => v == null || v === '' ? '—' : Number(v).toLocaleString();
@@ -26,7 +27,8 @@ const TEXT = {
     accounts: 'Account priority', accountsHint: 'Buying starts with account 1; when it runs out of funds the next one is used. Sort with the arrows, include with the box.', include: 'Use', apk: 'APK', tix: 'TIX',
     cannotBuy: 'No account could buy {name} ({price} {cur}) · {why} · still scanning',
     warnRegister: 'Auto Buy scans without signing in and runs next to the other automations. It signs in on an account only to buy or reprice: Auto Play and signed-in automations (Auto Trade, Tower) on that account are paused, then started again once the work is done and the account is closed.'
-  }
+  },
+  get fil() { return filOf(this.en); }
 };
 const fill = (s, p = {}) => String(s).replace(/\{(\w+)\}/g, (_, k) => p[k] ?? '');
 // Same rule as the service: salary and price always, the quantity unless Unlimited is ticked.

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import SortTable from './SortTable';
+import { filOf } from '../i18n-fil';
 
 const api = window.dreamteam;
 const num = v => (v == null ? '—' : Number(v).toLocaleString());
@@ -69,7 +70,8 @@ const TEXT = {
       loop: 'Loop {a}/{b}', message: 'Message {a}/{b}', next: 'Next message in {t}', sending: 'Sending…', sent: 'Sent', failed: 'Failed', blocked: 'Accounts blocked from the chat', saved: 'Message list saved',
       how: ['Messages are written in list order, each by its own account; the list repeats for the number of loops (or until stopped).', 'The game puts a 10 s wait on every account in the global chat and a message can be at most 50 characters; the app never goes below these limits.', 'If the game blocks an account\'s chat, that account\'s messages are skipped with a warning. No megaphone.']
     }
-  }
+  },
+  get fil() { return filOf(this.en); }
 };
 
 function useNow(active) {
