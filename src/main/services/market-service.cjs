@@ -248,7 +248,8 @@ class MarketService {
   }
 
   // ---------- Sales: scan + claim ----------
-  async scan(accountIds) {
+  // `concurrency`: accounts scanned / claimed at the same time (the Sales tab setting).
+  async scan(accountIds, { concurrency = null } = {}) {
     return this._runJob('scan', accountIds, async (account, signal, holder) => {
       const conn = await this._connect(account, signal, holder);
       const rows = await this._scanListings(account, conn, signal);
@@ -256,10 +257,10 @@ class MarketService {
       this.set(account.id, { status: 'done', step: 'scanned', stepParams: counts });
       this.log(account, 'success', `Market scanned · ${counts.listed} listed · ${counts.sold} sold · ${counts.expired} expired.`, 'mk.scanned', counts);
       return rows;
-    }).then(() => this.snapshot());
+    }, { concurrency }).then(() => this.snapshot());
   }
 
-  async claim(accountIds) {
+  async claim(accountIds, { concurrency = null } = {}) {
     return this._runJob('claim', accountIds, async (account, signal, holder) => {
       const conn = await this._connect(account, signal, holder);
       const rows = await this._scanListings(account, conn, signal);
@@ -291,7 +292,7 @@ class MarketService {
         this.log(account, 'info', 'No sold listings to claim.', 'mk.nothingToClaim');
       }
       return { claimed, payout, failures };
-    }).then(() => this.snapshot());
+    }, { concurrency }).then(() => this.snapshot());
   }
 
   // ---------- Relist: remove + list again (LISTED or EXPIRED) ----------

@@ -590,7 +590,7 @@ function initServices() {
   scheduler.registerBuiltin('market-claim', async (accountIds, { signal }) => {
     const onAbort = () => market.stop();
     signal?.addEventListener('abort', onAbort, { once: true });
-    try { await market.claim(accountIds); } finally { signal?.removeEventListener('abort', onAbort); }
+    try { await market.claim(accountIds, { concurrency: store.getSettings()?.marketScanParallel }); } finally { signal?.removeEventListener('abort', onAbort); }
   });
   scheduler.registerBuiltin('pvp-arena', (accountIds, { signal }) => pvp.runAndWait(accountIds, { signal, source: 'schedule' }), { gate: (accountIds, { signal }) => pvp.waitForArena(signal) });
   scheduler.registerBuiltin('goup', (accountIds, { signal }) => goup.runAndWait(accountIds, { signal, source: 'schedule', mode: store.getSettings()?.goupMode, gapSec: store.getSettings()?.goupGapSec }));
@@ -710,8 +710,8 @@ function registerIpc() {
   ipcMain.handle('scout:sign', async (_event, { accountId, playerKey }) => scout.sign(accountId, playerKey));
   ipcMain.handle('scout:close', async (_event, accountId) => scout.close(accountId));
 
-  ipcMain.handle('market:scan', async (_event, accountIds) => market.scan(accountIds));
-  ipcMain.handle('market:claim', async (_event, accountIds) => market.claim(accountIds));
+  ipcMain.handle('market:scan', async (_event, accountIds, options) => market.scan(accountIds, options || {}));
+  ipcMain.handle('market:claim', async (_event, accountIds, options) => market.claim(accountIds, options || {}));
   ipcMain.handle('market:load-relist', async (_event, accountIds) => market.loadRelist(accountIds));
   ipcMain.handle('market:relist', async (_event, items, options) => market.relistPlayers(items, options || {}));
   ipcMain.handle('market:clear-relist', async () => { market.clearRelist(); return true; });
