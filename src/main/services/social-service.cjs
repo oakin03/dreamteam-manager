@@ -21,7 +21,7 @@ const SITE = 'https://www.dreamteamph.com';
 const TR_OFFSET_MS = 3 * 3600 * 1000;
 const WIPE_MS = 19 * 3600 * 1000;           // chat wipe, 19:00 TR
 const DAY_MS = 24 * 3600 * 1000;
-const POLL_MS = 3 * 60 * 1000;              // badges: requests, unread messages, mail
+const POLL_MS = 60 * 1000;                  // badges: requests, unread messages, mail (13 accounts ≈ 10 s, no sign-in)
 const SWEEP_MS = 60 * 60 * 1000;            // every conversation copied into the archive
 const SWEEP_BEFORE_WIPE_MS = 12 * 60 * 1000; // ...and once more at 18:48 TR
 const TIMEOUT_MS = 10000;
@@ -300,9 +300,11 @@ class SocialService {
 
   // Activity (and a Windows notification) for a request or message that was not there before.
   _notice(account, requests, unread) {
-    const before = this.seen[account.id];
+    // The first look after the app starts counts everything still waiting as new, so a
+    // message that came while the app was closed is announced too.
+    const before = this.seen[account.id] || { requests: new Set(), unread: {} };
     const ids = new Set(requests.map(r => r.id || r.friendshipId));
-    if (before) {
+    {
       for (const r of requests) {
         if (before.requests.has(r.id || r.friendshipId)) continue;
         const from = r.from?.teamName || r.user?.teamName || r.sender?.teamName || r.teamName || '?';
@@ -336,7 +338,7 @@ class SocialService {
       this.timers.push(t);
     };
     armWipe();
-    setTimeout(() => this.poll().then(() => this.sweep()).catch(() => {}), 15000).unref?.();
+    setTimeout(() => this.poll().then(() => this.sweep()).catch(() => {}), 5000).unref?.();
   }
 
   stop() {

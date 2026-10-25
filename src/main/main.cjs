@@ -133,6 +133,7 @@ function snapshot({ incremental = false } = {}) {
     goup: goup?.snapshot() || { running: false, run: null, points: {}, event: null, lastReport: null },
     quiz: quiz?.snapshot() || { running: false, run: null, bankSize: 0, lastReport: null },
     cheer: cheer?.snapshot() || { busy: false, last: null },
+    chatFeed: gameEvents?.chatFeed() || [],
     social: social?.snapshot() || { badges: {}, totals: { requests: 0, unread: 0, mail: 0 } },
     chat: chat?.snapshot() || { running: false, run: null, limits: { minIntervalSec: 11, maxText: 50 }, lastReport: null },
     tower: tower?.snapshot() || { running: false, run: null, lastReport: null },
@@ -601,7 +602,7 @@ function initServices() {
   accountHealth.start();
   players.start();
   dailyRewards.start();
-  gameEvents = new GameEvents({ store, activity, onSalaryUpdate: async () => { await players.refresh({ automatic: true, pushed: true }); await accountHealth.refresh(); } });
+  gameEvents = new GameEvents({ store, activity, onChat: emitState, onSalaryUpdate: async () => { await players.refresh({ automatic: true, pushed: true }); await accountHealth.refresh(); } });
   gameEvents.start();
   social = new SocialService({ store, activity, sessions: gameSessions, onChanged: emitState });
   social.start();

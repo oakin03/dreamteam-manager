@@ -2,14 +2,21 @@ const { GameSocket } = require('./game-socket.cjs');
 
 // Things the game tells every client by itself, heard without signing in:
 //   /chat-socket/ salaryUpdateComplete  (players re-ranked and resalaried, once a day)
+//   /chat-socket/ getInitialGlobalMessages -> initialGlobalMessages {success, messages} (last 10)
+//                 newMessage {userId, teamName, title, titleColor, type:'all'|..., text, timestamp}
+// The global chat is kept for two days (chat-history.json) for the Daily page.
 // and the "signed in elsewhere" kicks of our own connections (GameSocket.onKick),
 // written to Activity with the service that lost the account and the one that took it.
 const CHAT_PATH = '/chat-socket/';
 const RETRY_MS = 5 * 60 * 1000;
 const SALARY_DEDUPE_MS = 10 * 60 * 1000;
+const CHAT_KEEP_MS = 2 * 24 * 3600 * 1000;
+const CHAT_MAX = 1500;
 
 class GameEvents {
-  constructor({ store, activity, createSocket, onSalaryUpdate = () => {}, now = () => Date.now() }) {
+  constructor({ store, activity, createSocket, onSalaryUpdate = () => {}, onChat = () => {}, now = () => Date.now() }) {
+    this.onChat = onChat;
+    this.chatSaveTimer = null;
     this.store = store;
     this.activity = activity;
     this.createSocket = createSocket;
@@ -38,10 +45,43 @@ class GameEvents {
     try {
       this.chat = await GameSocket.open({ createSocket: this.createSocket, path: CHAT_PATH });
       this.chat.socket.on('salaryUpdateComplete', () => this._salary());
+      this.chat.socket.on('initialGlobalMessages', d => { if (d?.success) this._chatAdd(d.messages || []); });
+      this.chat.socket.on('newMessage', m => { if (m?.type === 'all') this._chatAdd([m]); });
+      // after every (re)connect the last messages are asked again; duplicates are dropped
+      const ask = () => { try { this.chat.socket.emit('getInitialGlobalMessages'); } catch {} };
+      this.chat.socket.on('connect', ask);
+      ask();
     } catch {
       this.timer = setTimeout(() => this._listen(), RETRY_MS);
       this.timer.unref?.();
     }
+  }
+
+  // Global chat kept for two days, newest last.
+  _chatAdd(list) {
+    const data = { messages: [...(this.chatCache || this.store.getChatHistory?.()?.messages || [])] };
+    const key = m => `${m.userId}|${m.timestamp}|${m.text}`;
+    const seen = new Set(data.messages.map(key));
+    let added = 0;
+    for (const m of list) {
+      if (!m?.text || seen.has(key(m))) continue;
+      seen.add(key(m));
+      data.messages.push({ userId: m.userId, teamName: m.teamName, title: m.title || null, text: String(m.text), timestamp: Number(m.timestamp) || this.now() });
+      added++;
+    }
+    if (!added) return;
+    const from = this.now() - CHAT_KEEP_MS;
+    data.messages = data.messages.filter(m => m.timestamp >= from).sort((a, b) => a.timestamp - b.timestamp).slice(-CHAT_MAX);
+    this.chatCache = data.messages;
+    clearTimeout(this.chatSaveTimer);
+    this.chatSaveTimer = setTimeout(() => this.store.saveChatHistory?.({ version: 1, messages: this.chatCache }), 3000);
+    this.chatSaveTimer.unref?.();
+    this.onChat();
+  }
+
+  chatFeed(limit = 200) {
+    const all = this.chatCache || (this.chatCache = (this.store.getChatHistory?.()?.messages) || []);
+    return all.slice(-limit);
   }
 
   _salary() {

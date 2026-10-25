@@ -58,6 +58,7 @@ class AppStore {
       cheerReport: path.join(baseDir, 'cheer-report.json'),
       chatReport: path.join(baseDir, 'chat-report.json'),
       socialArchive: path.join(baseDir, 'social-archive.json'),
+      chatHistory: path.join(baseDir, 'chat-history.json'),
       buyData: path.join(baseDir, 'buy.json'),
       towerReport: path.join(baseDir, 'tower-report.json'),
       synthesisData: path.join(baseDir, 'synthesis.json'),
@@ -190,6 +191,8 @@ class AppStore {
   saveQuizReport(v) { this._save('quizReport', v); }
   getCheerReport() { return this._get('cheerReport', null); }
   saveCheerReport(v) { this._save('cheerReport', v); }
+  getChatHistory() { return this._get('chatHistory', { version: 1, messages: [] }); }
+  saveChatHistory(v) { this._save('chatHistory', v); }
   getSocialArchive() { return this._get('socialArchive', { version: 1, accounts: {} }); }
   saveSocialArchive(v) { this._save('socialArchive', v); }
   getChatReport() { return this._get('chatReport', null); }

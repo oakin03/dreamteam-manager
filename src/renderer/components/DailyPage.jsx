@@ -36,6 +36,7 @@ const TEXT = {
     cs: {
       messages: 'Mesajlar', add: 'Mesaj ekle', text: 'Mesaj', pickAccount: 'Hesap seç', interval: 'Mesajlar arası (sn)', loopCount: 'Döngü sayısı', infinite: 'Sonsuz döngü',
       start: 'Chat Başlat', minHint: 'Oyun her mesaj arasında 10 sn bekletir; en az {n} sn girilebilir.', maxHint: 'En fazla {n} karakter',
+      feed: 'Oyun sohbeti', feedHint: 'genel sohbette herkesin yazdıkları · uygulama 2 gün saklar', feedSearch: 'Ara (takım ya da mesaj)…', feedEmpty: 'Henüz mesaj yok. Uygulama açıkken gelen mesajlar burada birikir.',
       loop: 'Döngü {a}/{b}', message: 'Mesaj {a}/{b}', next: 'Sonraki mesaj {t} sonra', sending: 'Gönderiliyor…', sent: 'Gönderilen', failed: 'Başarısız', blocked: 'Sohbeti engellenen hesaplar', saved: 'Mesaj listesi kaydedildi',
       how: ['Mesajlar listedeki sırayla, her biri kendi hesabından yazılır; liste döngü sayısı kadar (ya da durdurana kadar) tekrarlanır.', 'Oyun genel sohbette her hesaba 10 sn bekleme koyar ve mesaj en fazla 50 karakter olabilir; uygulama bu sınırların altına inmez.', 'Oyun bir hesabın sohbetini engellerse o hesabın mesajları atlanır ve uyarı yazılır. Megafon kullanılmaz.']
     }
@@ -67,6 +68,7 @@ const TEXT = {
     cs: {
       messages: 'Messages', add: 'Add message', text: 'Message', pickAccount: 'Choose account', interval: 'Seconds between messages', loopCount: 'Loops', infinite: 'Endless',
       start: 'Start Chat', minHint: 'The game makes every account wait 10 s between messages; at least {n} s.', maxHint: 'At most {n} characters',
+      feed: 'Game chat', feedHint: 'everything written in the global chat · kept 2 days by the app', feedSearch: 'Search (team or message)…', feedEmpty: 'No messages yet. Messages that come while the app is open collect here.',
       loop: 'Loop {a}/{b}', message: 'Message {a}/{b}', next: 'Next message in {t}', sending: 'Sending…', sent: 'Sent', failed: 'Failed', blocked: 'Accounts blocked from the chat', saved: 'Message list saved',
       how: ['Messages are written in list order, each by its own account; the list repeats for the number of loops (or until stopped).', 'The game puts a 10 s wait on every account in the global chat and a message can be at most 50 characters; the app never goes below these limits.', 'If the game blocks an account\'s chat, that account\'s messages are skipped with a warning. No megaphone.']
     }
@@ -302,8 +304,30 @@ function ChatTab({ state, x, toast }) {
       <span className="good-text">{x.cs.sent} {run.sent}</span><span className={run.failed ? 'bad-text' : ''}>{x.cs.failed} {run.failed}</span>
       {Object.keys(run.blocked || {}).length > 0 && <span className="bad-text">{x.cs.blocked}: {Object.keys(run.blocked).map(name).join(', ')}</span>}
     </div>}
+    <ChatFeed state={state} x={x} />
     <details className="panel pvp-how"><summary>{x.howTitle}</summary><ul>{x.cs.how.map(l => <li key={l}>{l}</li>)}</ul></details>
   </>;
+}
+
+// The game's global chat as it comes in (kept two days by the app); our accounts stand out.
+function ChatFeed({ state, x }) {
+  const feed = state.chatFeed || [];
+  const mine = new Set((state.accounts || []).map(a => String(a.name).toLowerCase()));
+  const [q, setQ] = useState('');
+  const box = useRef(null);
+  const atEnd = useRef(true);
+  const shown = q.trim() ? feed.filter(m => `${m.teamName} ${m.text}`.toLowerCase().includes(q.trim().toLowerCase())) : feed;
+  useEffect(() => { if (atEnd.current && box.current) box.current.scrollTop = box.current.scrollHeight; }, [shown.length]);
+  const day = ts => new Date(ts).toDateString() === new Date().toDateString();
+  return <div className="panel cs-feed">
+    <div className="cs-feed-head"><b>{x.cs.feed}</b><span>{x.cs.feedHint}</span><input id="cs-feed-q" placeholder={x.cs.feedSearch} value={q} onChange={e => setQ(e.target.value)} /></div>
+    <div className="cs-feed-list" ref={box} onScroll={e => { const el = e.currentTarget; atEnd.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40; }}>
+      {!shown.length ? <div className="empty">{x.cs.feedEmpty}</div> : shown.map(m => <div key={`${m.userId}-${m.timestamp}`} className={`cs-msg ${mine.has(String(m.teamName).toLowerCase()) ? 'mine' : ''}`}>
+        <time>{new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}{day(m.timestamp) ? '' : ` · ${new Date(m.timestamp).toLocaleDateString([], { day: '2-digit', month: '2-digit' })}`}</time>
+        <b>{m.teamName}</b>{m.title && <em>{m.title}</em>}<span>{m.text}</span>
+      </div>)}
+    </div>
+  </div>;
 }
 
 export default function DailyPage({ state, t, toast }) {

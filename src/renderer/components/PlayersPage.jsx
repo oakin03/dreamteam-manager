@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import SortTable from './SortTable';
 import { filOf } from '../i18n-fil';
+import { roleColors } from './roleColors';
 
 const api = window.dreamteam;
 const GRADES = ['D-', 'D', 'D+', 'C-', 'C', 'C+', 'B-', 'B', 'B+', 'A-', 'A', 'A+', 'S-', 'S', 'S+'];
@@ -134,7 +135,7 @@ export default function PlayersPage({ state, t, toast }) {
           <td>{gapPct(p) == null ? '—' : <span className={p.isBase ? 'pl-down' : ''}>{gapPct(p) > 0 ? '+' : ''}{gapPct(p)}%</span>}</td>
           <td><div className="pl-roles" onClick={() => setEditing(editing === p.id ? null : p.id)} title={x.editRoles}>
             {p.isBase && <span className="role-badge pl-base-badge" title={x.baseHint}>{x.baseBadge}</span>}
-            {p.roleIds.map(id => roles.find(r => r.id === id)).filter(Boolean).map(r => <span key={r.id} className="role-badge" style={{ backgroundColor: r.color || '#64748b', borderColor: r.color || '#64748b' }}>{r.name}</span>)}
+            {p.roleIds.map(id => roles.find(r => r.id === id)).filter(Boolean).map(r => <span key={r.id} className="role-badge" style={roleColors(r.color)}>{r.name}</span>)}
             {!p.isBase && !p.roleIds.length && <span className="muted-text">+</span>}
           </div>
             {editing === p.id && <div className="role-chips pl-role-edit">{roles.map(r => { const on = p.roleIds.includes(r.id); return <button key={r.id} className={on ? 'on' : ''} style={on ? { background: r.color, borderColor: r.color, color: '#fff' } : undefined} onClick={() => toggleRole(p, r.id)}>{r.name}</button>; })}</div>}

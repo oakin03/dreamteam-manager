@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import SortTable from './SortTable';
 import { filOf } from '../i18n-fil';
+import { roleColors } from './roleColors';
 
 const api = window.dreamteam;
 const num = v => v == null ? '—' : Number(v).toLocaleString();
@@ -47,7 +48,6 @@ export default function DraftPage({ state, t, toast }) {
 
   return <div className="page draft-page">
     <div className="page-title"><div><h1>{x.title}</h1><span className="subtitle">{x.subtitle}</span></div></div>
-    <div className="panel df-warning">{x.warning}</div>
 
     <h3 className="section-title">{x.accounts}</h3>
     <div className="panel table-panel"><SortTable><thead><tr><th>{x.account}</th><th>{x.level}</th><th>{x.attempts}</th><th>{x.status}</th><th>{x.rooms}</th></tr></thead>
@@ -102,7 +102,7 @@ function Room({ room, x, players, roles, busy, run, now }) {
         return <tr key={p.id} className={p.signed ? 'df-taken' : ''}>
           <td><b>{p.visualName || p.name}</b></td><td>{p.position}</td><td><span className="grade-badge">{p.rating}</span></td><td><b>{num(p.baseSalary)}</b></td><td title={x.salaryHint}>{num(p.baseSalary)}</td><td>{num(p.newBaseSalary)}{isAtBase(p.baseSalary, p.newBaseSalary) && <span className="base-badge">BASE</span>}</td>
           <td>{info?.change ? <span className={info.change > 0 ? 'pl-up' : 'pl-down'}>{info.change > 0 ? '▲' : '▼'} {Math.abs(info.change)}</span> : '—'}</td>
-          <td><div className="pl-roles">{isBase && <span className="role-badge pl-base-badge">{x.baseBadge}</span>}{rl.map(r => <span key={r.id} className="role-badge" style={{ backgroundColor: r.color, borderColor: r.color }}>{r.name}</span>)}</div></td>
+          <td><div className="pl-roles">{isBase && <span className="role-badge pl-base-badge">{x.baseBadge}</span>}{rl.map(r => <span key={r.id} className="role-badge" style={roleColors(r.color)}>{r.name}</span>)}</div></td>
           <td>{info?.card ? (info.card.noTeam && !info.card.customTeam ? x.noTeam : fill(x.stars, { s: info.card.stars ?? 0 })) + ' · ' + fill(x.cards, { n: info.card.cardCount }) : '—'}</td>
           <td className="actions">{p.signed ? <span className="pill muted"><i />{x.picked}</span> : room.ours.map(o => { const key = `pick:${o.id}:${p.id}`; const mine = room.turn?.userId === o.userId && !room.ended;
             return <button key={o.id} className="btn success small" disabled={!mine || busy[key] || o.picking} title={mine ? '' : x.waitingTurn} onClick={() => run(key, () => api.draft.pick(o.id, p.id))}>{busy[key] ? x.picking : fill(x.pick, { name: o.name })}</button>; })}</td>
@@ -132,7 +132,7 @@ function Drafted({ d, x, players, roles, toast }) {
       <SortTable><thead><tr><th></th><th>{x.player}</th><th>{x.value}</th><th>{x.salary}</th><th>{x.base}</th><th>{x.roles}</th><th></th></tr></thead><tbody>{rows.map(p => { const v = get(p); const info = players.get(p.id); const base = p.base ?? info?.base; const rl = (info?.roleIds || []).map(id => roles.find(r => r.id === id)).filter(Boolean); return <tr key={p.id + p.at}>
         <td>{p.listed ? null : <input type="checkbox" checked={v.checked} onChange={e => edit(p.id, { checked: e.target.checked })} />}</td>
         <td><b>{p.name}</b> <span className="muted-text">{p.position} · {p.rating}</span>{isAtBase(p.salary, base) && <span className="base-badge">BASE</span>}</td><td>{num(p.value)}</td><td>{num(p.salary)}</td><td>{num(base)}</td>
-        <td><div className="pl-roles">{info?.isBase && <span className="role-badge pl-base-badge">{x.baseBadge}</span>}{rl.map(r => <span key={r.id} className="role-badge" style={{ backgroundColor: r.color, borderColor: r.color }}>{r.name}</span>)}{!info?.isBase && !rl.length && <span className="muted-text">—</span>}</div></td>
+        <td><div className="pl-roles">{info?.isBase && <span className="role-badge pl-base-badge">{x.baseBadge}</span>}{rl.map(r => <span key={r.id} className="role-badge" style={roleColors(r.color)}>{r.name}</span>)}{!info?.isBase && !rl.length && <span className="muted-text">—</span>}</div></td>
         <td>{p.listed ? <span className="pill ok"><i />{x.listed}</span> : <><input className="eq-small" type="number" min="1" value={v.price} onChange={e => edit(p.id, { price: e.target.value })} /> <select value={v.currency} onChange={e => edit(p.id, { currency: e.target.value })}><option>APK</option><option>TIX</option></select></>}</td>
       </tr>; })}</tbody></SortTable>
     </div>)}</>;

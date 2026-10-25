@@ -8,12 +8,12 @@ const TEXT = {
   tr: {
     title: 'Hesap sağlığı', hint: '10 dakikada bir kontrol edilir', refresh: 'Şimdi kontrol et', checking: 'Kontrol ediliyor…', account: 'Hesap', salary: 'Maaş / Sınır', roster: 'Kadro', tk: 'TK', status: 'Durum', ok: 'Sorun yok', none: 'Henüz kontrol edilmedi.', onlyIssues: 'Yalnızca sorunlu hesaplar', allGood: 'Bütün hesaplar sorunsuz.',
     limits: 'Uyarı sınırları', lowTk: 'TK bunun altındaysa uyar', nearCap: 'Maaş sınırının yüzde kaçında uyar', rosterWarn: 'Kadro bu sayıya ulaşınca uyar', save: 'Kaydet', reset: 'Varsayılana dön', saved: 'Uyarı sınırları kaydedildi', defaultsHint: 'Kaydettiğin değerler yeni varsayılan olur.',
-    issue: { overCap: 'Maaş sınırı aşıldı', nearCap: 'Maaş sınırına yakın', rosterFull: 'Kadro dolu', lowTk: 'TK az', autoPlayError: 'Auto Play hatası' }
+    issue: { overCap: 'Maaş sınırı aşıldı', nearCap: 'Maaş sınırına yakın', rosterFull: 'Kadro dolu', lowTk: 'TK az', marketLock: 'Pazar kilitli (oyun ayarı)', autoPlayError: 'Auto Play hatası' }
   },
   en: {
     title: 'Account health', hint: 'checked every 10 minutes', refresh: 'Check now', checking: 'Checking…', account: 'Account', salary: 'Salary / Cap', roster: 'Roster', tk: 'TK', status: 'Status', ok: 'No problems', none: 'Not checked yet.', onlyIssues: 'Only accounts with problems', allGood: 'Every account is fine.',
     limits: 'Warning limits', lowTk: 'Warn when TK is below', nearCap: 'Warn at this % of the salary cap', rosterWarn: 'Warn when the roster reaches', save: 'Save', reset: 'Reset to default', saved: 'Warning limits saved', defaultsHint: 'The values you save become the new default.',
-    issue: { overCap: 'Over the salary cap', nearCap: 'Close to the salary cap', rosterFull: 'Roster full', lowTk: 'Low TK', autoPlayError: 'Auto Play error' }
+    issue: { overCap: 'Over the salary cap', nearCap: 'Close to the salary cap', rosterFull: 'Roster full', lowTk: 'Low TK', marketLock: 'Market locked (game setting)', autoPlayError: 'Auto Play error' }
   },
   get fil() { return filOf(this.en); }
 };

@@ -1,5 +1,6 @@
 import AccountHealthPanel from './AccountHealthPanel';
 import DailySummary from './DailySummary';
+import AccountAvatar from './AccountAvatar';
 import { useEffect, useMemo, useState } from 'react';
 import { filOf } from '../i18n-fil';
 
@@ -20,7 +21,7 @@ const TEXT = {
     ev: { pvp: 'PVP', salary: 'Maaş güncellemesi', stop: 'Auto Play durur', resume: 'Yeniden başlar', tournament: 'Turnuva', tReg: 'Turnuva kaydı', reset: 'Gün dönümü', reset2: 'Haklar sıfırlanır' },
     accounts: 'Hesaplar', problemsFirst: 'sorunlular üstte', account: 'Hesap', status: 'Durum', reward: 'Daily Reward', pvp: 'PVP', salary: 'Maaş / tavan', live: 'Canlı aktivite', all: 'Tümü →',
     st: { idle: 'Durdu', running: 'Çalışıyor', preparing: 'Hazırlanıyor', starting: 'Başlıyor', stopping: 'Duruyor', error: 'Hata', stopped: 'Durdu' },
-    issue: { overCap: 'Tavan aşıldı', nearCap: 'Tavana yakın', lowTk: 'TK düşük', rosterFull: 'Kadro dolu' },
+    issue: { overCap: 'Tavan aşıldı', nearCap: 'Tavana yakın', lowTk: 'TK düşük', rosterFull: 'Kadro dolu', marketLock: 'Pazar kilitli' },
     systems: 'Sistemler', idle: 'Boşta', running: 'Çalışıyor', paused: 'Duraklatıldı', error: 'Hata', done: 'Bitti',
     autoTrade: 'Auto Trade', autoTradeDone: 'Son çalıştırma: {bought} alındı · {converted} karta çevrildi',
     draft: 'Draft', draftLine: '{rooms} odada · {attempts} hesapta hak var', tournament: 'Turnuva', tournamentLine: '{joined} kayıt bu çalıştırmada',
@@ -37,7 +38,7 @@ const TEXT = {
     ev: { pvp: 'PVP', salary: 'Salary update', stop: 'Auto Play stops', resume: 'Starts again', tournament: 'Tournament', tReg: 'Tournament sign-up', reset: 'Day ends', reset2: 'Attempts reset' },
     accounts: 'Accounts', problemsFirst: 'problems first', account: 'Account', status: 'Status', reward: 'Daily Reward', pvp: 'PVP', salary: 'Salary / cap', live: 'Live activity', all: 'All →',
     st: { idle: 'Stopped', running: 'Running', preparing: 'Preparing', starting: 'Starting', stopping: 'Stopping', error: 'Error', stopped: 'Stopped' },
-    issue: { overCap: 'Over the cap', nearCap: 'Near the cap', lowTk: 'Low TK', rosterFull: 'Roster full' },
+    issue: { overCap: 'Over the cap', nearCap: 'Near the cap', lowTk: 'Low TK', rosterFull: 'Roster full', marketLock: 'Market locked' },
     systems: 'Systems', idle: 'Idle', running: 'Running', paused: 'Paused', error: 'Error', done: 'Done',
     autoTrade: 'Auto Trade', autoTradeDone: 'Last run: {bought} bought · {converted} converted',
     draft: 'Draft', draftLine: 'in {rooms} room(s) · {attempts} account(s) with attempts', tournament: 'Tournament', tournamentLine: '{joined} registered this run',
@@ -212,7 +213,7 @@ export default function HomePage({ state, t, go, msgText, toast = () => {} }) {
             const pct = h.cap && h.used != null ? Math.min(100, Math.round(h.used / h.cap * 100)) : null;
             const lowTk = (h.issues || []).some(i => i.kind === 'lowTk');
             return <tr key={a.id} onClick={() => go('autoplay')}>
-              <td><span className="cc-acc"><span className="cc-av" style={{ background: avColor(a.name) }}>{String(a.name).slice(0, 1).toUpperCase()}</span><b>{a.name}</b><small className="num">{x.level}{stats(a.id).level ?? '—'}</small></span></td>
+              <td><span className="cc-acc"><AccountAvatar name={a.name} url={h.avatarUrl} className="cc-av" /><b>{a.name}</b><small className="num">{x.level}{stats(a.id).level ?? '—'}</small></span></td>
               <td>{statusChip(a)}</td>
               <td><span className="cc-dots" aria-label={got != null ? `${got}/6` : '—'}>{[0, 1, 2, 3, 4, 5].map(i => <s key={i} className={got != null && i < got ? 'on' : ready && i === got ? 'rdy' : ''} />)}</span></td>
               <td className="num">{left != null ? `${left}/10` : '—'}</td>

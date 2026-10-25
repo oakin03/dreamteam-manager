@@ -57,6 +57,8 @@ class AccountHealth {
           cap: Number(info?.salaryCap) || null,
           used: Number(info?.totalSalaryUsed) || null,
           tk: Number.isFinite(Number(info?.funds)) ? Number(info.funds) : null,
+          avatarUrl: info?.avatarUrl || null,
+          marketLock: info?.isMarketLock === true,
           roster
         };
       }
@@ -79,6 +81,7 @@ class AccountHealth {
     }
     if (row.roster != null && row.roster >= limits.rosterWarn) out.push({ kind: 'rosterFull', level: 'warn', roster: row.roster });
     if (row.tk != null && row.tk < limits.lowTk) out.push({ kind: 'lowTk', level: 'warn', tk: row.tk });
+    if (row.marketLock) out.push({ kind: 'marketLock', level: 'warn' }); // game setting: market actions are refused
     if (worker?.status === 'error') out.push({ kind: 'autoPlayError', level: 'bad', message: worker.lastError || worker.message || '' });
     return out;
   }
