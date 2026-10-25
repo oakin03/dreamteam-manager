@@ -26,17 +26,15 @@ test('store reads one parsed copy and only updates its revision after a durable 
   assert.equal(JSON.parse(fs.readFileSync(store.files.accounts, 'utf8'))[0].id, 'side');
 });
 
-test('total usable APK floors the final sum, preserving fractional account contributions', t => {
+test('total usable APK adds the main account as it is and the side accounts after their cut', t => {
   const store = temporaryStore(t);
-  store.saveAccounts([{ id: 'main' }, { id: 'side' }]);
-  store.saveAccountProfile({ mainAccountId: 'main', accounts: { main: { apk: 298 }, side: { apk: 100 } } });
+  store.saveAccounts([{ id: 'main' }, { id: 'side' }, { id: 'small' }]);
+  store.saveAccountProfile({ mainAccountId: 'main', accounts: { main: { apk: 298 }, side: { apk: 106 }, small: { apk: 20 } } });
   const profile = new AccountProfileService({ store }).snapshot();
-  assert.equal(profile.totalUsableApk, 395);
-  assert.equal(profile.effectiveApk.side, 97);
-  for (const fraction of [95.05, 95.9]) {
-    store.saveAccountProfile({ mainAccountId: 'main', accounts: { main: { apk: 300 }, side: { apk: fraction / .97 } } });
-    assert.equal(new AccountProfileService({ store }).snapshot().totalUsableApk, 395);
-  }
+  assert.equal(profile.effectiveApk.main, 298);
+  assert.equal(profile.effectiveApk.side, 100);   // 5.3 -> 6
+  assert.equal(profile.effectiveApk.small, 17);   // 1 -> minimum 3
+  assert.equal(profile.totalUsableApk, 415);
 });
 
 test('unchanged Stadium data does not rewrite account profiles or notify the UI', t => {

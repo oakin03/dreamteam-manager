@@ -145,14 +145,14 @@ class ProvingBase {
   }
 
   _report(stopped) {
-    const final = ['done', 'noAttempts', 'error', 'locked'];
+    const final = ['done', 'noAttempts', 'error', 'locked', ...(this.finalStatuses || [])];
     const rows = Object.values(this.run.accounts).map(r => ({ ...r, status: final.includes(r.status) ? r.status : (stopped ? 'stopped' : r.status) }));
     const report = { startedAt: this.run.startedAt, finishedAt: new Date(this.now()).toISOString(), source: this.run.source, rows };
     const settings = this.store.getSettings?.() || {};
     this.store.saveSettings?.({ ...settings, [this.reportKey]: report });
     const played = rows.reduce((n, r) => n + r.played, 0);
     const won = rows.reduce((n, r) => n + r.won, 0);
-    const done = rows.filter(r => r.status === 'done' || r.status === 'noAttempts').length;
+    const done = rows.filter(r => ['done', 'noAttempts', ...(this.finalStatuses || [])].includes(r.status)).length;
     this._log(null, done === rows.length ? 'success' : 'warning', 'summary', { done, total: rows.length, played, won }, `${this.taskName} result · ${done}/${rows.length} account(s) finished · ${played} match(es) · ${won} won`);
   }
 }
@@ -315,4 +315,334 @@ class EliteAscentService extends ProvingBase {
   }
 }
 
-module.exports = { DailyBossService, EliteAscentService };
+// Professional (read from the game client and tried live 2026-10-25). Reads on /socket/ with the
+// cookie and the user id in the payload (no register):
+//   prof:load {userId} -> professionalUserData {dailyProfessionalMatches (left today),
+//        propsRefillsUsed (max 2), profMatchCards, refillsUsed (TIX refills — never used),
+//        professionalSeasonCompleted}
+//   prof:refillProps {userId} -> refillPropsSuccess / refillPropsError (spends a Prof Match Card)
+// Regular season (82 games):
+//   season:checkConference -> season:checkConferenceSuccess {conference|null}
+//   season:selectConference {userId, conference} -> …Success; season:generateSchedule -> …Success
+//   season:loadSchedule -> season:loadScheduleSuccess {schedule[{id, gameNumber, status SCHEDULED|COMPLETED,
+//        opponentId, opponent{teamName}, match{winnerId}}]}
+//   /simulation-socket/ playProfessionalMatch {userId, opponentId, scheduleId} (ack)
+// Playoffs (after the season): season:generatePlayoffs -> …Success; playoff:loadEast / loadWest ->
+//   {playoff{brackets[{round, team1{id}, team2{id}, status, games[{id, status, winnerId}]}]}}
+//   playProfessionalMatch {…, scheduleId: game.id, matchType: 'PLAYOFF'}; the finals winner
+//   (4 wins in NBA_FINALS) goes on to the Hall of Fame.
+// Hall of Fame (the user picks the opponent): hof:loadTeams -> hof:loadTeamsSuccess {hofSeason{isCompleted},
+//   teams[{teamUserId, displayName, status DEFEATED|…}], attempts{dailyProfessionalMatches}} or
+//   hof:loadTeamsError "No active HOF season"; createHOFSeason -> playoff:createHOFSeasonSuccess;
+//   /simulation-socket/ playHOFMatch {userId, opponentId: teamUserId, matchType: 'HOF'} (ack).
+//   Team strength: getTeamInfo {userId} -> teamInfoData {players{starters, bench}} (offense/defense sums).
+// After the HOF (read from the game client 2026-10-25, not tried live): Honor Way (11 teams) and Legacy
+// Way (5 teams), played in a fixed order (the lowest "order" not yet beaten):
+//   hof:createHonorWaySeason -> hof:createHonorWaySeasonSuccess; honorway:loadTeams -> honorway:loadTeamsSuccess
+//        {honorWaySeason{isCompleted}, teams[{teamUserId, displayName, order, status}]}; playHonorWayMatch {…, matchType:'HONOR_WAY'}
+//   honorway:createLegacyWaySeason -> …Success; legacyway:loadTeams -> legacyway:loadTeamsSuccess {legacyWaySeason, teams};
+//        playLegacyWayMatch {…, matchType:'LEGACY_WAY'}
+// Eliminated in the playoffs: playoffs:reset {userId} -> playoffs:resetSuccess (back to the regular season);
+// a season with every game played: season:reset -> season:resetSuccess (new conference and schedule).
+const PROPS_REFILL_MAX = 2;
+const CONFERENCES = ['EAST', 'WEST'];
+
+class ProfessionalService extends ProvingBase {
+  constructor(deps) {
+    super(deps, { taskName: 'Professional', prefix: 'pf', reportKey: 'professionalReport' });
+    this.finalStatuses = ['eliminated', 'champion', 'needPick', 'hofDone', 'legacyDone'];
+    this.random = deps.random || Math.random;
+    this.strength = {}; // teamUserId -> { off, def, name, at }
+  }
+
+  async _read(account, signal) {
+    const session = await this.sessions.get(account, { owner: 'professional' });
+    const gs = await GameSocket.open({ createSocket: this.createSocket, cookie: session.cookieHeader, signal });
+    return { gs, session };
+  }
+
+  _q(gs, event, payload, ok, signal, timeoutMs = 12000) {
+    return gs.call(event, payload, ok, { signal, timeoutMs, errorEvents: ok.endsWith('Success') ? [ok.replace(/Success$/, 'Error')] : [] });
+  }
+
+  // Who won a finished season or playoff game (null: not known yet).
+  async _winner(gs, userId, stage, gameId, signal) {
+    if (stage === 'season') {
+      const s = await this._q(gs, 'season:loadSchedule', { userId }, 'season:loadScheduleSuccess', signal).catch(() => null);
+      return (s?.schedule || []).find(g => g.id === gameId)?.match?.winnerId || null;
+    }
+    for (const b of await this._playoffs(gs, userId, signal)) {
+      const g = (b.games || []).find(x => x.id === gameId);
+      if (g) return g.winnerId || null;
+    }
+    return null;
+  }
+
+  async _prof(gs, userId, signal) {
+    const p = await gs.call('prof:load', { userId }, 'professionalUserData', { signal, timeoutMs: 12000 });
+    if (!p?.success) throw new Error(p?.error || 'Professional data could not be read.');
+    return { left: Number(p.dailyProfessionalMatches) || 0, propsUsed: Number(p.propsRefillsUsed) || 0, cards: Number(p.profMatchCards) || 0, seasonDone: Boolean(p.professionalSeasonCompleted) };
+  }
+
+  async _hof(gs, userId, signal) {
+    const h = await this._q(gs, 'hof:loadTeams', { userId }, 'hof:loadTeamsSuccess', signal).catch(() => null);
+    if (!h || h.success === false || !h.hofSeason) return null;
+    return { completed: Boolean(h.hofSeason.isCompleted), teams: (h.teams || []).map(t => ({ id: t.teamUserId, name: t.displayName || '?', defeated: t.status === 'DEFEATED', playable: t.status === 'AVAILABLE' || !t.status })) };
+  }
+
+  // The HOF opponent chosen on the page (it can be picked while the run goes on). Without one
+  // the account waits while other accounts of the run still play, then ends as "needPick".
+  async _waitPick(id, teams, signal) {
+    const chosen = () => {
+      const pick = this.store.getSettings?.()?.proHofPicks?.[id] || this.run.accounts[id].target;
+      return teams.find(t => t.id === pick && t.playable && !t.defeated) || null;
+    };
+    let logged = false;
+    for (;;) {
+      const team = chosen();
+      if (team) return team;
+      if (!logged) { this._row(id, { status: 'needPick' }); this._log(id, 'warning', 'needPick', {}, 'Hall of Fame · choose an opponent'); logged = true; }
+      const others = Object.values(this.run.accounts).filter(r => r.accountId !== id && !['done', 'noAttempts', 'error', 'locked', 'stopped', ...this.finalStatuses].includes(r.status));
+      if (!others.length) return null;
+      await sleep(Math.max(this.timing.pollMs, 2000), signal);
+    }
+  }
+
+  // Honor Way / Legacy Way: the season and its teams (null when there is none).
+  async _way(gs, userId, kind, signal) {
+    const ev = kind === 'honor' ? 'honorway' : 'legacyway';
+    const h = await this._q(gs, `${ev}:loadTeams`, { userId }, `${ev}:loadTeamsSuccess`, signal).catch(() => null);
+    const season = h && h.success !== false ? (kind === 'honor' ? h.honorWaySeason : h.legacyWaySeason) : null;
+    if (!season) return null;
+    const teams = (h.teams || []).map(t => ({ id: t.teamUserId, name: t.displayName || t.teamUser?.teamName || '?', defeated: t.status === 'DEFEATED', order: Number(t.order) || 0 }));
+    const next = teams.filter(t => !t.defeated).sort((a, b) => a.order - b.order)[0] || null;
+    return { completed: Boolean(season.isCompleted) || (teams.length > 0 && !next), teams, next };
+  }
+
+  async _playoffs(gs, userId, signal) {
+    const out = [];
+    for (const side of ['East', 'West']) {
+      const r = await this._q(gs, `playoff:load${side}`, { userId }, `playoff:load${side}Success`, signal).catch(() => null);
+      if (r?.playoff?.brackets) out.push(...r.playoff.brackets);
+    }
+    return out;
+  }
+
+  // Where an account is: season (with the next game), playoffs, champion, eliminated, HOF.
+  async _stage(id, gs, userId, signal) {
+    const prof = await this._prof(gs, userId, signal);
+    const base = { ...prof, readAt: new Date(this.now()).toISOString() };
+    for (const kind of ['legacy', 'honor']) {
+      const way = await this._way(gs, userId, kind, signal);
+      if (!way) continue;
+      const stage = kind === 'legacy' ? (way.completed ? 'legacyDone' : 'legacy') : (way.completed ? 'honorDone' : 'honor');
+      return (this.info[id] = { ...base, stage, teams: way.teams, defeated: way.teams.filter(t => t.defeated).length, next: way.next && { opponentId: way.next.id, opponent: way.next.name } });
+    }
+    const hof = await this._hof(gs, userId, signal);
+    if (hof) {
+      const info = { ...base, stage: hof.completed ? 'hofDone' : 'hof', teams: hof.teams, defeated: hof.teams.filter(t => t.defeated).length };
+      if (!hof.completed) await this._rate(gs, info.teams, signal);
+      info.teams = info.teams.map(t => ({ ...t, ...(this.strength[t.id] ? { off: this.strength[t.id].off, def: this.strength[t.id].def } : {}) }));
+      return (this.info[id] = info);
+    }
+    if (!prof.seasonDone) {
+      const sched = await this._q(gs, 'season:loadSchedule', { userId }, 'season:loadScheduleSuccess', signal).catch(() => null);
+      const games = sched?.schedule || [];
+      const done = games.filter(g => g.status === 'COMPLETED');
+      const next = games.filter(g => g.status === 'SCHEDULED').sort((a, b) => (a.gameNumber || 0) - (b.gameNumber || 0))[0] || null;
+      const won = done.filter(g => g.match?.winnerId === userId).length;
+      return (this.info[id] = { ...base, stage: !games.length ? 'noSeason' : next ? 'season' : 'seasonOver', played: done.length, total: games.length, won, lost: done.length - won, next: next && { id: next.id, opponentId: next.opponentId, opponent: next.opponent?.teamName || '?', n: next.gameNumber } });
+    }
+    const brackets = await this._playoffs(gs, userId, signal);
+    if (!brackets.length) return (this.info[id] = { ...base, stage: 'noPlayoffs' });
+    const finals = brackets.find(b => b.round === 'NBA_FINALS');
+    if (finals) {
+      const wins = tid => (finals.games || []).filter(g => g.status === 'COMPLETED' && g.winnerId === tid).length;
+      const champ = wins(finals.team1?.id) >= 4 ? finals.team1?.id : wins(finals.team2?.id) >= 4 ? finals.team2?.id : null;
+      if (champ) return (this.info[id] = { ...base, stage: champ === userId ? 'champion' : 'eliminated' });
+    }
+    const mine = b => b.team1?.id === userId || b.team2?.id === userId;
+    const order = [finals, ...brackets.filter(b => b.round !== 'NBA_FINALS')].filter(Boolean);
+    for (const b of order) {
+      if (!mine(b) || b.status === 'COMPLETED') continue;
+      const g = (b.games || []).find(x => x.status === 'SCHEDULED');
+      if (g) {
+        const other = b.team1.id === userId ? b.team2 : b.team1;
+        const w = (b.games || []).filter(x => x.status === 'COMPLETED' && x.winnerId === userId).length;
+        const l = (b.games || []).filter(x => x.status === 'COMPLETED' && x.winnerId && x.winnerId !== userId).length;
+        return (this.info[id] = { ...base, stage: 'playoffs', round: b.round, seriesWon: w, seriesLost: l, next: { id: g.id, opponentId: other.id, opponent: other.teamName || other.name || '?' } });
+      }
+    }
+    return (this.info[id] = { ...base, stage: 'eliminated' });
+  }
+
+  // Offense / defense sums of a HOF team (as the game's team card shows them), cached.
+  async _rate(gs, teams, signal) {
+    for (const t of teams) {
+      if (!t.id || this.strength[t.id]) continue;
+      const d = await gs.call('getTeamInfo', { userId: t.id }, 'teamInfoData', { signal, timeoutMs: 8000 }).catch(() => null);
+      if (!d?.success || !d.players) continue;
+      const all = [...(d.players.starters || []), ...(d.players.bench || [])];
+      const boost = (p, k) => Object.values(p.equippedItems || {}).reduce((n, it) => n + (Number(it?.[k]) || 0), 0);
+      this.strength[t.id] = { off: all.reduce((n, p) => n + (Number(p.offense) || 0) + boost(p, 'offenseBoost'), 0), def: all.reduce((n, p) => n + (Number(p.defense) || 0) + boost(p, 'defenseBoost'), 0), name: d.teamName || t.name };
+    }
+  }
+
+  // Stage, matches left and (for HOF) the opponents with their strength.
+  async status(accountIds) {
+    const ids = accountIds || this.store.getAccounts().map(a => a.id);
+    for (const id of ids) {
+      const account = this.store.getAccounts().find(a => a.id === id);
+      if (!account) continue;
+      let gs = null;
+      try { const r = await this._read(account); gs = r.gs; await this._stage(id, gs, r.session.userId); }
+      catch (error) { this.info[id] = { stage: 'error', error: error.message, readAt: new Date(this.now()).toISOString() }; }
+      finally { try { gs?.close(); } catch {} }
+      this.onChanged();
+    }
+    return this.snapshot();
+  }
+
+  // Champion without a HOF season: create it (the user asked for it on the page).
+  async createHof(id) {
+    const account = this.store.getAccounts().find(a => a.id === id);
+    if (!account) throw new Error('Account not found.');
+    const { gs, session } = await this._read(account);
+    try {
+      const r = await gs.call('createHOFSeason', { userId: session.userId }, 'playoff:createHOFSeasonSuccess', { timeoutMs: 20000, errorEvents: ['playoff:createHOFSeasonError'] });
+      if (r?.success === false && !/already has an active HOF/i.test(String(r.error))) throw new Error(r.error || 'Hall of Fame could not be created.');
+      this._log(id, 'success', 'hofCreated', {}, 'Hall of Fame season created');
+      await this._stage(id, gs, session.userId);
+    } finally { try { gs.close(); } catch {} this.onChanged(); }
+    return this.snapshot();
+  }
+
+  // Out of matches: one Prof Match Card refill ("Props", max 2 a day). TIX refills are never used.
+  async _refill(id, gs, userId, prof, signal) {
+    if (prof.propsUsed >= PROPS_REFILL_MAX || prof.cards <= 0) return false;
+    const r = await gs.call('prof:refillProps', { userId }, 'refillPropsSuccess', { signal, timeoutMs: 15000, errorEvents: ['refillPropsError'] });
+    if (!r?.success) { this._log(id, 'warning', 'refillFailed', { error: String(r?.error || 'refused') }, `Match card refill refused: ${r?.error || 'refused'}`); return false; }
+    this._log(id, 'info', 'refilled', { n: prof.propsUsed + 1, cards: prof.cards - 1 }, `Prof Match Card used · refill ${prof.propsUsed + 1}/${PROPS_REFILL_MAX}`);
+    return true;
+  }
+
+  // Moves an account past the stages that need no match: new season, playoffs, playoff reset
+  // after an elimination, Honor Way after the HOF, Legacy Way after Honor Way.
+  async _advance(id, gs, userId, info, signal) {
+    const make = async (event, ok, payload, timeoutMs = 30000) => {
+      const r = await gs.call(event, payload, ok, { signal, timeoutMs, errorEvents: [ok.replace(/Success$/, 'Error')] });
+      if (r?.success === false && !/already has an active/i.test(String(r.error || r.message))) throw new Error(r.error || r.message || `${event} failed.`);
+    };
+    for (let step = 0; step < 8; step++) {
+      if (info.stage === 'noSeason') {
+        const c = await this._q(gs, 'season:checkConference', { userId }, 'season:checkConferenceSuccess', signal).catch(() => null);
+        if (!c?.conference) {
+          const conference = CONFERENCES[Math.floor(this.random() * 2)];
+          const s = await this._q(gs, 'season:selectConference', { userId, conference }, 'season:selectConferenceSuccess', signal);
+          if (s?.success === false) throw new Error(s.error || 'Conference could not be chosen.');
+          this._log(id, 'info', 'conference', { conference }, `New season · conference ${conference}`);
+        }
+        const g = await this._q(gs, 'season:generateSchedule', { userId }, 'season:generateScheduleSuccess', signal, 30000);
+        if (g?.success === false) throw new Error(g.error || 'Schedule could not be created.');
+      } else if (info.stage === 'noPlayoffs') {
+        const g = await this._q(gs, 'season:generatePlayoffs', { userId }, 'season:generatePlayoffsSuccess', signal, 30000);
+        if (g?.success === false) throw new Error(g.error || 'Playoffs could not be created.');
+        this._log(id, 'success', 'playoffsReady', {}, 'Season complete · playoffs created');
+      } else if (info.stage === 'eliminated') {
+        this._log(id, 'warning', 'eliminated', {}, 'Eliminated from the playoffs');
+        await make('playoffs:reset', 'playoffs:resetSuccess', { userId });
+        this._log(id, 'info', 'playoffReset', {}, 'Playoffs reset · back to the regular season');
+      } else if (info.stage === 'seasonOver') {
+        await make('season:reset', 'season:resetSuccess', { userId });
+        this._log(id, 'info', 'seasonReset', {}, 'Season reset · a new season starts');
+      } else if (info.stage === 'hofDone') {
+        this._log(id, 'success', 'hofDone', {}, 'Hall of Fame completed');
+        await make('hof:createHonorWaySeason', 'hof:createHonorWaySeasonSuccess', { userId });
+        this._log(id, 'success', 'honorCreated', {}, 'Honor Way season created');
+      } else if (info.stage === 'honorDone') {
+        await make('honorway:createLegacyWaySeason', 'honorway:createLegacyWaySeasonSuccess', { userId });
+        this._log(id, 'success', 'legacyCreated', {}, 'Honor Way completed · Legacy Way season created');
+      } else return info;
+      info = await this._stage(id, gs, userId, signal);
+    }
+    throw new Error(`Professional stage "${info.stage}" could not be passed.`);
+  }
+
+  async _account(id, signal) {
+    const account = this.store.getAccounts().find(a => a.id === id);
+    this._row(id, { status: 'login' });
+    const { gs, session } = await this._read(account, signal);
+    const userId = session.userId;
+    let sim = null;
+    let failures = 0;
+    try {
+      let info = await this._advance(id, gs, userId, await this._stage(id, gs, userId, signal), signal);
+      this._row(id, { stage: info.stage, left: info.left });
+      for (;;) {
+        if (['champion', 'legacyDone'].includes(info.stage)) {
+          this._row(id, { status: info.stage });
+          this._log(id, 'success', info.stage, {}, { champion: 'Playoffs won · Hall of Fame is next', legacyDone: 'Legacy Way completed' }[info.stage]);
+          return;
+        }
+        let opponent = null;
+        let payload;
+        if (info.stage === 'hof') {
+          opponent = await this._waitPick(id, info.teams, signal);
+          if (!opponent) return;
+          payload = { userId, opponentId: opponent.id, matchType: 'HOF' };
+        } else if (info.next && (info.stage === 'honor' || info.stage === 'legacy')) {
+          opponent = { id: info.next.opponentId, name: info.next.opponent };
+          payload = { userId, opponentId: opponent.id, matchType: info.stage === 'honor' ? 'HONOR_WAY' : 'LEGACY_WAY' };
+        } else if (info.next) {
+          opponent = { id: info.next.opponentId, name: info.next.opponent };
+          payload = info.stage === 'playoffs' ? { userId, opponentId: opponent.id, scheduleId: info.next.id, matchType: 'PLAYOFF' } : { userId, opponentId: opponent.id, scheduleId: info.next.id };
+        } else throw new Error('No game to play was found.');
+        if (info.left <= 0) {
+          if (!(await this._refill(id, gs, userId, info, signal))) break;
+          info = await this._stage(id, gs, userId, signal);
+          if (info.left <= 0) break;
+          continue;
+        }
+        await this._waitOtherMatch(id, userId, signal);
+        if (!sim) sim = await GameSocket.open({ createSocket: this.createSocket, path: SIM_PATH, cookie: session.cookieHeader, signal });
+        this._row(id, { status: 'starting', enemy: opponent.name });
+        const r = await sim.ack({ hof: 'playHOFMatch', honor: 'playHonorWayMatch', legacy: 'playLegacyWayMatch' }[info.stage] || 'playProfessionalMatch', payload, { signal, timeoutMs: 20000 });
+        if (!r?.success) {
+          const msg = String(r?.error || r?.message || 'refused');
+          failures++;
+          this._log(id, 'warning', 'startFailed', { error: msg, n: failures }, `Professional match refused: ${msg}`);
+          // HOF teams can be beaten only once: an "already beaten" refusal drops that team
+          const beaten = ['hof', 'honor', 'legacy'].includes(info.stage) && /defeat|beaten|already/i.test(msg);
+          if (failures >= MAX_FAILURES && !beaten) throw new Error(msg);
+          info = await this._stage(id, gs, userId, signal);
+          if (beaten) { failures = 0; for (const t of info.teams || []) if (t.id === opponent.id) t.defeated = true; }
+          await sleep(this.timing.pollMs, signal);
+          continue;
+        }
+        failures = 0;
+        const n = this.run.accounts[id].played + 1;
+        const stage = info.stage;
+        const before = info;
+        this._log(id, 'info', 'matchStarted', { n, stage, enemy: opponent.name }, `Professional match ${n} started · ${stage} · ${opponent.name}`);
+        await this._waitMatchEnd(id, userId, signal);
+        const ladder = ['hof', 'honor', 'legacy'].includes(stage);
+        const winner = ladder ? null : await this._winner(gs, userId, stage, before.next.id, signal);
+        info = await this._stage(id, gs, userId, signal);
+        const beatenNow = () => Boolean(info.teams?.find(t => t.id === opponent.id)?.defeated);
+        // the HOF result can show up a little late: read once more before calling it a loss
+        if (ladder && info.stage === stage && !beatenNow()) { await sleep(Math.max(this.timing.pollMs, 4000), signal); info = await this._stage(id, gs, userId, signal); }
+        const won = ladder ? (info.stage !== stage || beatenNow()) : winner === userId;
+        const row = this.run.accounts[id];
+        this._row(id, { played: n, won: row.won + (won ? 1 : 0), lost: row.lost + (won ? 0 : 1), left: info.left, stage: info.stage, last: won ? 'won' : 'lost' });
+        this._log(id, won ? 'success' : 'warning', won ? 'matchWon' : 'matchLost', { n, stage, enemy: opponent.name, result: won ? 'won' : 'lost', left: info.left }, `Professional match ${n} · ${opponent.name} · ${won ? 'won' : 'lost'} · ${info.left} match(es) left`);
+        info = await this._advance(id, gs, userId, info, signal);
+      }
+    } finally {
+      try { sim?.close(); } catch {}
+      try { gs.close(); } catch {}
+    }
+    this._row(id, { status: this.run.accounts[id].played ? 'done' : 'noAttempts', left: 0 });
+  }
+}
+
+module.exports = { DailyBossService, EliteAscentService, ProfessionalService };

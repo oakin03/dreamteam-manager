@@ -39,7 +39,8 @@ const { TournamentService } = require('./services/tournament-service.cjs');
 const { DailyRoutineService } = require('./services/daily-routine-service.cjs');
 const { PvpService } = require('./services/pvp-service.cjs');
 const { GoUpService } = require('./services/goup-service.cjs');
-const { DailyBossService, EliteAscentService } = require('./services/proving-service.cjs');
+const { DailyBossService, EliteAscentService, ProfessionalService } = require('./services/proving-service.cjs');
+const { TkTransferService } = require('./services/tk-transfer-service.cjs');
 const { ActivateService } = require('./services/activate-service.cjs');
 const { PropService } = require('./services/prop-service.cjs');
 const { QuizService } = require('./services/quiz-service.cjs');
@@ -85,6 +86,10 @@ let props;
 let eliteAscent;
 let bossDone = null;
 let ascentDone = null;
+let professional;
+let tkTransfer;
+let tkDone = null;
+let proDone = null;
 let quizDone = null;
 let buy;
 let tower;
@@ -141,6 +146,8 @@ function snapshot({ incremental = false } = {}) {
     pvp: pvp?.snapshot() || { running: false, run: null, lastReport: null },
     dailyBoss: dailyBoss?.snapshot() || { running: false, run: null, info: {}, bosses: [] },
     eliteAscent: eliteAscent?.snapshot() || { running: false, run: null, info: {} },
+    professional: professional?.snapshot() || { running: false, run: null, info: {} },
+    tkTransfer: tkTransfer?.snapshot() || { running: false, run: null, config: null, lastReport: null },
     goup: goup?.snapshot() || { running: false, run: null, points: {}, event: null, lastReport: null },
     quiz: quiz?.snapshot() || { running: false, run: null, bankSize: 0, lastReport: null },
     cheer: cheer?.snapshot() || { busy: false, last: null },
@@ -202,6 +209,11 @@ const DONE_NOTES = {
   'so.newMessage': p => ({ tr: ['Yeni mesaj', `${p.from} · ${p.count} okunmamış`], en: ['New message', `${p.from} · ${p.count} unread`] }),
   'so.newRequest': p => ({ tr: ['Yeni arkadaşlık isteği', `${p.from}`], en: ['New friend request', `${p.from}`] }),
   'bo.summary': p => ({ tr: ['Daily Boss bitti', `${p.done}/${p.total} hesap · ${p.played} maç · ${p.won} galibiyet`], en: ['Daily Boss finished', `${p.done}/${p.total} account(s) · ${p.played} match(es) · ${p.won} won`] }),
+  'tk.doneTarget': p => ({ tr: ['TK aktarımı bitti', `${p.tk} TK aktarıldı · ${p.apk} APK harcandı`], en: ['TK transfer finished', `${p.tk} TK transferred · ${p.apk} APK spent`] }),
+  'tk.apkOut': p => ({ tr: ['APK bitti · TK aktarımı durdu', `${p.tk} TK aktarıldı · ${p.apk} APK harcandı`], en: ['APK ran out · TK transfer stopped', `${p.tk} TK transferred · ${p.apk} APK spent`] }),
+  'tk.noListings': p => ({ tr: ['TK aktarımı durdu · uygun ilan kalmadı', `${p.tk} TK aktarıldı · ${p.apk} APK harcandı`], en: ['TK transfer stopped · no usable listing left', `${p.tk} TK transferred · ${p.apk} APK spent`] }),
+  'tk.summaryError': p => ({ tr: ['TK aktarımı hatayla durdu', `${p.tk} TK aktarıldı · ${p.apk} APK harcandı`], en: ['TK transfer stopped with an error', `${p.tk} TK transferred · ${p.apk} APK spent`] }),
+  'pf.summary': p => ({ tr: ['Professional bitti', `${p.done}/${p.total} hesap · ${p.played} maç · ${p.won} galibiyet`], en: ['Professional finished', `${p.done}/${p.total} account(s) · ${p.played} match(es) · ${p.won} won`] }),
   'ea.summary': p => ({ tr: ['Elite Ascent bitti', `${p.done}/${p.total} hesap · ${p.played} maç · ${p.won} galibiyet`], en: ['Elite Ascent finished', `${p.done}/${p.total} account(s) · ${p.played} match(es) · ${p.won} won`] }),
   'ac.summary': p => ({ tr: ['Kart aktivasyonu bitti', `${p.count} aktif edildi · ${p.failed} başarısız`], en: ['Card activation finished', `${p.count} activated · ${p.failed} failed`] }),
   'cs.summary': p => ({ tr: ['Chat bitti', `${p.sent} mesaj gönderildi · ${p.failed} başarısız`], en: ['Chat finished', `${p.sent} message(s) sent · ${p.failed} failed`] })
@@ -306,15 +318,15 @@ async function pauseServicesFor(accountIds, taskName, { prefix = 'sc', logTask =
       resume.push(['PVP', () => startPvpManual(active)]);
     }
   }
-  for (const [svc, label, getDone] of [[dailyBoss, 'Daily Boss', () => bossDone], [eliteAscent, 'Elite Ascent', () => ascentDone]]) {
+  for (const [svc, label, getDone] of [[dailyBoss, 'Daily Boss', () => bossDone], [eliteAscent, 'Elite Ascent', () => ascentDone], [professional, 'Professional', () => proDone]]) {
     const snap = svc.snapshot();
     if (skipAutoBuy || !snap.running) continue;
-    const active = Object.values(snap.run?.accounts || {}).filter(r => !['done', 'noAttempts', 'locked', 'error', 'stopped'].includes(r.status)).map(r => r.accountId);
+    const active = Object.values(snap.run?.accounts || {}).filter(r => !['done', 'noAttempts', 'locked', 'error', 'stopped', 'eliminated', 'champion', 'needPick', 'hofDone'].includes(r.status)).map(r => r.accountId);
     if (!overlap(active)) continue;
     const plan = Object.fromEntries(active.map(id => [id, snap.run.accounts[id].target]));
     svc.stop();
     await getDone()?.catch(() => {});
-    resume.push([label, () => startProvingManual(svc, plan, label, label === 'Daily Boss' ? 'bo' : 'ea', p => { if (label === 'Daily Boss') bossDone = p; else ascentDone = p; })]);
+    resume.push([label, () => startProvingManual(svc, plan, label, { 'Daily Boss': 'bo', 'Elite Ascent': 'ea', Professional: 'pf' }[label], p => { if (label === 'Daily Boss') bossDone = p; else if (label === 'Elite Ascent') ascentDone = p; else proDone = p; })]);
   }
   const gu = goup.snapshot();
   if (!skipAutoBuy && gu.running) {
@@ -622,6 +634,8 @@ function initServices() {
   goup = new GoUpService({ store, activity, gameHealth, sessions: gameSessions, onChanged: emitState });
   dailyBoss = new DailyBossService({ store, activity, gameHealth, sessions: gameSessions, onChanged: emitState });
   eliteAscent = new EliteAscentService({ store, activity, gameHealth, sessions: gameSessions, onChanged: emitState });
+  professional = new ProfessionalService({ store, activity, gameHealth, sessions: gameSessions, onChanged: emitState });
+  tkTransfer = new TkTransferService({ store, activity, sessions: gameSessions, onChanged: emitState });
   quiz = new QuizService({ store, activity, gameHealth, sessions: gameSessions, onChanged: emitState });
   cheer = new CheerService({ store, activity, gameHealth, sessions: gameSessions, onChanged: emitState });
   chat = new ChatService({ store, activity, gameHealth, sessions: gameSessions, onChanged: emitState });
@@ -912,6 +926,19 @@ function registerIpc() {
   ipcMain.handle('boss:stop', async () => { dailyBoss.stop(); return dailyBoss.snapshot(); });
   ipcMain.handle('boss:status', async (_event, accountIds) => dailyBoss.status(Array.isArray(accountIds) ? accountIds : null));
   ipcMain.handle('ascent:start', async (_event, plan) => startProvingManual(eliteAscent, plan, 'Elite Ascent', 'ea', p => { ascentDone = p; }));
+  // TK transfer: Auto Play on the chosen accounts is stopped first and started again afterwards.
+  ipcMain.handle('tk:start', async (_event, raw) => {
+    const config = tkTransfer.validate(raw || {});
+    if (tkTransfer.snapshot().running) throw new Error('TK transfer is already running.');
+    const resume = await pauseTasksFor([config.mainId, ...config.sideIds], 'TK Transfer', 'tk');
+    tkDone = tkTransfer.runAndWait(config).catch(() => {}).finally(resume);
+    return tkTransfer.snapshot();
+  });
+  ipcMain.handle('tk:stop', async () => { tkTransfer.stop(); return tkTransfer.snapshot(); });
+  ipcMain.handle('pro:start', async (_event, plan) => startProvingManual(professional, plan, 'Professional', 'pf', p => { proDone = p; }));
+  ipcMain.handle('pro:stop', async () => { professional.stop(); return professional.snapshot(); });
+  ipcMain.handle('pro:status', async (_event, accountIds) => professional.status(Array.isArray(accountIds) ? accountIds : null));
+  ipcMain.handle('pro:createHof', async (_event, accountId) => professional.createHof(accountId));
   ipcMain.handle('ascent:stop', async () => { eliteAscent.stop(); return eliteAscent.snapshot(); });
   ipcMain.handle('ascent:status', async (_event, accountIds) => eliteAscent.status(Array.isArray(accountIds) ? accountIds : null));
   ipcMain.handle('goup:start', async (_event, { accountIds, mode, gapSec } = {}) => startGoUpManual(Array.isArray(accountIds) ? accountIds : [], { mode, gapSec }));
@@ -963,6 +990,8 @@ async function shutdownServices() {
     () => activate?.stop(),
     () => dailyBoss?.stop(),
     () => eliteAscent?.stop(),
+    () => professional?.stop(),
+    () => tkTransfer?.stop(),
     () => quiz?.stop(),
     () => chat?.stop(),
     () => cheer?.stop(),

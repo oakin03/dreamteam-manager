@@ -154,14 +154,16 @@ function parseUserBasicInfo(payload) {
   }
 }
 
-// Non-main accounts below 20 cannot be used, 20-49 count fully and larger
-// balances lose the 3% transfer fee. Applies to APK and TIX alike.
-function usableAmount(value, isMain) {
+// APK / TIX of a side account if it were all moved to the main account (user rule
+// 2026-10-25, TIX the same): a 5% cut rounded up to a whole number, at least 3. The main
+// account keeps its balance as it is.
+const APK_CUT_RATE = 5;   // percent
+const APK_CUT_MIN = 3;
+function usableApk(value, isMain) {
   const amount = Math.max(0, Number(value || 0));
   if (isMain) return amount;
-  if (amount < 20) return 0;
-  if (amount < 50) return amount;
-  return amount * 0.97;
+  const cut = Math.max(APK_CUT_MIN, Math.ceil((amount * APK_CUT_RATE) / 100 - 1e-9));
+  return Math.max(0, amount - cut);
 }
 
 // Returning to Stadium renders the Auto PK label before its number, so the
@@ -220,8 +222,8 @@ class AccountProfileService {
     for (const account of accounts) {
       const stats = state.accounts?.[account.id];
       const isMain = account.id === mainAccountId;
-      effectiveApk[account.id] = usableAmount(stats?.apk, isMain);
-      effectiveTix[account.id] = usableAmount(stats?.tix, isMain);
+      effectiveApk[account.id] = usableApk(stats?.apk, isMain);
+      effectiveTix[account.id] = usableApk(stats?.tix, isMain);
       if (totalUsableApk != null) totalUsableApk += effectiveApk[account.id];
       if (totalUsableTix != null) totalUsableTix += effectiveTix[account.id];
     }
@@ -347,4 +349,4 @@ class AccountProfileService {
   }
 }
 
-module.exports = { AccountProfileService, readStadiumTelemetry, parseUserBasicInfo, usableAmount, normalizeNumber, normalizeLevel };
+module.exports = { AccountProfileService, readStadiumTelemetry, parseUserBasicInfo, usableApk, normalizeNumber, normalizeLevel };

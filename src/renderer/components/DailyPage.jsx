@@ -10,8 +10,9 @@ const LETTERS = ['A', 'B', 'C', 'D'];
 
 const TEXT = {
   tr: {
-    title: 'Günlük İşler', howTitle: 'Nasıl çalışır?', subtitle: 'Go-up, Daily Boss, Elite Ascent, Prop, Daily Quiz, Cheer ve Chat · hepsi tarayıcı açmadan',
-    tabs: { goup: 'Go-up', boss: 'Daily Boss', ascent: 'Elite Ascent', props: 'Prop', quiz: 'Daily Quiz', cheer: 'Cheer', chat: 'Chat' },
+    title: 'Günlük İşler', howTitle: 'Nasıl çalışır?', subtitle: 'Go-up, Professional, Daily Boss, Elite Ascent, Prop, Daily Quiz, Cheer ve Chat · hepsi tarayıcı açmadan',
+    pf: {"title":"Professional","start":"Başlat ({n})","refresh":"Durumları oku","stage":"Aşama","next":"Sıradaki rakip","left":"Kalan maç","cards":"Maç kartı","status":"Durum","result":"Sonuç","hint":"Sezon ve playoff otomatik oynanır. Hall of Fame'de rakibi sen seçersin.","createHof":"Hall of Fame'i başlat","pickHof":"Rakip seç","hofTeam":"{name} (Ofans {off} · Defans {def})","props":"Props {n}/2","stg":{"noSeason":"Sezon yok · başlatılacak","season":"Sezon {p}/{t} · {w}-{l}","noPlayoffs":"Sezon bitti · playoff kurulacak","playoffs":"Playoff · {round} · seri {w}-{l}","champion":"Şampiyon · Hall of Fame hazır","eliminated":"Playoff'ta elendi","hof":"Hall of Fame · {d}/{t} yenildi","hofDone":"Hall of Fame tamam · Honor Way açılacak","seasonOver":"Sezon bitti · yeni sezon kurulacak","honor":"Honor Way · {d}/{t} yenildi","honorDone":"Honor Way tamam · Legacy Way açılacak","legacy":"Legacy Way · {d}/{t} yenildi","legacyDone":"Legacy Way tamam","error":"Okunamadı"},"rounds":{"FIRST_ROUND":"1. tur","CONFERENCE_SEMIFINALS":"Konferans yarı finali","CONFERENCE_FINALS":"Konferans finali","NBA_FINALS":"Final"},"st":{"eliminated":"Elendi","champion":"Şampiyon","needPick":"Rakip seçilmeli","hofDone":"HOF tamam","legacyDone":"Legacy Way tamam"},"how":["Her hesabın aşaması otomatik bulunur: sezon yoksa konferans rastgele seçilip 82 maçlık sezon kurulur; sezon bitince playoff kurulur ve sıradaki playoff maçı oynanır.","Günlük maç hakkı bitene kadar oynar. Hak bitince, varsa oyundan kazanılan Prof Match Card ile \"Props\" yenilemesi yapılır (günde en fazla 2). TIX ile yenileme asla yapılmaz.","Hall of Fame'deki hesaplarda rakipler hücum/savunma toplamlarıyla listelenir; hangi rakiple oynanacağını sen seçersin. O rakip yenilince durur ve yeni seçim bekler.","Playoff'ta elenen hesapta playoff otomatik sıfırlanır ve normal sezona dönülür. Hall of Fame bitince Honor Way, o da bitince Legacy Way açılır; bunlarda rakip sırası oyunda sabittir, sırayla oynanır. Auto Play bu hesaplarda durdurulur, bitince yeniden başlatılır."]},
+    tabs: { goup: 'Go-up', pro: 'Professional', boss: 'Daily Boss', ascent: 'Elite Ascent', props: 'Prop', quiz: 'Daily Quiz', cheer: 'Cheer', chat: 'Chat' },
     pr: {
       button: 'Prop bas', stop: 'Durdur', refresh: 'Çantaları oku', small: 'Su şişesi küçük (+10)', medium: 'Su şişesi orta (+30)', used: 'Kullanılan', players: 'İlk 5',
       st: { finding: 'Maç aranıyor', noMatch: 'Takım maçta değil', late: '3./4. periyotta · devre arası geçti', waitingHalftime: 'Devre arası bekleniyor', using: 'Prop basılıyor', done: 'Bitti', error: 'Hata', stopped: 'Durduruldu' },
@@ -56,8 +57,9 @@ const TEXT = {
     }
   },
   en: {
-    title: 'Daily', howTitle: 'How does it work?', subtitle: 'Go-up, Daily Boss, Elite Ascent, Props, Daily Quiz, Cheer and Chat · all without a browser',
-    tabs: { goup: 'Go-up', boss: 'Daily Boss', ascent: 'Elite Ascent', props: 'Props', quiz: 'Daily Quiz', cheer: 'Cheer', chat: 'Chat' },
+    title: 'Daily', howTitle: 'How does it work?', subtitle: 'Go-up, Professional, Daily Boss, Elite Ascent, Props, Daily Quiz, Cheer and Chat · all without a browser',
+    pf: {"title":"Professional","start":"Start ({n})","refresh":"Read status","stage":"Stage","next":"Next opponent","left":"Matches left","cards":"Match cards","status":"Status","result":"Result","hint":"Season and playoffs are played automatically. In the Hall of Fame you pick the opponent.","createHof":"Start the Hall of Fame","pickHof":"Pick an opponent","hofTeam":"{name} (Offense {off} · Defense {def})","props":"Props {n}/2","stg":{"noSeason":"No season · will be started","season":"Season {p}/{t} · {w}-{l}","noPlayoffs":"Season over · playoffs will be created","playoffs":"Playoffs · {round} · series {w}-{l}","champion":"Champion · Hall of Fame ready","eliminated":"Eliminated in the playoffs","hof":"Hall of Fame · {d}/{t} beaten","hofDone":"Hall of Fame done · Honor Way will open","seasonOver":"Season over · a new season will be created","honor":"Honor Way · {d}/{t} beaten","honorDone":"Honor Way done · Legacy Way will open","legacy":"Legacy Way · {d}/{t} beaten","legacyDone":"Legacy Way done","error":"Could not be read"},"rounds":{"FIRST_ROUND":"Round 1","CONFERENCE_SEMIFINALS":"Conference semifinals","CONFERENCE_FINALS":"Conference finals","NBA_FINALS":"Finals"},"st":{"eliminated":"Eliminated","champion":"Champion","needPick":"Pick an opponent","hofDone":"HOF done","legacyDone":"Legacy Way done"},"how":["Every account's stage is found automatically: with no season a random conference is chosen and the 82-game season is created; after the season the playoffs are created and the next playoff game is played.","It plays until the daily matches are used. Then, if there is a Prof Match Card won in the game, a \"Props\" refill is used (at most 2 a day). TIX refills are never used.","Accounts in the Hall of Fame list the opponents with their offense/defense totals; you pick who to play. When that opponent is beaten it stops and waits for a new pick.","An account eliminated in the playoffs gets its playoffs reset automatically and goes back to the regular season. After the Hall of Fame the Honor Way opens, after that the Legacy Way; their opponents come in a fixed order and are played in turn. Auto Play is stopped on these accounts and started again afterwards."]},
+    tabs: { goup: 'Go-up', pro: 'Professional', boss: 'Daily Boss', ascent: 'Elite Ascent', props: 'Props', quiz: 'Daily Quiz', cheer: 'Cheer', chat: 'Chat' },
     pr: {
       button: 'Use props', stop: 'Stop', refresh: 'Read bags', small: 'Water Bottle Small (+10)', medium: 'Water Bottle Medium (+30)', used: 'Used', players: 'Starters',
       st: { finding: 'Finding the match', noMatch: 'The team is not in a match', late: 'Quarter 3/4 · halftime is over', waitingHalftime: 'Waiting for halftime', using: 'Using props', done: 'Done', error: 'Error', stopped: 'Stopped' },
@@ -223,6 +225,66 @@ function BossTab({ state, x, toast }) {
         </tr>;
       })}</tbody></SortTable></div>
     <details className="panel pvp-how"><summary>{x.howTitle}</summary><ul>{x.pg.bossHow.map(l => <li key={l}>{l}</li>)}</ul></details>
+  </>;
+}
+
+// Professional: season and playoffs play by themselves; Hall of Fame accounts play the opponent picked here.
+function ProTab({ state, x, toast }) {
+  const p = state.professional || {};
+  const accounts = state.accounts || [];
+  const running = Boolean(p.running);
+  const [ids, setIds] = useSavedIds(state, 'proAccountIds', accounts);
+  const [picks, setPicksRaw] = useState(() => state.settings?.proHofPicks || {});
+  const [checking, setChecking] = useState(false);
+  const [busy, setBusy] = useState(null);
+  const setPick = (id, team) => { const next = { ...picks, [id]: team }; setPicksRaw(next); api.settings.update({ proHofPicks: next }).catch(() => {}); };
+  const check = async () => { if (!api.pro) return toast(x.notReady, 'error'); setChecking(true); try { await api.pro.status(ids.length ? ids : accounts.map(a => a.id)); } catch (er) { toast(er.message, 'error'); } finally { setChecking(false); } };
+  useEffect(() => { if (api.pro && !Object.keys(p.info || {}).length) check(); }, []);
+  const allOn = accounts.length > 0 && accounts.every(a => ids.includes(a.id));
+  const openTeams = id => (p.info?.[id]?.teams || []).filter(t => !t.defeated && t.playable !== false);
+  const target = id => p.info?.[id]?.stage === 'hof' ? (openTeams(id).some(t => t.id === picks[id]) ? picks[id] : null) : true;
+  const start = async () => { try { await api.pro.start(Object.fromEntries(ids.map(id => [id, target(id) || true]))); } catch (er) { toast(er.message, 'error'); } };
+  const createHof = async id => { setBusy(id); try { await api.pro.createHof(id); } catch (er) { toast(er.message, 'error'); } finally { setBusy(null); } };
+  const stageText = i => {
+    if (!i) return '—';
+    const t = x.pf.stg[i.stage] || i.stage;
+    if (i.stage === 'season') return fill(t, { p: i.played, t: i.total, w: i.won, l: i.lost });
+    if (i.stage === 'playoffs') return fill(t, { round: x.pf.rounds[i.round] || i.round, w: i.seriesWon, l: i.seriesLost });
+    if (['hof', 'honor', 'legacy'].includes(i.stage)) return fill(t, { d: i.defeated, t: (i.teams || []).length });
+    if (i.stage === 'error') return `${t}: ${i.error}`;
+    return t;
+  };
+  const final = ['eliminated', 'champion', 'needPick', 'hofDone'];
+  return <>
+    <div className="panel pg-bar">
+      <button className="btn ghost" disabled={running} onClick={() => setIds(allOn ? [] : accounts.map(a => a.id))}>{allOn ? x.clear : x.selectAll}</button>
+      <span className="pg-hint">{x.pf.hint}</span>
+      <span className="sp" />
+      <button className="btn ghost" disabled={checking || running} onClick={check}>{checking ? x.checking : x.pf.refresh}</button>
+      {running ? <button className="btn danger-soft" onClick={() => api.pro.stop().catch(er => toast(er.message, 'error'))}>{x.stop}</button>
+        : <button className="btn primary" disabled={!ids.length} onClick={start}>{fill(x.pf.start, { n: ids.length })}</button>}
+    </div>
+    <div className="panel table-panel dp-table"><SortTable><thead><tr><th className="select-col"><input type="checkbox" disabled={running} checked={allOn} onChange={() => setIds(allOn ? [] : accounts.map(a => a.id))} aria-label={x.selectAll} /></th><th>{x.account}</th><th>{x.pf.stage}</th><th>{x.pf.next}</th><th>{x.pf.left}</th><th>{x.pf.cards}</th><th>{x.pf.status}</th><th>{x.pf.result}</th></tr></thead>
+      <tbody>{accounts.map(a => {
+        const r = p.run?.accounts?.[a.id];
+        const i = p.info?.[a.id];
+        const teams = openTeams(a.id).slice().sort((m, n) => ((m.off || 0) + (m.def || 0)) - ((n.off || 0) + (n.def || 0)));
+        const left = r?.left ?? i?.left;
+        return <tr key={a.id} className={r?.status === 'playing' ? 'dp-live' : ''}>
+          <td><input type="checkbox" disabled={running} checked={ids.includes(a.id)} onChange={() => setIds(ids.includes(a.id) ? ids.filter(v => v !== a.id) : [...ids, a.id])} aria-label={a.name} /></td>
+          <td><b>{a.name}</b></td>
+          <td className={i?.stage === 'eliminated' || i?.stage === 'error' ? 'bad-text' : i?.stage === 'champion' ? 'good-text' : ''}>{stageText(i)}</td>
+          <td>{i?.stage === 'hof'
+            ? <select className="dp-select" value={target(a.id) || ''} onChange={e => setPick(a.id, e.target.value)}><option value="">{x.pf.pickHof}</option>{teams.map(t => <option key={t.id} value={t.id}>{fill(x.pf.hofTeam, { name: t.name, off: t.off ?? '?', def: t.def ?? '?' })}</option>)}</select>
+            : i?.stage === 'champion' ? <button className="btn primary small" disabled={busy === a.id || running} onClick={() => createHof(a.id)}>{busy === a.id ? x.checking : x.pf.createHof}</button>
+            : (r?.enemy || i?.next?.opponent || '—')}</td>
+          <td>{left == null ? '—' : left}</td>
+          <td>{i ? <>{i.cards ?? 0}<small className="cell-sub">{fill(x.pf.props, { n: i.propsUsed ?? 0 })}</small></> : '—'}</td>
+          <td className={r?.status === 'error' ? 'bad-text' : ''}>{r ? (x.pf.st[r.status] || x.pg.st[r.status] || r.status) + (r.status === 'error' && r.reason ? `: ${r.reason}` : '') : ''}</td>
+          <td>{r?.played ? fill(x.pg.wl, { w: r.won, l: r.lost }) : '—'}</td>
+        </tr>;
+      })}</tbody></SortTable></div>
+    <details className="panel pvp-how"><summary>{x.howTitle}</summary><ul>{x.pf.how.map(l => <li key={l}>{l}</li>)}</ul></details>
   </>;
 }
 
@@ -488,12 +550,13 @@ export default function DailyPage({ state, t, toast }) {
   const x = TEXT[t.lang] || TEXT.en;
   const [tab, setTab] = useState(() => state.settings?.dailyTab || 'goup');
   const choose = id => { setTab(id); api.settings.update({ dailyTab: id }).catch(() => {}); };
-  const live = { props: (state.props?.busy || []).length > 0, boss: state.dailyBoss?.running, ascent: state.eliteAscent?.running, goup: state.goup?.running, quiz: state.quiz?.running, cheer: state.cheer?.busy, chat: state.chat?.running };
+  const live = { pro: state.professional?.running, props: (state.props?.busy || []).length > 0, boss: state.dailyBoss?.running, ascent: state.eliteAscent?.running, goup: state.goup?.running, quiz: state.quiz?.running, cheer: state.cheer?.busy, chat: state.chat?.running };
   const asking = Object.values(state.quiz?.run?.accounts || {}).some(r => r.status === 'askUser');
   return <div className="page daily-page">
     <div className="page-title"><div><h1>{x.title}</h1><span className="subtitle">{x.subtitle}</span></div></div>
     <div className="dp-tabs">{Object.keys(x.tabs).map(id => <button key={id} className={tab === id ? 'active' : ''} onClick={() => choose(id)}>{x.tabs[id]}{live[id] && <i className={`dp-dot ${id === 'quiz' && asking ? 'ask' : ''}`} />}</button>)}</div>
     {tab === 'goup' && <GoUpTab state={state} x={x} toast={toast} />}
+    {tab === 'pro' && <ProTab state={state} x={x} toast={toast} />}
     {tab === 'boss' && <BossTab state={state} x={x} toast={toast} />}
     {tab === 'ascent' && <AscentTab state={state} x={x} toast={toast} />}
     {tab === 'props' && <PropsTab state={state} x={x} toast={toast} />}

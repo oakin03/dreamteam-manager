@@ -1,6 +1,6 @@
 const {test}=require('node:test');
 const assert=require('node:assert/strict');
-const {AccountProfileService,readStadiumTelemetry,parseUserBasicInfo,usableAmount}=require('../src/main/services/account-profile-service.cjs');
+const {AccountProfileService,readStadiumTelemetry,parseUserBasicInfo,usableApk}=require('../src/main/services/account-profile-service.cjs');
 
 function capturing(basicInfoFor=null){
   const logs=[];
@@ -126,18 +126,22 @@ test('userBasicInfo frames give APK and TIX; other frames are ignored',()=>{
   assert.equal(parseUserBasicInfo(Buffer.from(frame)),null);
 });
 
-test('TIX contribution and total use the same formula as APK',()=>{
-  assert.equal(usableAmount(15,false),0);
-  assert.equal(usableAmount(30,false),30);
-  assert.equal(usableAmount(100,false),97);
-  assert.equal(usableAmount(15,true),15);
+test('APK and TIX use the 5% / minimum 3 cut',()=>{
+  // APK: 5% cut rounded up, at least 3; the main account keeps everything
+  assert.equal(usableApk(106,false),100);
+  assert.equal(usableApk(100,false),95);
+  assert.equal(usableApk(20,false),17);
+  assert.equal(usableApk(61,false),57);
+  assert.equal(usableApk(2,false),0);
+  assert.equal(usableApk(0,false),0);
+  assert.equal(usableApk(106,true),106);
   const accounts=[{id:'main'},{id:'a'},{id:'b'}];
   const profile={version:1,mainAccountId:'main',accounts:{main:{apk:10,tix:5},a:{apk:100,tix:40},b:{apk:19,tix:200}}};
   const service=new AccountProfileService({store:{getAccounts:()=>accounts,getAccountProfile:()=>profile}});
   const snap=service.snapshot();
-  assert.deepEqual(snap.effectiveTix,{main:5,a:40,b:194});
-  assert.equal(snap.totalUsableTix,239);
-  assert.equal(snap.totalUsableApk,107);
+  assert.deepEqual(snap.effectiveTix,{main:5,a:37,b:190});
+  assert.equal(snap.totalUsableTix,232);
+  assert.equal(snap.totalUsableApk,121); // 10 + (100-5) + (19-3)
 });
 
 test('Level comes from the game message when the Stadium text is missing',async()=>{

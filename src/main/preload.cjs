@@ -63,6 +63,16 @@ contextBridge.exposeInMainWorld('dreamteam', {
     stop: () => ipcRenderer.invoke('boss:stop'),
     status: (accountIds) => ipcRenderer.invoke('boss:status', accountIds)
   },
+  tk: {
+    start: (config) => ipcRenderer.invoke('tk:start', config),
+    stop: () => ipcRenderer.invoke('tk:stop')
+  },
+  pro: {
+    start: (plan) => ipcRenderer.invoke('pro:start', plan),
+    stop: () => ipcRenderer.invoke('pro:stop'),
+    status: (accountIds) => ipcRenderer.invoke('pro:status', accountIds),
+    createHof: (accountId) => ipcRenderer.invoke('pro:createHof', accountId)
+  },
   ascent: {
     start: (plan) => ipcRenderer.invoke('ascent:start', plan),
     stop: () => ipcRenderer.invoke('ascent:stop'),

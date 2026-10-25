@@ -5,15 +5,16 @@ const { EventEmitter } = require('node:events');
 const player = (id, baseSalary, extra = {}) => ({ id, name: extra.name || id, visualName: extra.name || id, baseSalary, signedSalary: baseSalary, type: 'CURRENT', slot: null, benchSlot: null, equippedItems: { jersey: null, pants: null, sleeves: null, headband: null, shoes: null }, isTemporary: false, expiresAt: null, duration: null, ...extra });
 
 function createWorld(users) {
-  const world = { users: {}, rooms: new Map(), calls: [], sockets: new Set(), seq: 0, options: {} };
+  const world = { users: {}, rooms: new Map(), calls: [], sockets: new Set(), seq: 0, options: {}, tickets: [] };
   for (const [uid, u] of Object.entries(users)) {
     world.users[uid] = {
       name: u.name || uid, funds: u.funds ?? 50000,
       starters: (u.starters || ['s1', 's2', 's3', 's4', 's5'].map(s => `${uid}-${s}`)).map((id, i) => typeof id === 'string' ? player(id, 1000, { slot: ['PG', 'SG', 'SF', 'PF', 'C'][i] }) : id),
       bench: (u.bench || []).map((p, i) => ({ ...p, benchSlot: i + 1 })),
       lists: u.lists || [[]], attempts: u.attempts ?? 0, cooldownEnds: u.cooldownEnds ?? Date.now() + 30 * 60 * 1000,
-      signed: new Set(), made: [], listed: [], discount: u.discount || []
+      signed: new Set(), made: [], listed: [], discount: u.discount || [], apk: u.apk ?? 0
     };
+    for (const m of u.market || []) world.tickets.push({ id: `t-${++world.seq}`, sellerId: uid, playerId: m.player.id, player: m.player, signedSalary: m.player.signedSalary, price: m.price, paymentMode: m.paymentMode || 'APK_TICKET', status: 'LISTED' });
   }
   const total = u => u.starters.length + u.bench.length;
   const tradable = u => [...u.starters, ...u.bench].filter(p => p.type !== 'XPLAYER' && !p.isTemporary);
@@ -22,12 +23,12 @@ function createWorld(users) {
     world.calls.push({ user: s.userId, event, payload: p });
     const uid = p?.userId || s.userId;
     const u = world.users[uid];
-    const needAuth = ['signFreeAgent', 'CallBackFreeAgent', 'starcard:makeStarCards', 'market:sellPlayer', 'createTradeRoom', 'joinTradeRoom', 'selectTradePlayers', 'acceptTrade', 'confirmTrade'];
+    const needAuth = ['market:buyPlayer', 'market:settleTicket', 'signFreeAgent', 'CallBackFreeAgent', 'starcard:makeStarCards', 'market:sellPlayer', 'createTradeRoom', 'joinTradeRoom', 'selectTradePlayers', 'acceptTrade', 'confirmTrade'];
     if (needAuth.includes(event) && !s.userId) return reply({ success: false, message: 'Authentication required' });
     switch (event) {
       case 'register': s.userId = p.userId; return push('registrationSuccess');
       case 'getTeamOptimized': return reply({ userId: uid, players: { starters: u.starters, bench: u.bench } });
-      case 'getUserBasicInfo': return push('userBasicInfo', { funds: u.funds });
+      case 'getUserBasicInfo': return push('userBasicInfo', { success: true, funds: u.funds, autoPKTickets: u.apk });
       case 'getFreeAgent': {
         const list = u.lists[0] || [];
         return reply({ freeAgents: list.map(a => ({ ...a, isSigned: u.signed.has(a.id) })), attemptsLeft: u.attempts, cooldownEnds: u.cooldownEnds });
@@ -58,9 +59,34 @@ function createWorld(users) {
       }
       case 'market:sellPlayer': {
         const me = world.users[s.userId];
+        me.gone = [...(me.gone || []), ...me.bench.filter(x => x.id === p.playerId)];
         me.bench = me.bench.filter(x => x.id !== p.playerId);
+        const listedPlayer = [...me.starters, ...me.bench, ...(me.gone || [])].find(x => x.id === p.playerId) || player(p.playerId, 0);
         me.listed.push({ id: p.playerId, price: p.price, paymentMode: p.paymentMode });
+        world.tickets.push({ id: `t-${++world.seq}`, sellerId: s.userId, playerId: p.playerId, player: listedPlayer, signedSalary: listedPlayer.signedSalary, price: p.price, paymentMode: p.paymentMode, status: 'LISTED' });
         return push('market:sellResult', { success: true, playerId: p.playerId });
+      }
+      case 'market:getMyPlayerListings': {
+        const mine = world.tickets.filter(t => t.sellerId === uid);
+        return push('market:myPlayerListingsData', { tickets: mine.slice((p.page - 1) * 8, p.page * 8), total: mine.length });
+      }
+      case 'market:buyPlayer': {
+        const me = world.users[s.userId];
+        const t = world.tickets.find(x => x.id === p.ticketId);
+        if (!t || t.status !== 'LISTED') return push('market:buyResult', { success: false, message: 'Listing not available' });
+        if (me.apk < t.price) return push('market:buyResult', { success: false, message: 'Not enough APK tickets' });
+        if ([...me.starters, ...me.bench].some(x => x.id === t.playerId)) return push('market:buyResult', { success: false, message: 'You already own this player.' });
+        if (total(me) >= 11) return push('market:buyResult', { success: false, message: 'Roster is full' });
+        me.apk -= t.price; t.status = 'SOLD';
+        me.bench.push({ ...t.player, benchSlot: me.bench.length + 1 });
+        world.buys = (world.buys || 0) + 1;
+        return push('market:buyResult', { success: true });
+      }
+      case 'market:settleTicket': {
+        const t = world.tickets.find(x => x.id === p.ticketId);
+        if (!t || t.status !== 'SOLD') return push('market:settleResult', { success: false, message: 'Nothing to claim' });
+        const fee = Math.ceil(t.price * 0.05); world.users[t.sellerId].apk += t.price - fee; t.status = 'SETTLED';
+        return push('market:settleResult', { success: true, paymentMode: t.paymentMode, payout: t.price - fee, fee });
       }
       case 'joinTradeRoomBroadcast': case 'leaveTradeRoomBroadcast': return null;
       case 'createTradeRoom': {

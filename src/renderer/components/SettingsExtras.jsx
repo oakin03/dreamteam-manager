@@ -8,7 +8,7 @@ const api = window.dreamteam;
 // does not know the page yet gets it in its default list automatically.
 export const PAGE_META = {
   home: ['home', 'commandCenter'], accounts: ['accounts', 'accounts'], social: ['chat', 'socialPage'],
-  autoplay: ['play', 'autoplay'], autotrade: ['swap', 'autoTrade'], pvp: ['sword', 'pvpPage'], daily: ['calendar', 'dailyPage'], tower: ['tower', 'towerPage'], autobuy: ['cart', 'autoBuyPage'], tournament: ['trophy', 'tournament'],
+  autoplay: ['play', 'autoplay'], autotrade: ['swap', 'autoTrade'], pvp: ['sword', 'pvpPage'], daily: ['calendar', 'dailyPage'], tower: ['tower', 'towerPage'], autobuy: ['cart', 'autoBuyPage'], tournament: ['trophy', 'tournament'], tktransfer: ['transfer', 'tkPage'],
   scout: ['scout', 'scout'], players: ['chart', 'playersPage'], draft: ['target', 'draftPage'], cards: ['cards', 'cards'], equipment: ['shirt', 'equipment'],
   market: ['market', 'market'], trade: ['hall', 'trade'],
   activity: ['activity', 'activity'], guide: ['book', 'guide'], settings: ['settings', 'settings']
@@ -17,7 +17,7 @@ export const PAGE_META = {
 // layout stores the user's own names.
 export const NAV_DEFAULT = [
   { id: 'top', nameKey: null, items: ['home', 'accounts', 'social'] },
-  { id: 'automation', nameKey: 'navAutomation', items: ['autoplay', 'autotrade', 'pvp', 'tower', 'daily', 'autobuy', 'tournament'] },
+  { id: 'automation', nameKey: 'navAutomation', items: ['autoplay', 'autotrade', 'pvp', 'tower', 'daily', 'autobuy', 'tournament', 'tktransfer'] },
   { id: 'players', nameKey: 'navPlayers', items: ['scout', 'players', 'draft', 'cards', 'equipment'] },
   { id: 'market', nameKey: 'navMarket', items: ['market', 'trade'] },
   { id: 'app', nameKey: 'navApp', items: ['activity', 'guide', 'settings'] }
