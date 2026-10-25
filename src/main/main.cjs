@@ -553,7 +553,7 @@ function initServices() {
   scheduler = new SchedulerService({ store, engine, activity, onChanged: emitState, pauseServices: (ids, name) => pauseServicesFor(ids, name) });
   scout = new ScoutService({ store, activity, sessions: gameSessions, cardsService: cards, accountProfile, gameHealth, onChanged: emitState });
   trading = new TradingHallService({ store, credentials, browserService, activity, onChanged: emitState });
-  dailyRewards = new DailyRewardService({ store, credentials, browserService, activity, engine, onChanged: emitState });
+  dailyRewards = new DailyRewardService({ store, activity, engine, sessions: gameSessions, onChanged: emitState });
   autoTrade = new AutoTradeEngine({ gameHealth, store, credentials, activity, sessions: gameSessions, accountProfile, onChanged: emitState, onAttention: autoTradeAttention, onScout: (id, reply) => scout.showSocketScout?.(id, reply), onCycleEnd: () => cards.refresh() });
   market = new MarketService({ store, activity, accountProfile, sessions: gameSessions, onChanged: emitState });
   const alertedDays = new Map(); // playerId -> day already reported

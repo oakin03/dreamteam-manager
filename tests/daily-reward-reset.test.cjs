@@ -3,122 +3,117 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { EventEmitter } = require('node:events');
 const { AppStore } = require('../src/main/services/store.cjs');
-const { DailyRewardService, nextDailyResetAt, readMainRewardState } = require('../src/main/services/daily-reward-service.cjs');
+const { DailyRewardService, nextDailyResetAt, waitMsOf, rewardText, retryAfterMs } = require('../src/main/services/daily-reward-service.cjs');
 
-function fixture(t) {
+// A fake game socket: answers dailyRewards:* from a small tier model.
+function fakeGame({ tier = 1, ready = true, waitMs = 600000, claimReply = null } = {}) {
+  const game = { tier, ready, emits: [], claims: 0 };
+  game.createSocket = () => {
+    const socket = new EventEmitter();
+    socket.connected = true;
+    socket.close = () => {};
+    socket.emit = (event, payload) => {
+      if (['connect', 'dailyRewards:progressResult', 'dailyRewards:claimResult'].includes(event)) return EventEmitter.prototype.emit.call(socket, event, payload);
+      game.emits.push({ event, payload });
+      setImmediate(() => {
+        if (event === 'dailyRewards:getProgress') {
+          const done = game.tier > 6;
+          EventEmitter.prototype.emit.call(socket, 'dailyRewards:progressResult', { success: true, data: {
+            currentTier: Math.min(game.tier, 6), isComplete: done, isReadyToClaim: !done && game.ready,
+            timeUntilClaim: game.ready ? 0 : waitMs, totalTiers: 6, nextClaimTime: game.ready ? null : new Date(Date.now() + waitMs).toISOString()
+          } });
+        } else if (event === 'dailyRewards:claim') {
+          game.claims++;
+          let reply = claimReply;
+          if (!reply) {
+            const claimed = game.tier;
+            game.tier++;
+            game.ready = false;
+            reply = { success: true, data: { currentTier: claimed, isComplete: claimed >= 6, rewards: [{ type: 'ITEM', amount: 2, item: { name: 'Energy Drink' } }] } };
+          }
+          EventEmitter.prototype.emit.call(socket, 'dailyRewards:claimResult', reply);
+        }
+      });
+      return true;
+    };
+    setImmediate(() => EventEmitter.prototype.emit.call(socket, 'connect'));
+    return socket;
+  };
+  return game;
+}
+
+function fixture(t, game) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dtm-reward-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const store = new AppStore(dir);
-  store.saveAccounts([{ id: 'main', name: 'Main' }, { id: 'side', name: 'Side' }]);
+  store.saveAccounts([{ id: 'main', name: 'Main' }]);
   const events = [];
   const service = (savedStore = store) => new DailyRewardService({
     store: savedStore,
-    credentials: {},
-    browserService: { isFeatureLocked: () => false },
     activity: { add: e => events.push(e) },
     engine: { states: () => ({}) },
+    sessions: { get: async () => ({ userId: 'u1', cookieHeader: 'c=1' }), invalidate: () => {} },
+    createSocket: game?.createSocket,
     onChanged: () => {}
   });
   return { dir, store, service, events, account: store.getAccounts()[0] };
 }
 
-function giftPage(rewardText, timerText = null) {
-  const widget = { innerText: rewardText, textContent: rewardText };
-  const outer = { innerText: `${rewardText} ${timerText || ''}`, textContent: `${rewardText} ${timerText || ''}` };
-  const button = { parentElement: widget };
-  widget.parentElement = outer;
-  const img = { parentElement: button, closest: () => button };
-  return {
-    evaluate: async (fn, selector) => {
-      const previous = global.document;
-      global.document = { querySelector: () => img };
-      try { return fn(selector); } finally { global.document = previous; }
-    },
-    locator: () => ({
-      first: () => ({
-        waitFor: async () => {},
-        locator: () => ({ count: async () => 1, click: async () => {} })
-      })
-    })
-  };
-}
-
 test('Reset is 19:00 Türkiye time, including a new day after the boundary', () => {
-  const before = Date.UTC(2026, 8, 27, 15, 59, 59);
-  const after = Date.UTC(2026, 8, 27, 16, 0, 0);
-  assert.equal(new Date(nextDailyResetAt(before)).toISOString(), '2026-09-27T16:00:10.000Z');
-  assert.equal(new Date(nextDailyResetAt(after)).toISOString(), '2026-09-28T16:00:10.000Z');
+  assert.equal(new Date(nextDailyResetAt(Date.parse('2026-05-01T15:59:00Z'))).toISOString(), '2026-05-01T16:00:10.000Z');
+  assert.equal(new Date(nextDailyResetAt(Date.parse('2026-05-01T16:00:20Z'))).toISOString(), '2026-05-02T16:00:10.000Z');
 });
 
-test('Tier 6 gift is still claimable, while completion is read only from the gift widget', async t => {
-  const { service, store } = fixture(t);
-  const ready = await readMainRewardState(giftPage('CLAIM TIER 6 REWARD!'));
-  assert.equal(ready.rewardText, 'CLAIM TIER 6 REWARD!');
-  assert.equal(ready.timerText, null);
-  const s = service();
-  const timed = await readMainRewardState(giftPage('NEXT IN: 04:59:17', '04:59:17'));
-  assert.equal(timed.timerText, '04:59:17');
-  await s.inspectStadium('main', giftPage('ALL REWARDS COLLECTED'));
-  assert.equal(store.getDailyRewards().accounts.main.reason, 'completed');
-  assert.equal(s.snapshot().main.status, 'completed');
+test('Progress, rewards and refusals are read from the socket replies', () => {
+  assert.equal(waitMsOf({ isReadyToClaim: true }), 0);
+  assert.equal(waitMsOf({ nextClaimTime: '2026-01-01T00:10:00Z' }, Date.parse('2026-01-01T00:00:00Z')), 600000);
+  assert.equal(waitMsOf({ timeUntilClaim: 5000 }), 5000);
+  assert.equal(waitMsOf({}), null);
+  assert.equal(rewardText([{ type: 'XP', amount: 500 }, { type: 'ITEM', amount: 2, item: { name: 'Energy Drink' } }]), '500 XP, 2 Energy Drink');
+  assert.equal(retryAfterMs({ error: 'Please wait 12 seconds' }), 12000);
+  assert.equal(retryAfterMs({ error: 'Rate limit', retryAfter: 30 }), 30000);
 });
 
-test('Unrecognized click pauses the account until reset and persists across app restart', async t => {
-  const { dir, service, store, account, events } = fixture(t);
-  const s = service();
-  const page = giftPage('CLAIM TIER 6 REWARD!');
-  let clicks = 0;
-  page.locator = () => ({ first: () => ({
-    waitFor: async () => {},
-    locator: () => ({ count: async () => 1, click: async () => { clicks++; } })
-  }) });
-  s.installRewardCapture = async () => {};
-  s.readRewardCapture = async () => '';
-  s.waitForRewardResult = async () => ({ type: 'unknown', tier: null, timerText: null });
-  s.waitForMainTimer = async () => ({ timerText: null });
-  s.dismissRewardOverlay = async () => {};
-  const result = await s.claimOnPage(account, page);
-  assert.equal(clicks, 1);
-  assert.ok(result.delayMs > 60_000);
-  assert.equal(store.getDailyRewards().accounts.main.reason, 'unknown');
-  assert.equal(events.filter(e => e.level === 'warning').length, 1);
+test('A ready tier is claimed over the socket, then the next timer is waited', async t => {
+  const game = fakeGame({ tier: 3, ready: true, waitMs: 1200000 });
+  const { service, events, account } = fixture(t, game);
+  const svc = service();
+  const result = await svc.checkOrClaim(account, new AbortController().signal);
+  assert.equal(game.claims, 1);
+  assert.deepEqual(game.emits.find(e => e.event === 'dailyRewards:claim').payload, { userId: 'u1' });
+  assert.ok(result.delayMs > 1200000 - 5000 && result.delayMs < 1200000 + 5000);
+  assert.equal(svc.snapshot().main.status, 'waiting');
+  assert.ok(events.some(e => e.code === 'dw.claimed' && e.params.tier === 3 && e.params.rewards === '2 Energy Drink'));
+  assert.ok(!game.emits.some(e => e.event === 'register'), 'never registers, nothing is kicked');
+});
 
+test('Sixth claim holds the account until the reset and survives a restart', async t => {
+  const game = fakeGame({ tier: 6, ready: true });
+  const { service, store, dir, events, account } = fixture(t, game);
+  const result = await service().checkOrClaim(account, new AbortController().signal);
+  assert.ok(result.delayMs > 1000);
+  assert.ok(events.some(e => e.code === 'dw.completed'));
+  const saved = store.getDailyRewards().accounts.main;
+  assert.equal(saved.reason, 'completed');
   const restarted = service(new AppStore(dir));
-  assert.equal(restarted.snapshot().main.status, 'reset-wait');
-  assert.equal(restarted.snapshot().main.nextAt, store.getDailyRewards().accounts.main.nextAt);
-  assert.equal(restarted.snapshot().side, undefined);
-  let navigations = 0;
-  restarted.browser.isFeatureLocked = () => { navigations++; return false; };
-  await restarted.inspectStadium('main', { evaluate: () => { throw new Error('should not inspect'); } });
-  await restarted.checkOrClaim(account, new AbortController().signal);
-  assert.equal(navigations, 0);
-  const controller = new AbortController();
-  const job = restarted.runWorker('main', controller.signal);
-  controller.abort();
-  await assert.rejects(job, { name: 'AbortError' });
-  assert.equal(navigations, 0);
-
-  // Once the persisted time has passed, normal checks resume for this account.
-  const expired = { ...store.getDailyRewards(), accounts: { main: { nextAt: '2000-01-01T00:00:00.000Z', reason: 'unknown' } } };
-  restarted.store.saveDailyRewards(expired);
-  const resumed = service(new AppStore(dir));
-  let attempts = 0;
-  const afterReset = new AbortController();
-  resumed.checkOrClaim = async () => { attempts++; afterReset.abort(); return { delayMs: 1000 }; };
-  await assert.rejects(resumed.runWorker('main', afterReset.signal), { name: 'AbortError' });
-  assert.equal(attempts, 1);
-  assert.equal(resumed.store.getDailyRewards().accounts.main, undefined);
+  assert.equal(restarted.snapshot().main.status, 'completed');
 });
 
-test('Sixth successful claim is remembered without waiting for another tier timer', async t => {
-  const { service, store, account } = fixture(t);
-  const s = service();
-  s.installRewardCapture = async () => {};
-  s.readRewardCapture = async () => 'Collected Tier 6 · 6 rewards received';
-  s.waitForMainTimer = async () => { throw new Error('No seventh timer should be read'); };
-  s.dismissRewardOverlay = async () => {};
-  await s.claimOnPage(account, giftPage('CLAIM TIER 6 REWARD!'));
-  assert.equal(s.snapshot().main.status, 'completed');
-  assert.equal(store.getDailyRewards().accounts.main.reason, 'completed');
+test('A refused claim waits as long as the server asks', async t => {
+  const game = fakeGame({ tier: 2, ready: true, claimReply: { success: false, error: 'Please wait 20 seconds before claiming' } });
+  const { service, events, account } = fixture(t, game);
+  const result = await service().checkOrClaim(account, new AbortController().signal);
+  assert.equal(result.delayMs, 21500);
+  assert.ok(events.some(e => e.code === 'dw.refused'));
+});
+
+test('An already complete day only waits for the reset', async t => {
+  const game = fakeGame({ tier: 7 });
+  const { service, account } = fixture(t, game);
+  const svc = service();
+  await svc.checkOrClaim(account, new AbortController().signal);
+  assert.equal(game.claims, 0);
+  assert.equal(svc.snapshot().main.status, 'completed');
 });

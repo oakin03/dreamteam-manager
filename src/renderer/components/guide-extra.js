@@ -13,7 +13,7 @@ export const GUIDE_EXTRA = {
       accounts: { tips: ["Şifreler bilgisayarında şifrelenmiş olarak saklanır.", "Ana hesap; Auto Trade, Kartlar, Sentez ve Cheer gibi işlerde varsayılan hesaptır."] },
       autoplay: {
         buttons: [["Günlük durdurma", "Auto Play'i her gün belirlediğin saatte (TR) durdurur, istersen başka bir saatte yeniden başlatır."], ["Turnuva kaydını her gün otomatik başlat", "Her gün belirlediğin saatte (varsayılan 15:48) turnuva kaydını zamanlayıcıdaki gibi çalıştırır."], ["PVP görevini her gün otomatik başlat", "Her gün belirlediğin saatte (varsayılan 05:01) PVP Arena görevini zamanlayıcıdaki gibi çalıştırır."]],
-        tips: ["Üç günlük satır birbirinden bağımsızdır; biri kapalıyken diğerleri çalışır.", "Turnuva ve PVP satırları, ilgili sayfada en son seçtiğin hesapları kullanır (seçim yoksa hepsini)."]
+        tips: ["Üç günlük satır birbirinden bağımsızdır; biri kapalıyken diğerleri çalışır.", "Turnuva ve PVP satırları, ilgili sayfada en son seçtiğin hesapları kullanır (seçim yoksa hepsini).", "Auto Play çalışan her hesapta Stadyumdaki Daily Rewards hediyesi (günde 6 kademe) sayacı dolunca oyunun bağlantısı üzerinden, tarayıcı açmadan toplanır; 6/6 olunca 19:00'u bekler."]
       },
       schedule: { tips: ["Uygulama görev sırasında kapanırsa, açılınca durdurulmuş görevler yeniden başlatılır.", "Günlük turnuva ve PVP satırları da her gün buraya tek seferlik bir görev ekler; listede görebilirsin."] },
       daily: {
@@ -56,7 +56,7 @@ export const GUIDE_EXTRA = {
       accounts: { tips: ["Passwords are stored encrypted on your computer.", "The main account is the default for Auto Trade, Cards, Synthesis and Cheer."] },
       autoplay: {
         buttons: [["Daily stop", "Stops Auto Play every day at the chosen time (TR) and optionally starts it again later."], ["Start tournament registration every day", "Runs the tournament registration every day at the chosen time (default 15:48), like a schedule."], ["Start the PVP task every day", "Runs PVP Arena every day at the chosen time (default 05:01), like a schedule."]],
-        tips: ["The three daily lines are independent; one can be off while the others run.", "The tournament and PVP lines use the accounts last chosen on their pages (all when none)."]
+        tips: ["The three daily lines are independent; one can be off while the others run.", "The tournament and PVP lines use the accounts last chosen on their pages (all when none).", "On every account Auto Play runs, the Stadium Daily Rewards gift (6 tiers a day) is collected over the game connection as soon as its timer ends, without a browser; after 6/6 it waits for 19:00."]
       },
       schedule: { tips: ["If the app closes during a task, the stopped tasks start again when it opens.", "The daily tournament and PVP lines add a one-off task here every day; you can see it in the list."] },
       daily: {
