@@ -58,6 +58,14 @@ contextBridge.exposeInMainWorld('dreamteam', {
     stop: () => ipcRenderer.invoke('quiz:stop'),
     answer: (accountId, letter) => ipcRenderer.invoke('quiz:answer', { accountId, letter })
   },
+  social: {
+    view: (accountId) => ipcRenderer.invoke('social:view', accountId),
+    conversation: (accountId, friendId) => ipcRenderer.invoke('social:conversation', { accountId, friendId }),
+    send: (accountId, friendId, text) => ipcRenderer.invoke('social:send', { accountId, friendId, text }),
+    act: (accountId, action, targetId) => ipcRenderer.invoke('social:act', { accountId, action, targetId }),
+    claimMail: (accountId, mailId) => ipcRenderer.invoke('social:claimMail', { accountId, mailId }),
+    poll: () => ipcRenderer.invoke('social:poll')
+  },
   cheer: {
     send: (fromIds, targetId) => ipcRenderer.invoke('cheer:send', { fromIds, targetId })
   },

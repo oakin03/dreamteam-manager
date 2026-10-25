@@ -361,7 +361,7 @@ class DraftService {
     const conn = await GameSocket.open({ createSocket: this.createSocket, cookie: session.cookieHeader });
     const drafted = this._drafted();
     try {
-      await conn.register(session.userId);
+      await conn.register(session.userId, { owner: 'Draft' });
       for (const it of items) {
         let r = null;
         for (let attempt = 0; attempt < 4; attempt++) {

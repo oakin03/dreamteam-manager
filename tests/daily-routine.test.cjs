@@ -13,7 +13,8 @@ function fakeGame(opts = {}) {
   const state = {
     signInClaimed: Boolean(opts.signInClaimed), signed600: Boolean(opts.signed600), tasksStarted: Boolean(opts.tasksStarted),
     fmDone: Boolean(opts.fmDone), matches: opts.matches ? opts.matches.map(m => ({ ...m })) : [],
-    active: null, pending: null, hidden: 0, claimed: new Set(opts.claimed || []), claimCooldownOnce: Boolean(opts.claimCooldownOnce), activeLeft: 0, pendingPolls: 0, otherMatch: opts.otherMatch || 0
+    active: null, pending: null, hidden: 0, claimed: new Set(opts.claimed || []), claimCooldownOnce: Boolean(opts.claimCooldownOnce), activeLeft: 0, pendingPolls: 0, otherMatch: opts.otherMatch || 0,
+    mails: (opts.mails || []).map(m => ({ ...m }))
   };
   const tasks = () => [
     { taskId: 't-pk', task: { key: 'win_1_match' }, completed: Boolean(opts.pkDone), isClaimed: state.claimed.has('t-pk') },
@@ -51,6 +52,8 @@ function fakeGame(opts = {}) {
     }
   };
   const mainAck = (event, p) => {
+    if (event === 'getUserMails') return { success: true, mails: state.mails };
+    if (event === 'claimAllMailItems') { for (const m of state.mails) m.isClaimed = true; return { success: true, message: 'Claimed' }; }
     if (event === 'getDailyTasks') return state.tasksStarted ? { tasks: tasks() } : { needsStart: true };
     if (event === 'startDailyTasks') { state.tasksStarted = true; return { tasks: tasks(), success: true }; }
     if (event === 'claimAllDailyTaskRewards' || event === 'claimDailyTaskReward') {
@@ -306,4 +309,20 @@ test('while Auto Play runs, a done routine still claims rewards every 30 minutes
   t += 10 * 60 * 1000; game.calls.length = 0;
   await s.runIfDue(account);
   assert.equal(game.calls.length, 0, 'not again within 30 minutes');
+});
+
+test('Mail rewards are claimed with the task rewards and summed up by item', async () => {
+  const game = fakeGame({ tasksStarted: true, pkDone: true, mails: [
+    { id: 'm1', isClaimed: false, items: [{ item: { name: 'Gift Box' }, quantity: 2 }] },
+    { id: 'm2', isClaimed: false, items: [{ name: 'Gift Box', quantity: 1 }, { itemName: 'Energy Drink', amount: 3 }] },
+    { id: 'm3', isClaimed: true, items: [{ name: 'Old', quantity: 1 }] },
+    { id: 'm4', isClaimed: false, items: [] }
+  ] });
+  const { s, logs } = routine(game);
+  await s.claimRewards(['a1']);
+  assert.equal(game.calls.filter(c => c.event === 'claimAllMailItems').length, 1);
+  const log = logs.find(l => l.code === 'ml.claimed');
+  assert.deepEqual(log.params, { count: 2, items: '3 Gift Box, 3 Energy Drink' });
+  await s.claimRewards(['a1']);
+  assert.equal(game.calls.filter(c => c.event === 'claimAllMailItems').length, 1, 'nothing left to claim, no second claim');
 });

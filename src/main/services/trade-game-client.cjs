@@ -28,7 +28,7 @@ class TradeGameAccount {
     const session = await sessions.get(account, { owner: 'auto-trade' });
     const conn = await GameSocket.open({ createSocket, cookie: session.cookieHeader, signal });
     try {
-      await conn.register(session.userId, { signal });
+      await conn.register(session.userId, { signal, owner: 'Auto Trade' });
     } catch (error) { conn.close(); throw error; }
     return new TradeGameAccount({ account, userId: session.userId, conn, signal });
   }

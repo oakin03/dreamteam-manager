@@ -254,7 +254,7 @@ class EquipmentService {
     const session = await this.sessions.get(account, { owner: 'equipment' });
     const conn = await GameSocket.open({ createSocket: this.createSocket, cookie: session.cookieHeader, signal });
     // The bag and every write answer only on a socket registered as the user.
-    await conn.register(session.userId, { signal });
+    await conn.register(session.userId, { signal, owner: 'Equipment' });
     this.conn = conn; this.userId = session.userId;
     return conn;
   }

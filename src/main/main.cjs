@@ -24,6 +24,8 @@ const { SchedulerService, BUILTIN_TASKS } = require('./services/scheduler.cjs');
 const { ScoutService } = require('./services/scout-service.cjs');
 const { TradingHallService } = require('./services/trading-hall-service.cjs');
 const { DailyRewardService } = require('./services/daily-reward-service.cjs');
+const { GameEvents } = require('./services/game-events.cjs');
+const { SocialService } = require('./services/social-service.cjs');
 const { AccountProfileService } = require('./services/account-profile-service.cjs');
 const { CardsService } = require('./services/cards-service.cjs');
 const { AutoTradeEngine } = require('./services/auto-trade-engine.cjs');
@@ -59,6 +61,8 @@ let scheduler;
 let scout;
 let trading;
 let dailyRewards;
+let gameEvents;
+let social;
 let accountProfile;
 let cards;
 let autoTrade;
@@ -129,6 +133,7 @@ function snapshot({ incremental = false } = {}) {
     goup: goup?.snapshot() || { running: false, run: null, points: {}, event: null, lastReport: null },
     quiz: quiz?.snapshot() || { running: false, run: null, bankSize: 0, lastReport: null },
     cheer: cheer?.snapshot() || { busy: false, last: null },
+    social: social?.snapshot() || { badges: {}, totals: { requests: 0, unread: 0, mail: 0 } },
     chat: chat?.snapshot() || { running: false, run: null, limits: { minIntervalSec: 11, maxText: 50 }, lastReport: null },
     tower: tower?.snapshot() || { running: false, run: null, lastReport: null },
     gameHealth: gameHealth?.snapshot() || { down: false },
@@ -180,6 +185,8 @@ const DONE_NOTES = {
   'qz.summary': p => ({ tr: ['Daily Quiz bitti', `${p.done}/${p.total} hesap tamamladı`], en: ['Daily Quiz finished', `${p.done}/${p.total} account(s) done`] }),
   'sy.done': p => ({ tr: ['Sentez bitti', `${p.ok} başarılı · ${p.fail} başarısız`], en: ['Synthesis finished', `${p.ok} success · ${p.fail} failed`] }),
   'mk.relistDone': p => ({ tr: ['Tekrar listeleme bitti', `${p.listed} listelendi · ${(p.failed || 0) + (p.removedNotListed || 0)} sorunlu`], en: ['Relist finished', `${p.listed} listed · ${(p.failed || 0) + (p.removedNotListed || 0)} with problems`] }),
+  'so.newMessage': p => ({ tr: ['Yeni mesaj', `${p.from} · ${p.count} okunmamış`], en: ['New message', `${p.from} · ${p.count} unread`] }),
+  'so.newRequest': p => ({ tr: ['Yeni arkadaşlık isteği', `${p.from}`], en: ['New friend request', `${p.from}`] }),
   'cs.summary': p => ({ tr: ['Chat bitti', `${p.sent} mesaj gönderildi · ${p.failed} başarısız`], en: ['Chat finished', `${p.sent} message(s) sent · ${p.failed} failed`] })
 };
 function notifyDone(entry) {
@@ -585,7 +592,7 @@ function initServices() {
     signal?.addEventListener('abort', onAbort, { once: true });
     try { await market.claim(accountIds); } finally { signal?.removeEventListener('abort', onAbort); }
   });
-  scheduler.registerBuiltin('pvp-arena', (accountIds, { signal }) => pvp.runAndWait(accountIds, { signal, source: 'schedule' }));
+  scheduler.registerBuiltin('pvp-arena', (accountIds, { signal }) => pvp.runAndWait(accountIds, { signal, source: 'schedule' }), { gate: (accountIds, { signal }) => pvp.waitForArena(signal) });
   scheduler.registerBuiltin('goup', (accountIds, { signal }) => goup.runAndWait(accountIds, { signal, source: 'schedule', mode: store.getSettings()?.goupMode, gapSec: store.getSettings()?.goupGapSec }));
   scheduler.registerBuiltin('market-relist', (accountIds, { signal }) => market.relistRecent(accountIds, { signal }));
   scheduler.start();
@@ -594,6 +601,10 @@ function initServices() {
   accountHealth.start();
   players.start();
   dailyRewards.start();
+  gameEvents = new GameEvents({ store, activity, onSalaryUpdate: async () => { await players.refresh({ automatic: true, pushed: true }); await accountHealth.refresh(); } });
+  gameEvents.start();
+  social = new SocialService({ store, activity, sessions: gameSessions, onChanged: emitState });
+  social.start();
   syncMcpServers();
 }
 
@@ -855,6 +866,12 @@ function registerIpc() {
   ipcMain.handle('quiz:start', async (_event, accountIds) => startQuizManual(Array.isArray(accountIds) ? accountIds : []));
   ipcMain.handle('quiz:stop', async () => { quiz.stop(); return quiz.snapshot(); });
   ipcMain.handle('quiz:answer', async (_event, { accountId, letter } = {}) => quiz.answer(accountId, letter));
+  ipcMain.handle('social:view', async (_event, accountId) => social.view(accountId));
+  ipcMain.handle('social:conversation', async (_event, { accountId, friendId } = {}) => social.conversation(accountId, friendId));
+  ipcMain.handle('social:send', async (_event, { accountId, friendId, text } = {}) => social.send(accountId, friendId, text));
+  ipcMain.handle('social:act', async (_event, { accountId, action, targetId } = {}) => social.act(accountId, action, targetId));
+  ipcMain.handle('social:claimMail', async (_event, { accountId, mailId } = {}) => social.claimMail(accountId, mailId || null));
+  ipcMain.handle('social:poll', async () => { await social.poll(); return social.snapshot(); });
   ipcMain.handle('cheer:send', async (_event, { fromIds, targetId } = {}) => cheer.cheer(Array.isArray(fromIds) ? fromIds : [], targetId));
   ipcMain.handle('chat:start', async (_event, config) => { chat.runAndWait(config || {}).catch(() => {}); await new Promise(r => setTimeout(r, 50)); if (!chat.snapshot().running) throw new Error(chat.snapshot().lastReport?.lastError || 'Chat could not start.'); return chat.snapshot(); });
   ipcMain.handle('chat:stop', async () => { chat.stop(); return chat.snapshot(); });
@@ -901,6 +918,8 @@ async function shutdownServices() {
     () => tournament?.shutdown(),
     () => equipment?.shutdown(),
     () => dailyRewards?.stop(),
+    () => gameEvents?.stop(),
+    () => social?.stop(),
     () => engine.stopAll(),
     () => scout.shutdown(),
     () => browserService.closeAll()

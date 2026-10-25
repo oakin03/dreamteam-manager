@@ -77,7 +77,7 @@ function service(game) {
     store: { getAccounts: () => [account] }, activity: { add: e => logs.push(e) },
     accountProfile: { merge: (id, d) => merges.push([id, d]) }, onChanged: () => {},
     sessions: { get: async () => ({ userId: USER, cookieHeader: 'session=x' }) },
-    createSocket: game.createSocket, minRetryMs: 0, writeTimeoutMs: 80
+    createSocket: game.createSocket, minRetryMs: 0, writeTimeoutMs: 80, checkCooldown: false
   });
   return { s, logs, merges };
 }

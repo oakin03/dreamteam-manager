@@ -37,9 +37,11 @@ class SchedulerService {
     this.controllers = new Map();
   }
 
-  registerBuiltin(id, run) {
+  // `gate(accountIds, { signal })`: waited for before anything is stopped (e.g. PVP
+  // waits for the arena to open while Auto Play keeps playing).
+  registerBuiltin(id, run, { gate = null } = {}) {
     if (!BUILTIN_TASKS[id]) throw new Error(`Unknown built-in task: ${id}`);
-    this.builtins.set(id, { ...BUILTIN_TASKS[id], run });
+    this.builtins.set(id, { ...BUILTIN_TASKS[id], run, gate });
   }
 
   // Deleting a schedule while it waits or runs stops it; what it had stopped
@@ -141,6 +143,11 @@ class SchedulerService {
     let result = 'completed';
     let resumeServices = null;
     try {
+      const gated = this.builtins.get(schedule.taskId);
+      if (gated?.gate) {
+        this._update(schedule.id, { phase: 'gate', message: 'Waiting…' });
+        await gated.gate(accounts.map(a => a.id), { signal });
+      }
       // Other services on these accounts (Auto Trade, Auto Buy, Tower, PVP) stop first.
       if (this.pauseServices) resumeServices = await this.pauseServices(accounts.map(a => a.id), schedule.taskName).catch(() => null);
       for (const account of accounts) {

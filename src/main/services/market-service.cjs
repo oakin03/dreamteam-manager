@@ -19,6 +19,14 @@ const CURRENCY = { APK_TICKET: 'APK', TICKET: 'TIX' };
 const PAYMENT_MODE = { APK: 'APK_TICKET', TIX: 'TICKET' };
 
 function abortError() { const e = new Error('Aborted'); e.name = 'AbortError'; return e; }
+// Before a market write: wait as long as the game says the account's market cooldown
+// lasts, instead of being refused and trying again.
+async function waitCooldown(gs, signal) {
+  if (!gs?.marketCooldown) return;
+  const sec = await gs.marketCooldown({ signal });
+  if (sec > 0) await sleep(sec * 1000 + 250, signal);
+}
+
 function sleep(ms, signal) {
   if (signal?.aborted) return Promise.reject(abortError());
   return new Promise((resolve, reject) => {
@@ -71,7 +79,8 @@ function lastExpiryCutoff(now = Date.now()) {
 }
 
 class MarketService {
-  constructor({ store, activity, accountProfile = null, sessions, onChanged, createSocket, concurrency = ACCOUNT_CONCURRENCY, minRetryMs = 0, writeTimeoutMs = 15000 }) {
+  constructor({ store, activity, accountProfile = null, sessions, onChanged, createSocket, concurrency = ACCOUNT_CONCURRENCY, minRetryMs = 0, writeTimeoutMs = 15000, checkCooldown = true }) {
+    this.checkCooldown = checkCooldown;
     this.store = store;
     this.activity = activity;
     this.accountProfile = accountProfile;
@@ -165,7 +174,7 @@ class MarketService {
     const open = async () => {
       holder.current = await GameSocket.open({ createSocket: this.createSocket, cookie: session.cookieHeader, signal });
       // Market writes need the socket registered as the user (see GameSocket.register).
-      await holder.current.register(session.userId, { signal });
+      await holder.current.register(session.userId, { signal, owner: 'Market' });
       return holder.current;
     };
     const conn = { userId: session.userId, socket: await open() };
@@ -186,6 +195,7 @@ class MarketService {
     let reply = null;
     let reregistered = false;
     let reconnected = false;
+    await waitCooldown(this.checkCooldown ? conn.socket : null, signal);
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
       try {
         reply = await conn.socket.call(event, payload, replyEvent, { signal, timeoutMs: this.writeTimeoutMs });
@@ -500,4 +510,4 @@ class MarketService {
   async shutdown() { await this.stop(); }
 }
 
-module.exports = { MarketService, listingRow, lastExpiryCutoff, listingKind };
+module.exports = { waitCooldown, MarketService, listingRow, lastExpiryCutoff, listingKind };

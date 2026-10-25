@@ -108,7 +108,7 @@ class TowerService {
     const read = (timeoutMs = 10000) => conn.main.call('towerChallenge:getTowerData', undefined, 'towerChallenge:towerData', { signal, timeoutMs });
     let r = await read(conn.registered ? 10000 : this.timing.cookieTryMs).catch(() => null);
     if (!r?.success && !conn.registered) {
-      await conn.main.register(conn.userId, { signal });
+      await conn.main.register(conn.userId, { signal, owner: 'Tower' });
       conn.registered = true;
       r = await read();
     }

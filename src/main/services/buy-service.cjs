@@ -72,7 +72,8 @@ function affordableCurrencies(rows, order, balances) {
 }
 
 class BuyService {
-  constructor({ store, activity, sessions, accountProfile, onChanged, onAttention, onScan, pauseAccount = null, gameHealth = null, createSocket, now = () => Date.now(), timing = {} }) {
+  constructor({ store, activity, sessions, accountProfile, onChanged, onAttention, onScan, pauseAccount = null, gameHealth = null, createSocket, now = () => Date.now(), timing = {}, checkCooldown = true }) {
+    this.checkCooldown = checkCooldown;
     this.store = store;
     // (accountId, taskName) → async resume(): stops what runs on that account (Auto Play,
     // other automations) while Auto Buy is signed in there, and starts it again afterwards.
@@ -120,7 +121,7 @@ class BuyService {
     if (!account) throw new Error('Account not found.');
     const session = await this.sessions.get(account, { owner: 'buy' });
     const socket = await GameSocket.open({ createSocket: this.createSocket, cookie: session.cookieHeader, signal });
-    await socket.register(session.userId, { signal });
+    await socket.register(session.userId, { signal, owner: 'Auto Buy' });
     const conn = { accountId, userId: session.userId, socket, timer: null };
     this.conns.set(accountId, conn);
     this._touch(accountId);
@@ -146,6 +147,11 @@ class BuyService {
   async _write(conn, event, payload, replyEvent, signal) {
     let reply = null;
     let reregistered = false;
+    // Not before a buy: a buy races other players, the extra round trip would cost it.
+    if (this.checkCooldown && event !== 'market:buyPlayer') {
+      const sec = await conn.socket.marketCooldown?.({ signal });
+      if (sec > 0) { this._touch(conn.accountId); await sleep(sec * 1000 + 250, signal); }
+    }
     for (let attempt = 1; attempt <= WRITE_ATTEMPTS; attempt++) {
       this._touch(conn.accountId);
       reply = await conn.socket.call(event, payload, replyEvent, { signal, timeoutMs: 20000 });

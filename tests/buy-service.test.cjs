@@ -85,7 +85,7 @@ function service(game, accounts) {
   };
   const svc = new BuyService({
     store, activity: { add: e => logs.push(e) }, accountProfile: { merge: (id, p) => { merged[id] = p; } }, onChanged() {}, onAttention() {},
-    sessions: { get: async a => ({ userId: 'u-' + a.id, cookieHeader: 'session=x' }) }, createSocket: game.createSocket, timing: { buyGapMs: 5, idleCloseMs: 500 }
+    sessions: { get: async a => ({ userId: 'u-' + a.id, cookieHeader: 'session=x' }) }, createSocket: game.createSocket, timing: { buyGapMs: 5, idleCloseMs: 500 }, checkCooldown: false
   });
   return { svc, logs, data: () => data, merged };
 }

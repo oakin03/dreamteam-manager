@@ -17,6 +17,8 @@ const POLL_MS = 3000;
 const APPEAR_GRACE_MS = 30000;           // a found match shows up in getUserPVPMatch within this
 const MATCH_MAX_MS = 15 * 60 * 1000;     // a match lasts ~4 min; never wait forever
 const MAX_FIND_FAILURES = 3;
+const ARENA_WAIT_MS = 3 * 60 * 60 * 1000; // the daily PVP waits this long for a closed arena
+const ARENA_POLL_MS = 60 * 1000;          // besides the game's open/close broadcast
 
 function abortError() { const e = new Error('Aborted'); e.name = 'AbortError'; return e; }
 function sleep(ms, signal) {
@@ -39,13 +41,13 @@ class PvpService {
     this.onChanged = onChanged || (() => {});
     this.createSocket = createSocket;
     this.now = now;
-    this.timing = { pollMs: POLL_MS, appearGraceMs: APPEAR_GRACE_MS, matchMaxMs: MATCH_MAX_MS, ...timing };
+    this.timing = { pollMs: POLL_MS, appearGraceMs: APPEAR_GRACE_MS, matchMaxMs: MATCH_MAX_MS, arenaWaitMs: ARENA_WAIT_MS, arenaPollMs: ARENA_POLL_MS, ...timing };
     this.run = null;        // live run: { startedAt, accounts: { id: row } }
     this.controller = null;
   }
 
   snapshot() {
-    return { running: Boolean(this.controller), run: this.run ? JSON.parse(JSON.stringify(this.run)) : null, lastReport: this.store.getPvpReport?.() || null, status: this.lastStatus || null };
+    return { running: Boolean(this.controller), waitingArena: Boolean(this.waitingArena), run: this.run ? JSON.parse(JSON.stringify(this.run)) : null, lastReport: this.store.getPvpReport?.() || null, status: this.lastStatus || null };
   }
 
   _name(id) { return this.store.getAccounts().find(a => a.id === id)?.name || id; }
@@ -132,6 +134,41 @@ class PvpService {
     this.anonSim = await GameSocket.open({ createSocket: this.createSocket, path: SIM_PATH, signal });
     return this.anonSim;
   }
+  // Before the daily PVP stops Auto Play: when the arena is closed, wait until the game
+  // broadcasts that it opened ("pvpArenaStatusChanged" on /socket/, heard without
+  // signing in) or a once-a-minute check sees it open. Throws after arenaWaitMs.
+  async waitForArena(signal) {
+    if (await this._arenaActive(signal).catch(error => { if (error?.name === 'AbortError') throw error; return false; })) return true;
+    this._log(null, 'info', 'pvp.waitArena', {}, 'PVP arena is closed · PVP starts as soon as it opens (Auto Play keeps running until then)');
+    this.waitingArena = true;
+    this.onChanged();
+    const anon = await this._anon(signal);
+    try {
+      await new Promise((resolve, reject) => {
+        const until = this.now() + this.timing.arenaWaitMs;
+        const onPush = data => { if (data?.isActive) finish(); };
+        const onAbort = () => finish(abortError());
+        const poll = setInterval(async () => {
+          if (this.now() > until) return finish(new Error('The PVP arena did not open in time.'));
+          if (await this._arenaActive(signal).catch(() => false)) finish();
+        }, this.timing.arenaPollMs);
+        function finish(error) {
+          clearInterval(poll);
+          anon.socket.off('pvpArenaStatusChanged', onPush);
+          signal?.removeEventListener('abort', onAbort);
+          error ? reject(error) : resolve();
+        }
+        anon.socket.on('pvpArenaStatusChanged', onPush);
+        signal?.addEventListener('abort', onAbort, { once: true });
+      });
+    } finally {
+      this.waitingArena = false;
+      this.onChanged();
+    }
+    this._log(null, 'success', 'pvp.arenaOpened', {}, 'PVP arena opened · starting PVP');
+    return true;
+  }
+
   async _arenaActive(signal) {
     const r = await (await this._anon(signal)).call('getPvpArenaStatus', {}, 'pvpArenaStatus', { signal, timeoutMs: 10000 });
     return r?.isActive === true;

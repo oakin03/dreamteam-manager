@@ -55,6 +55,19 @@ function rewardSummary(reply, task) {
   };
 }
 
+// "3 Energy Drink, 2 Gift Box" from the items of the claimed mails (the shape varies
+// between mail kinds: {itemDetail:{name}, metadata:{name}, quantity} as seen live, or older
+// {name, quantity} / {item:{name}, amount}).
+function mailItems(mails) {
+  const totals = new Map();
+  for (const mail of mails) for (const it of mail.items || []) {
+    const name = it?.itemDetail?.name || it?.metadata?.name || it?.item?.name || it?.itemName || it?.name || it?.itemType;
+    if (!name) continue;
+    totals.set(name, (totals.get(name) || 0) + (Number(it.quantity ?? it.amount) || 1));
+  }
+  return [...totals].map(([name, n]) => `${n} ${name}`).join(', ');
+}
+
 const isFmEntry = m => m?.type === 'FM' || /^fm-/.test(String(m?.match_id || ''));
 const reasonOf = r => String(r?.error || r?.message || 'rejected');
 
@@ -292,6 +305,31 @@ class DailyRoutineService {
   }
 
   async _claimWith(account, main, userId, signal) {
+    const sum = await this._claimTasks(account, main, userId, signal);
+    // Mail rewards (event gifts, compensation) ride along every task-reward check.
+    try { await this._claimMail(account, main, userId, signal); } catch (error) {
+      if (error?.name === 'AbortError') throw error;
+      this._log(account, 'warning', 'ml.failed', { error: error.message }, `Mail rewards could not be claimed: ${error.message}`);
+    }
+    return sum;
+  }
+
+  // Mail box (captured from the game client 2026-10-25, /socket/, acks, cookie only):
+  //   getUserMails {userId} -> {success, mails:[{id, title, isRead, isClaimed, items:[...]}]}
+  //   claimAllMailItems {userId} -> {success, message}
+  async _claimMail(account, main, userId, signal) {
+    const box = await main.ack('getUserMails', { userId }, { signal });
+    if (!box?.success) throw new Error(reasonOf(box));
+    const open = (box.mails || []).filter(m => !m.isClaimed && Array.isArray(m.items) && m.items.length);
+    if (!open.length) return { count: 0 };
+    const reply = await this._claimAck(main, 'claimAllMailItems', { userId }, signal);
+    if (!reply?.success) throw new Error(reasonOf(reply));
+    const items = mailItems(open);
+    this._log(account, 'success', 'ml.claimed', { count: open.length, items: items || '—' }, `Mail rewards claimed · ${open.length} mail(s)${items ? ` · ${items}` : ''}`);
+    return { count: open.length, items };
+  }
+
+  async _claimTasks(account, main, userId, signal) {
     this._step(account, 'rewards');
     const current = await this._dailyTasks(main, userId, signal);
     const { tasks } = current;
@@ -522,4 +560,4 @@ class DailyRoutineService {
   }
 }
 
-module.exports = { DailyRoutineService, isFmEntry };
+module.exports = { DailyRoutineService, isFmEntry, mailItems };

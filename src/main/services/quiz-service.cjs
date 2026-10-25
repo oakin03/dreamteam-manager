@@ -127,7 +127,7 @@ class QuizService {
   async _write(conn, state, event, payload, signal) {
     let r = await this._ack(conn, event, payload, signal);
     if (!r?.success && /auth|login|register/i.test(String(r?.error || r?.message || '')) && !state.registered) {
-      await conn.register(payload.userId, { signal });
+      await conn.register(payload.userId, { signal, owner: 'Daily Quiz' });
       state.registered = true;
       r = await this._ack(conn, event, payload, signal);
     }

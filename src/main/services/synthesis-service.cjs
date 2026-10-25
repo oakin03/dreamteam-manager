@@ -186,7 +186,7 @@ class SynthesisService {
     let r = await this._send(cards, signal);
     // The cookie alone may not be enough for writes: register once and repeat.
     if ((r.timeout || /auth/i.test(r.message || '')) && !this.registered) {
-      await this.conn.register(this.userId, { signal });
+      await this.conn.register(this.userId, { signal, owner: 'Synthesis' });
       this.registered = true;
       r = await this._send(cards, signal);
     }

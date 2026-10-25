@@ -6,6 +6,7 @@ const { GameSocket } = require('./game-socket.cjs');
 const UPDATE_MINUTE_TR = 11 * 60 + 5;          // 11:05 Türkiye (UTC+3)
 const TR_OFFSET_MS = 3 * 60 * 60 * 1000;
 const HISTORY_DAYS = 14;
+const PUSH_LEAD_MS = 6 * 60 * 60 * 1000;
 
 // Start of the current value day: the last 11:05 TR at or before `now`.
 function lastUpdateCutoff(now = Date.now()) {
@@ -76,7 +77,8 @@ class PlayersService {
 
   nextFetchAt() {
     const cut = lastUpdateCutoff(this.now());
-    return this._data().day === dayKey(cut) ? cut + 24 * 60 * 60 * 1000 : this.now();
+    // A list taken early on the game's salary-update signal already counts for today.
+    return (this._data().day || '') >= dayKey(cut) ? cut + 24 * 60 * 60 * 1000 : this.now();
   }
 
   // Fetch now when today's 11:05 list is missing, then every day at 11:05 (+30 s).
@@ -92,7 +94,9 @@ class PlayersService {
 
   stop() { clearTimeout(this.timer); this.timer = null; }
 
-  async refresh({ automatic = false } = {}) {
+  // `pushed`: the game said its daily update is done, possibly a few minutes before
+  // 11:05, so the list belongs to the day that update starts.
+  async refresh({ automatic = false, pushed = false } = {}) {
     if (this.busy) return this.snapshot();
     this.busy = true;
     this.error = null;
@@ -103,7 +107,7 @@ class PlayersService {
       const list = await socket.call('getPlayerRankings', undefined, 'playerRankingsList', { timeoutMs: 30000 });
       if (!Array.isArray(list) || !list.length) throw new Error('The player list came back empty.');
       const players = list.map(playerRow);
-      const cut = lastUpdateCutoff(this.now());
+      const cut = lastUpdateCutoff(this.now() + (pushed ? PUSH_LEAD_MS : 0));
       const day = dayKey(cut);
       const data = this._data();
       const previousById = new Map((data.players || []).map(p => [p.id, p]));
