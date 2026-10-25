@@ -46,14 +46,14 @@ function rowReady(row) {
 // Bought as many as asked: the row is left out of the scans.
 function rowDone(row) { return !isUnlimited(row) && Number(row.boughtCount || 0) >= Number(row.qty); }
 
-// Listings of the watched player that satisfy every limit, cheapest first.
-function matchingTickets(row, tickets, ownTeams = new Set()) {
+// Listings of the watched player that satisfy every limit, cheapest first. Listings of
+// the user's own accounts count too (user 2026-10-26); only the seller cannot buy its own.
+function matchingTickets(row, tickets) {
   return (tickets || []).filter(t => (t.playerId || t.player?.id) === row.playerId
     && (!t.status || t.status === 'LISTED')
     && CURRENCY[t.paymentMode] === row.currency
     && Number(t.price) <= Number(row.maxPrice)
-    && Number(t.signedSalary) <= Number(row.maxSalary)
-    && !ownTeams.has(t.user?.teamName))
+    && Number(t.signedSalary) <= Number(row.maxSalary))
     .sort((a, b) => Number(a.price) - Number(b.price));
 }
 
@@ -453,7 +453,8 @@ class BuyService {
     for (const id of order) balances[id] = await this._balance(id, null, signal).catch(() => null) || { apk: 0, tix: 0 };
     this.auto.balances = balances;
     const failedTickets = new Set();
-    const ownTeams = new Set(this._accounts().map(a => a.name));
+    // team name → account id: the account selling a listing never tries to buy it
+    const sellerOf = new Map(this._accounts().map(a => [String(a.name).toLowerCase(), a.id]));
     for (;;) {
       if (signal.aborted) throw abortError();
       const ready = this._data().watch.filter(r => r.enabled !== false && rowReady(r));
@@ -515,10 +516,13 @@ class BuyService {
         if (!ok.has(row.currency)) continue;
         const reply = await this._searchAll(anon, row, signal);
         if (reply) { try { this.onScan?.([row.playerId], row.currency, reply.tickets.filter(t => (t.playerId || t.player?.id) === row.playerId), { complete: reply.complete, cutoff: reply.cutoff }); } catch {} }
-        for (const ticket of matchingTickets(row, reply?.tickets, ownTeams)) {
+        for (const ticket of matchingTickets(row, reply?.tickets)) {
           if (failedTickets.has(ticket.id)) continue;
           const price = Number(ticket.price);
           const tried = new Set();
+          const seller = sellerOf.get(String(ticket.user?.teamName || '').toLowerCase());
+          if (seller) tried.add(seller);
+          const triedBefore = tried.size;
           const reasons = new Set();
           let bought = false;
           let gone = false;
@@ -546,16 +550,16 @@ class BuyService {
           if (gone) continue;
           // No account could buy it (they already own the player and/or cannot pay):
           // warn right away, keep scanning for the other players. Once per listing.
-          if (!tried.size) reasons.add('funds');
+          if (tried.size === triedBefore) reasons.add('funds');
           const why = [...reasons].join('+');
           const words = { owned: ['kadroda var', 'already owned'], funds: ['bakiye yetersiz', 'not enough funds'], other: ['diğer', 'other'] };
           const reasonTr = [...reasons].map(r => words[r][0]).join(' + ');
           const reasonEn = [...reasons].map(r => words[r][1]).join(' + ');
           this.auto.lastWarning = { name: row.name, price, currency: row.currency, reason: why, reasonTr, reasonEn, at: new Date(this.now()).toISOString() };
-          this._log('error', 'ab.cannotBuy', { name: row.name, price, currency: row.currency, reason: why, reasonTr, reasonEn, tried: tried.size }, `No account could buy ${row.name} (${price} ${row.currency}) · ${why}`);
+          this._log('error', 'ab.cannotBuy', { name: row.name, price, currency: row.currency, reason: why, reasonTr, reasonEn, tried: tried.size - triedBefore }, `No account could buy ${row.name} (${price} ${row.currency}) · ${why}`);
           this.onAttention?.('buyCannot', `${row.name} · ${price} ${row.currency}`);
           this.onChanged();
-          if (!tried.size) break; // nobody can pay this or a pricier listing
+          if (tried.size === triedBefore) break; // nobody can pay this or a pricier listing
         }
         this.auto.balances = { ...balances };
         this.onChanged();

@@ -91,12 +91,12 @@ function service(game, accounts) {
   return { svc, logs, data: () => data, merged };
 }
 
-test('rules: every limit must hold, cheapest first, own listings ignored; account priority and affordability', () => {
+test('rules: every limit must hold, cheapest first, listings of own accounts included; account priority and affordability', () => {
   const row = { playerId: 'p1', maxPrice: 20, maxSalary: 50, currency: 'APK' };
   assert.equal(Boolean(rowReady(row)), true);
   assert.equal(Boolean(rowReady({ ...row, maxSalary: '' })), false);
-  const t = matchingTickets(row, [L('a', 'p1', 'X', 21, 40), L('b', 'p1', 'X', 20, 40), L('c', 'p1', 'X', 15, 51), L('d', 'p2', 'Y', 5, 1), L('e', 'p1', 'X', 10, 40, 'TICKET'), L('f', 'p1', 'X', 12, 40, 'APK_TICKET', 'Trophy3')], new Set(['Trophy3']));
-  assert.deepEqual(t.map(x => x.id), ['b'], '21 > 20, salary 51 > 50, other player, TIX, own listing are all skipped');
+  const t = matchingTickets(row, [L('a', 'p1', 'X', 21, 40), L('b', 'p1', 'X', 20, 40), L('c', 'p1', 'X', 15, 51), L('d', 'p2', 'Y', 5, 1), L('e', 'p1', 'X', 10, 40, 'TICKET'), L('f', 'p1', 'X', 12, 40, 'APK_TICKET', 'Trophy3')]);
+  assert.deepEqual(t.map(x => x.id), ['f', 'b'], '21 > 20, salary 51 > 50, other player and TIX are skipped; a listing of an own account counts');
   const bal = { a: { apk: 10, tix: 0 }, b: { apk: 30, tix: 5 }, c: { apk: 100, tix: 0 } };
   assert.equal(pickAccount(['a', 'b', 'c'], bal, 'APK', 25), 'b', 'first in priority order that can pay');
   assert.equal(pickAccount(['a', 'b', 'c'], bal, 'TIX', 25), null);
@@ -266,6 +266,21 @@ test('already owned: equipment, skill and lineup are put back exactly; a stock l
   assert.equal(pickFiller(rows.filter(x => !['l', 'r'].includes(x.ticketId)), { cap: 1000, used: 500 }, now).ticketId, 'o', 'then on sale over the cap');
   assert.equal(pickFiller([], {}, now), null);
 });
+
+test('Auto Buy buys a listing of one of the own accounts, never with the selling account', async () => {
+  const game = fakeGame({
+    users: { 'u-a': { apk: 100, tix: 0 }, 'u-b': { apk: 100, tix: 0 } },
+    listings: [L('t1', 'p1', 'Jay Huff', 20, 40, 'APK_TICKET', 'Trophy3')]
+  });
+  const { svc, data } = service(game, [['a', 'Trophy3'], ['b', 'Trophy4']]);
+  svc.addWatch([{ id: 'p1', name: 'Jay Huff' }]);
+  svc.updateWatch(data().watch[0].id, { maxPrice: 20, maxSalary: 50, currency: 'APK', unlimited: false, qty: 1 });
+  await svc.startAuto({ accountIds: ['a', 'b'], intervalSec: 3 });
+  await svc.done;
+  assert.equal(game.st.listings[0].status, 'SOLD');
+  assert.equal(game.st.users['u-a'].apk, 100, 'Trophy3 sells it, so it does not buy it');
+  assert.equal(game.st.users['u-b'].apk, 80);
+}, { timeout: 10000 });
 
 test('Auto Buy reads every page of the name search: a listing behind similar names on page 2 is found', async () => {
   const others = Array.from({ length: 9 }, (_, i) => L('o' + i, 'p9', 'Jay Huff Jr', 5 + i, 30));

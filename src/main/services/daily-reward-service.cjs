@@ -8,7 +8,8 @@ const { GameSocket } = require('./game-socket.cjs');
 //   dailyRewards:claim {userId} → dailyRewards:claimResult
 //     { success, data: { rewards, currentTier, isComplete, nextClaimTime } } or
 //     { success:false, error:'Rate limit…' | 'Please wait N seconds…', retryAfter }
-// No browser and no `register`, so nothing else signed in is kicked.
+// No browser. Reading needs no sign-in; the claim needs a `register`ed socket (an
+// open game tab of that account is signed out at that moment).
 
 const ERROR_RETRY_MS = 60 * 1000;
 const SAFETY_MS = 1500; // claim a moment after the timer, the server clock may lag
@@ -273,7 +274,13 @@ class DailyRewardService {
         }
 
         this.setState(account.id, { status: 'claiming', tier, timerText: '00:00', error: null });
-        const reply = await gs.call('dailyRewards:claim', { userId }, 'dailyRewards:claimResult', { signal });
+        let reply = await gs.call('dailyRewards:claim', { userId }, 'dailyRewards:claimResult', { signal });
+        // The claim reads the account from a registered socket ("User ID is required"
+        // otherwise, seen live 2026-10-25): register once and claim again.
+        if (!reply?.success && /user id is required|not authenticated|authentication/i.test(String(reply?.error || reply?.message || '')) && !gs.userId) {
+          await gs.register(userId, { signal, owner: 'Daily Reward' });
+          reply = await gs.call('dailyRewards:claim', { userId }, 'dailyRewards:claimResult', { signal });
+        }
         if (!reply?.success) {
           const wait = retryAfterMs(reply);
           const message = reply?.error || 'claim refused';

@@ -7,7 +7,8 @@ const { EventEmitter } = require('node:events');
 const { AppStore } = require('../src/main/services/store.cjs');
 const { DailyRewardService, nextDailyResetAt, waitMsOf, rewardText, retryAfterMs } = require('../src/main/services/daily-reward-service.cjs');
 
-// A fake game socket: answers dailyRewards:* from a small tier model.
+// A fake game socket: answers dailyRewards:* from a small tier model. Like the live game
+// (2026-10-25) a claim on a socket that is not registered answers 'User ID is required'.
 function fakeGame({ tier = 1, ready = true, waitMs = 600000, claimReply = null } = {}) {
   const game = { tier, ready, emits: [], claims: 0 };
   game.createSocket = () => {
@@ -15,9 +16,11 @@ function fakeGame({ tier = 1, ready = true, waitMs = 600000, claimReply = null }
     socket.connected = true;
     socket.close = () => {};
     socket.emit = (event, payload) => {
-      if (['connect', 'dailyRewards:progressResult', 'dailyRewards:claimResult'].includes(event)) return EventEmitter.prototype.emit.call(socket, event, payload);
+      if (['connect', 'dailyRewards:progressResult', 'dailyRewards:claimResult', 'registrationSuccess'].includes(event)) return EventEmitter.prototype.emit.call(socket, event, payload);
       game.emits.push({ event, payload });
       setImmediate(() => {
+        if (event === 'register') { socket.registered = true; EventEmitter.prototype.emit.call(socket, 'registrationSuccess', { success: true }); return; }
+        if (event === 'dailyRewards:claim' && !socket.registered) { EventEmitter.prototype.emit.call(socket, 'dailyRewards:claimResult', { success: false, error: 'User ID is required' }); return; }
         if (event === 'dailyRewards:getProgress') {
           const done = game.tier > 6;
           EventEmitter.prototype.emit.call(socket, 'dailyRewards:progressResult', { success: true, data: {
@@ -86,7 +89,8 @@ test('A ready tier is claimed over the socket, then the next timer is waited', a
   assert.ok(result.delayMs > 1200000 - 5000 && result.delayMs < 1200000 + 5000);
   assert.equal(svc.snapshot().main.status, 'waiting');
   assert.ok(events.some(e => e.code === 'dw.claimed' && e.params.tier === 3 && e.params.rewards === '2 Energy Drink'));
-  assert.ok(!game.emits.some(e => e.event === 'register'), 'never registers, nothing is kicked');
+  assert.equal(game.emits.filter(e => e.event === 'register').length, 1, 'registers once for the claim');
+  assert.ok(!events.some(e => e.code === 'dw.refused'));
 });
 
 test('Sixth claim holds the account until the reset and survives a restart', async t => {
