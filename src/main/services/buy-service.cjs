@@ -16,6 +16,9 @@ const WRITE_ATTEMPTS = 4;
 const IDLE_CLOSE_MS = 60000;
 const PARK_PRICE = 9999999;   // Auto Buy lists a bought player here until the user prices it
 const PAYMENT_MODE = { APK: 'APK_TICKET', TIX: 'TICKET' };
+const SEARCH_PAGE_SIZE = 8;
+const SEARCH_MAX_PAGES = 12;
+const maxPrice = tickets => tickets.reduce((m, t) => Math.max(m, Number(t.price) || 0), 0);
 const CURRENCY = { APK_TICKET: 'APK', TICKET: 'TIX' };
 const DEFAULT_INTERVAL_SEC = 10;
 const OFFLINE_RETRY_SEC = 120;
@@ -110,6 +113,24 @@ class BuyService {
   snapshot() {
     const d = this._data();
     return { bought: d.bought, watch: d.watch, config: { intervalSec: DEFAULT_INTERVAL_SEC, ...d.config }, auto: { ...this.auto }, busy: { ...this.busy }, parkPrice: PARK_PRICE };
+  }
+
+  // Every page of the name search (8 listings a page, cheapest first). A name search
+  // also returns players with similar names, so the first page alone could hide this
+  // player's listings. Stops at the last page or after SEARCH_MAX_PAGES; then
+  // `cutoff` is the highest price read (the Trading Hall keeps what lies above it).
+  async _searchAll(anon, row, signal) {
+    const tickets = [];
+    let complete = false;
+    for (let page = 1; page <= SEARCH_MAX_PAGES; page++) {
+      const reply = await anon.call('market:getMarketPlayers', { page, search: row.name, sort: 'asc', paymentMode: PAYMENT_MODE[row.currency], basePlayersOnly: false }, 'market:marketPlayersData', { signal, timeoutMs: 15000 }).catch(() => null);
+      if (!reply?.tickets) return page === 1 ? null : { tickets, complete: false, cutoff: maxPrice(tickets) };
+      tickets.push(...reply.tickets);
+      const total = Number(reply.total);
+      const lastPage = reply.tickets.length < SEARCH_PAGE_SIZE || (Number.isFinite(total) && total > 0 && page * SEARCH_PAGE_SIZE >= total);
+      if (lastPage) { complete = true; break; }
+    }
+    return { tickets, complete, cutoff: complete ? Infinity : maxPrice(tickets) };
   }
 
   // ---------- connections ----------
@@ -492,8 +513,8 @@ class BuyService {
       for (const row of rows) {
         if (signal.aborted) throw abortError();
         if (!ok.has(row.currency)) continue;
-        const reply = await anon.call('market:getMarketPlayers', { page: 1, search: row.name, sort: 'asc', paymentMode: PAYMENT_MODE[row.currency], basePlayersOnly: false }, 'market:marketPlayersData', { signal, timeoutMs: 15000 }).catch(() => null);
-        if (reply?.tickets) { try { this.onScan?.([row.playerId], row.currency, reply.tickets.filter(t => (t.playerId || t.player?.id) === row.playerId)); } catch {} }
+        const reply = await this._searchAll(anon, row, signal);
+        if (reply) { try { this.onScan?.([row.playerId], row.currency, reply.tickets.filter(t => (t.playerId || t.player?.id) === row.playerId), { complete: reply.complete, cutoff: reply.cutoff }); } catch {} }
         for (const ticket of matchingTickets(row, reply?.tickets, ownTeams)) {
           if (failedTickets.has(ticket.id)) continue;
           const price = Number(ticket.price);

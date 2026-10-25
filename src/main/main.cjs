@@ -39,6 +39,9 @@ const { TournamentService } = require('./services/tournament-service.cjs');
 const { DailyRoutineService } = require('./services/daily-routine-service.cjs');
 const { PvpService } = require('./services/pvp-service.cjs');
 const { GoUpService } = require('./services/goup-service.cjs');
+const { DailyBossService, EliteAscentService } = require('./services/proving-service.cjs');
+const { ActivateService } = require('./services/activate-service.cjs');
+const { PropService } = require('./services/prop-service.cjs');
 const { QuizService } = require('./services/quiz-service.cjs');
 const { CheerService } = require('./services/cheer-service.cjs');
 const { ChatService } = require('./services/chat-service.cjs');
@@ -76,6 +79,12 @@ let quiz;
 let cheer;
 let chat;
 let goupDone = null;
+let dailyBoss;
+let activate;
+let props;
+let eliteAscent;
+let bossDone = null;
+let ascentDone = null;
 let quizDone = null;
 let buy;
 let tower;
@@ -130,6 +139,8 @@ function snapshot({ incremental = false } = {}) {
     tournament: tournament?.snapshot() || { runtime: { status: 'idle' }, accounts: {}, events: [] },
     dailyRoutine: dailyRoutine?.snapshot() || { selected: [], accounts: {} },
     pvp: pvp?.snapshot() || { running: false, run: null, lastReport: null },
+    dailyBoss: dailyBoss?.snapshot() || { running: false, run: null, info: {}, bosses: [] },
+    eliteAscent: eliteAscent?.snapshot() || { running: false, run: null, info: {} },
     goup: goup?.snapshot() || { running: false, run: null, points: {}, event: null, lastReport: null },
     quiz: quiz?.snapshot() || { running: false, run: null, bankSize: 0, lastReport: null },
     cheer: cheer?.snapshot() || { busy: false, last: null },
@@ -141,6 +152,8 @@ function snapshot({ incremental = false } = {}) {
     globalPause: globalPauseSnapshot(),
     accountHealth: accountHealth?.snapshot() || { rows: [] },
     synthesis: synthesis?.snapshot() || { running: false, run: null, summary: {} },
+    props: props?.snapshot() || { runs: {}, bags: {}, busy: [] },
+    activate: activate?.snapshot() || { running: false, run: null, levels: [5, 4, 3, 2] },
     systemLocale,
     dataDir,
     taskDir: taskDir()
@@ -188,6 +201,9 @@ const DONE_NOTES = {
   'mk.relistDone': p => ({ tr: ['Tekrar listeleme bitti', `${p.listed} listelendi · ${(p.failed || 0) + (p.removedNotListed || 0)} sorunlu`], en: ['Relist finished', `${p.listed} listed · ${(p.failed || 0) + (p.removedNotListed || 0)} with problems`] }),
   'so.newMessage': p => ({ tr: ['Yeni mesaj', `${p.from} · ${p.count} okunmamış`], en: ['New message', `${p.from} · ${p.count} unread`] }),
   'so.newRequest': p => ({ tr: ['Yeni arkadaşlık isteği', `${p.from}`], en: ['New friend request', `${p.from}`] }),
+  'bo.summary': p => ({ tr: ['Daily Boss bitti', `${p.done}/${p.total} hesap · ${p.played} maç · ${p.won} galibiyet`], en: ['Daily Boss finished', `${p.done}/${p.total} account(s) · ${p.played} match(es) · ${p.won} won`] }),
+  'ea.summary': p => ({ tr: ['Elite Ascent bitti', `${p.done}/${p.total} hesap · ${p.played} maç · ${p.won} galibiyet`], en: ['Elite Ascent finished', `${p.done}/${p.total} account(s) · ${p.played} match(es) · ${p.won} won`] }),
+  'ac.summary': p => ({ tr: ['Kart aktivasyonu bitti', `${p.count} aktif edildi · ${p.failed} başarısız`], en: ['Card activation finished', `${p.count} activated · ${p.failed} failed`] }),
   'cs.summary': p => ({ tr: ['Chat bitti', `${p.sent} mesaj gönderildi · ${p.failed} başarısız`], en: ['Chat finished', `${p.sent} message(s) sent · ${p.failed} failed`] })
 };
 function notifyDone(entry) {
@@ -289,6 +305,16 @@ async function pauseServicesFor(accountIds, taskName, { prefix = 'sc', logTask =
       await pvpDone?.catch(() => {});
       resume.push(['PVP', () => startPvpManual(active)]);
     }
+  }
+  for (const [svc, label, getDone] of [[dailyBoss, 'Daily Boss', () => bossDone], [eliteAscent, 'Elite Ascent', () => ascentDone]]) {
+    const snap = svc.snapshot();
+    if (skipAutoBuy || !snap.running) continue;
+    const active = Object.values(snap.run?.accounts || {}).filter(r => !['done', 'noAttempts', 'locked', 'error', 'stopped'].includes(r.status)).map(r => r.accountId);
+    if (!overlap(active)) continue;
+    const plan = Object.fromEntries(active.map(id => [id, snap.run.accounts[id].target]));
+    svc.stop();
+    await getDone()?.catch(() => {});
+    resume.push([label, () => startProvingManual(svc, plan, label, label === 'Daily Boss' ? 'bo' : 'ea', p => { if (label === 'Daily Boss') bossDone = p; else ascentDone = p; })]);
   }
   const gu = goup.snapshot();
   if (!skipAutoBuy && gu.running) {
@@ -400,6 +426,17 @@ async function resumeAll() {
   return globalPauseSnapshot();
 }
 function globalPauseSnapshot() { return globalPause ? { active: true, at: globalPause.at, autoPlay: globalPause.autoPlay.length } : { active: false }; }
+
+// Daily Boss and Elite Ascent play matches: Auto Play on those accounts is stopped
+// first and started again when they are over. plan = { accountId: bossId | true }.
+async function startProvingManual(service, plan, label, prefix, setDone) {
+  const ids = Object.keys(plan || {});
+  if (!ids.length) throw new Error('Select at least one account.');
+  if (service.snapshot().running) throw new Error(`${label} is already running.`);
+  const resume = await pauseTasksFor(ids, label, prefix);
+  setDone(service.runAndWait(plan, { source: 'manual' }).catch(() => {}).finally(resume));
+  return service.snapshot();
+}
 
 // Go-up and Daily Quiz connect the accounts to the game: Auto Play on them is stopped
 // first and started again when they are over (rule for every automation).
@@ -577,10 +614,14 @@ function initServices() {
     }
   });
   synthesis = new SynthesisService({ store, activity, sessions: gameSessions, onChanged: emitState, onDone: () => cards.refresh() });
+  props = new PropService({ store, activity, sessions: gameSessions, onChanged: emitState });
+  activate = new ActivateService({ store, activity, sessions: gameSessions, cards, onChanged: emitState });
   tower = new TowerService({ store, activity, gameHealth, sessions: gameSessions, onChanged: emitState });
-  buy = new BuyService({ store, activity, gameHealth, sessions: gameSessions, accountProfile, onChanged: emitState, onAttention: autoTradeAttention, onScan: (ids, currency, tickets) => trading.mergeTickets(ids, currency, tickets), pauseAccount: pauseAccountForBuy });
+  buy = new BuyService({ store, activity, gameHealth, sessions: gameSessions, accountProfile, onChanged: emitState, onAttention: autoTradeAttention, onScan: (ids, currency, tickets, scope) => trading.mergeTickets(ids, currency, tickets, scope), pauseAccount: pauseAccountForBuy });
   pvp = new PvpService({ store, activity, gameHealth, sessions: gameSessions, onChanged: emitState });
   goup = new GoUpService({ store, activity, gameHealth, sessions: gameSessions, onChanged: emitState });
+  dailyBoss = new DailyBossService({ store, activity, gameHealth, sessions: gameSessions, onChanged: emitState });
+  eliteAscent = new EliteAscentService({ store, activity, gameHealth, sessions: gameSessions, onChanged: emitState });
   quiz = new QuizService({ store, activity, gameHealth, sessions: gameSessions, onChanged: emitState });
   cheer = new CheerService({ store, activity, gameHealth, sessions: gameSessions, onChanged: emitState });
   chat = new ChatService({ store, activity, gameHealth, sessions: gameSessions, onChanged: emitState });
@@ -854,6 +895,12 @@ function registerIpc() {
   ipcMain.handle('buy:set-config', async (_event, patch) => buy.setConfig(patch || {}));
   ipcMain.handle('buy:start-auto', async (_event, options) => startAutoBuy(options || {}));
   ipcMain.handle('buy:stop-auto', async () => buy.stopAuto());
+  ipcMain.handle('props:run', async (_event, accountId) => props.run(accountId));
+  ipcMain.handle('props:stop', async (_event, accountId) => { props.stop(accountId); return props.snapshot(); });
+  ipcMain.handle('props:bags', async (_event, accountIds) => props.bagsOf(Array.isArray(accountIds) ? accountIds : null));
+  ipcMain.handle('activate:start', async (_event, options) => activate.start(options || {}));
+  ipcMain.handle('activate:stop', async () => activate.stop());
+  ipcMain.handle('activate:levels', async (_event, levels) => { store.saveSettings({ ...store.getSettings(), activateLevels: Array.isArray(levels) ? levels : [] }); emitState(); return activate.snapshot(); });
   ipcMain.handle('synthesis:start', async (_event, options) => synthesis.start(options || {}));
   ipcMain.handle('synthesis:stop', async () => synthesis.stop());
   ipcMain.handle('tower:start', async (_event, accountIds) => startTower(Array.isArray(accountIds) ? accountIds : []));
@@ -861,6 +908,12 @@ function registerIpc() {
   ipcMain.handle('pvp:stop', async () => { pvp.stop(); return pvp.snapshot(); });
   ipcMain.handle('pvp:status', async (_event, accountIds) => pvp.status(Array.isArray(accountIds) ? accountIds : store.getAccounts().map(a => a.id)));
   ipcMain.handle('pvp:start', async (_event, accountIds) => startPvpManual(Array.isArray(accountIds) ? accountIds : []));
+  ipcMain.handle('boss:start', async (_event, plan) => startProvingManual(dailyBoss, plan, 'Daily Boss', 'bo', p => { bossDone = p; }));
+  ipcMain.handle('boss:stop', async () => { dailyBoss.stop(); return dailyBoss.snapshot(); });
+  ipcMain.handle('boss:status', async (_event, accountIds) => dailyBoss.status(Array.isArray(accountIds) ? accountIds : null));
+  ipcMain.handle('ascent:start', async (_event, plan) => startProvingManual(eliteAscent, plan, 'Elite Ascent', 'ea', p => { ascentDone = p; }));
+  ipcMain.handle('ascent:stop', async () => { eliteAscent.stop(); return eliteAscent.snapshot(); });
+  ipcMain.handle('ascent:status', async (_event, accountIds) => eliteAscent.status(Array.isArray(accountIds) ? accountIds : null));
   ipcMain.handle('goup:start', async (_event, { accountIds, mode, gapSec } = {}) => startGoUpManual(Array.isArray(accountIds) ? accountIds : [], { mode, gapSec }));
   ipcMain.handle('goup:stop', async () => { goup.stop(); return goup.snapshot(); });
   ipcMain.handle('goup:status', async (_event, accountIds) => goup.status(Array.isArray(accountIds) ? accountIds : null));
@@ -907,6 +960,9 @@ async function shutdownServices() {
     () => draft?.shutdown(),
     () => pvp?.stop(),
     () => goup?.stop(),
+    () => activate?.stop(),
+    () => dailyBoss?.stop(),
+    () => eliteAscent?.stop(),
     () => quiz?.stop(),
     () => chat?.stop(),
     () => cheer?.stop(),

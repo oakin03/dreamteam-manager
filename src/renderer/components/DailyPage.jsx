@@ -10,8 +10,22 @@ const LETTERS = ['A', 'B', 'C', 'D'];
 
 const TEXT = {
   tr: {
-    title: 'Günlük İşler', howTitle: 'Nasıl çalışır?', subtitle: 'Go-up, Daily Quiz, Cheer ve Chat · hepsi tarayıcı açmadan',
-    tabs: { goup: 'Go-up', quiz: 'Daily Quiz', cheer: 'Cheer', chat: 'Chat' },
+    title: 'Günlük İşler', howTitle: 'Nasıl çalışır?', subtitle: 'Go-up, Daily Boss, Elite Ascent, Prop, Daily Quiz, Cheer ve Chat · hepsi tarayıcı açmadan',
+    tabs: { goup: 'Go-up', boss: 'Daily Boss', ascent: 'Elite Ascent', props: 'Prop', quiz: 'Daily Quiz', cheer: 'Cheer', chat: 'Chat' },
+    pr: {
+      button: 'Prop bas', stop: 'Durdur', refresh: 'Çantaları oku', small: 'Su şişesi küçük (+10)', medium: 'Su şişesi orta (+30)', used: 'Kullanılan', players: 'İlk 5',
+      st: { finding: 'Maç aranıyor', noMatch: 'Takım maçta değil', late: '3./4. periyotta · devre arası geçti', waitingHalftime: 'Devre arası bekleniyor', using: 'Prop basılıyor', done: 'Bitti', error: 'Hata', stopped: 'Durduruldu' },
+      quarter: '{n}. periyot', countdown: 'devre arası {s} sn',
+      how: ['Her hesabın kendi "Prop bas" düğmesi var. Takım maçta değilse "takım maçta değil" der; maç 3. ya da 4. periyottaysa devre arası geçtiği için basmaz.', '1. ya da 2. periyottaysa devre arasını bekler. Devre arasında (20 sn) ilk 5\'teki her oyuncuyu staminası 95 ve üstü olana kadar doldurur: önce +10\'luk, +10 bitince staminası 85 ve altındaysa +30\'luk.', 'Sadece tek oyunculuk su şişeleri kullanılır; takım prop\'ları ve büyük şişe kullanılmaz. Bitince sonuç Aktivite\'ye yazılır ve maç ekranından çıkılır.']
+    },
+    pg: {
+      start: 'Başlat ({n})', include: 'Oynasın', level: 'Lv', boss: 'Boss', attempts: 'Kalan hak', result: 'Sonuç', floor: 'Kat', enemy: 'Rakip',
+      applyAll: 'Hepsine uygula', best: 'Her hesaba en güçlü uygun boss', needs: 'Lv {n} gerekir', noBoss: 'Uygun boss yok', wl: '{w} G · {l} M',
+      refreshAscent: 'Katları oku', ascentHint: 'Katları okumak için hesaplara kısa süreliğine giriş yapılır; o hesap oyunda açıksa oradan çıkış yapılır.',
+      st: { queued: 'Sırada', login: 'Bağlanıyor', starting: 'Maç başlatılıyor', playing: 'Maçta', otherMatch: 'Başka maçta · bekliyor', waitingGame: 'Oyun bekleniyor', done: 'Bitti', noAttempts: 'Hak yok', locked: 'Seviye yetmiyor', error: 'Hata', stopped: 'Durduruldu' },
+      bossHow: ['Her hesap seçtiğin boss ile günlük 2 hakkını bitirene kadar oynar; rakip bot olduğu için sıra beklenmez.', 'Her boss bir seviye ister; seviyesi yetmeyen hesapta o boss seçilemez.', 'Başlarken bu hesaplardaki Auto Play durdurulur, bitince yeniden başlatılır. Hak 19:10\'da yenilenir.'],
+      ascentHow: ['Her hesap bulunduğu kattaki botla oynar; kazanırsa bir üst kata çıkar. Günlük 2 bedava hak bitene kadar devam eder.', 'Ücretli haklar asla satın alınmaz ve kullanılmaz.', 'Elite Ascent hesaba giriş ister: o hesap oyunda açıksa oradan çıkış yapılır. Auto Play durdurulur, bitince yeniden başlatılır.']
+    },
     selectAll: 'Tümünü seç', clear: 'Seçimi temizle', stop: 'Durdur', refresh: 'Durumu yenile', checking: 'Kontrol ediliyor…', account: 'Hesap', status: 'Durum',
     notReady: 'Bu özellik uygulama yeniden başlatılınca çalışır.',
     gu: {
@@ -42,8 +56,22 @@ const TEXT = {
     }
   },
   en: {
-    title: 'Daily', howTitle: 'How does it work?', subtitle: 'Go-up, Daily Quiz, Cheer and Chat · all without a browser',
-    tabs: { goup: 'Go-up', quiz: 'Daily Quiz', cheer: 'Cheer', chat: 'Chat' },
+    title: 'Daily', howTitle: 'How does it work?', subtitle: 'Go-up, Daily Boss, Elite Ascent, Props, Daily Quiz, Cheer and Chat · all without a browser',
+    tabs: { goup: 'Go-up', boss: 'Daily Boss', ascent: 'Elite Ascent', props: 'Props', quiz: 'Daily Quiz', cheer: 'Cheer', chat: 'Chat' },
+    pr: {
+      button: 'Use props', stop: 'Stop', refresh: 'Read bags', small: 'Water Bottle Small (+10)', medium: 'Water Bottle Medium (+30)', used: 'Used', players: 'Starters',
+      st: { finding: 'Finding the match', noMatch: 'The team is not in a match', late: 'Quarter 3/4 · halftime is over', waitingHalftime: 'Waiting for halftime', using: 'Using props', done: 'Done', error: 'Error', stopped: 'Stopped' },
+      quarter: 'quarter {n}', countdown: 'halftime {s} s',
+      how: ['Every account has its own "Use props" button. If the team is not in a match it says so; in quarter 3 or 4 nothing is used because halftime is over.', 'In quarter 1 or 2 it waits for halftime. During the 20 s halftime every starter is filled to 95+ stamina: +10 bottles first, +30 ones only at 85 or below once the +10s run out.', 'Only single-player water bottles are used; team props and large bottles are not. The result goes to Activity and the match screen is left.']
+    },
+    pg: {
+      start: 'Start ({n})', include: 'Plays', level: 'Lv', boss: 'Boss', attempts: 'Attempts left', result: 'Result', floor: 'Floor', enemy: 'Opponent',
+      applyAll: 'Apply to all', best: 'Strongest allowed boss for each account', needs: 'needs Lv {n}', noBoss: 'No boss allowed', wl: '{w} W · {l} L',
+      refreshAscent: 'Read floors', ascentHint: 'Reading the floors signs in to each account briefly; if the account is open in the game it is signed out there.',
+      st: { queued: 'Queued', login: 'Connecting', starting: 'Starting the match', playing: 'In a match', otherMatch: 'In another match · waiting', waitingGame: 'Waiting for the game', done: 'Done', noAttempts: 'No attempts', locked: 'Level too low', error: 'Error', stopped: 'Stopped' },
+      bossHow: ['Every account plays the chosen boss until its 2 daily attempts are used; the opponent is a bot, so there is no queue.', 'Each boss needs a level; an account below it cannot choose that boss.', 'On start Auto Play on these accounts is stopped and started again afterwards. Attempts reset at 19:10.'],
+      ascentHow: ['Every account plays the bot of its current floor; a win moves it one floor up. It goes on until the 2 free daily attempts are used.', 'Paid attempts are never bought or used.', 'Elite Ascent needs the account signed in: if it is open in the game it is signed out there. Auto Play is stopped and started again afterwards.']
+    },
     selectAll: 'Select all', clear: 'Clear selection', stop: 'Stop', refresh: 'Refresh status', checking: 'Checking…', account: 'Account', status: 'Status',
     notReady: 'This works after the app is restarted.',
     gu: {
@@ -146,6 +174,132 @@ function GoUpTab({ state, x, toast }) {
         <td>{r?.lastDiff != null ? <span className={r.lastDiff >= 0 ? 'good-text' : 'bad-text'}>{r.lastDiff >= 0 ? '+' : ''}{r.lastDiff}</span> : '—'}</td>
       </tr>)}</tbody></SortTable></div>
     <details className="panel pvp-how"><summary>{x.howTitle}</summary><ul>{x.gu.how.map(l => <li key={l}>{l}</li>)}</ul></details>
+  </>;
+}
+
+// Daily Boss: per account the boss to play (only bosses its level allows).
+function BossTab({ state, x, toast }) {
+  const b = state.dailyBoss || {};
+  const accounts = state.accounts || [];
+  const running = Boolean(b.running);
+  const bosses = b.bosses || [];
+  const [ids, setIds] = useSavedIds(state, 'bossAccountIds', accounts);
+  const [plan, setPlanRaw] = useState(() => state.settings?.bossPlan || {});
+  const [checking, setChecking] = useState(false);
+  const levelOf = id => b.info?.[id]?.level ?? state.accountProfile?.accounts?.[id]?.level ?? null;
+  const allowed = id => bosses.filter(x2 => levelOf(id) == null || levelOf(id) >= x2.levelRequired);
+  const bestFor = id => allowed(id).slice(-1)[0]?.id || null;
+  const pick = id => (plan[id] && allowed(id).some(x2 => x2.id === plan[id])) ? plan[id] : bestFor(id);
+  const setPlan = next => { setPlanRaw(next); api.settings.update({ bossPlan: next }).catch(() => {}); };
+  const check = async () => { if (!api.boss) return toast(x.notReady, 'error'); setChecking(true); try { await api.boss.status(accounts.map(a => a.id)); } catch (e) { toast(e.message, 'error'); } finally { setChecking(false); } };
+  useEffect(() => { if (api.boss) check(); }, []);
+  const chosen = ids.filter(id => pick(id));
+  const allOn = accounts.length > 0 && accounts.every(a => ids.includes(a.id));
+  const start = async () => { try { await api.boss.start(Object.fromEntries(chosen.map(id => [id, pick(id)]))); } catch (e) { toast(e.message, 'error'); } };
+  const applyAll = bossId => setPlan(Object.fromEntries(accounts.map(a => [a.id, bossId === 'best' ? bestFor(a.id) : (allowed(a.id).some(x2 => x2.id === bossId) ? bossId : bestFor(a.id))])));
+  return <>
+    <div className="panel pg-bar">
+      <button className="btn ghost" disabled={running} onClick={() => setIds(allOn ? [] : accounts.map(a => a.id))}>{allOn ? x.clear : x.selectAll}</button>
+      <label className="pg-apply"><span>{x.pg.applyAll}</span><select value="" disabled={running || !bosses.length} onChange={e => e.target.value && applyAll(e.target.value)}><option value="">—</option><option value="best">{x.pg.best}</option>{bosses.map(o => <option key={o.id} value={o.id}>{o.name} · Lv {o.levelRequired}</option>)}</select></label>
+      <span className="sp" />
+      <button className="btn ghost" disabled={checking} onClick={check}>{checking ? x.checking : x.refresh}</button>
+      {running ? <button className="btn danger-soft" onClick={() => api.boss.stop().catch(e => toast(e.message, 'error'))}>{x.stop}</button>
+        : <button className="btn primary" disabled={!chosen.length} onClick={start}>{fill(x.pg.start, { n: chosen.length })}</button>}
+    </div>
+    <div className="panel table-panel dp-table"><SortTable><thead><tr><th className="select-col"><input type="checkbox" disabled={running} checked={allOn} onChange={() => setIds(allOn ? [] : accounts.map(a => a.id))} aria-label={x.selectAll} /></th><th>{x.account}</th><th>{x.pg.level}</th><th>{x.pg.boss}</th><th>{x.pg.attempts}</th><th>{x.status}</th><th>{x.pg.result}</th></tr></thead>
+      <tbody>{accounts.map(a => {
+        const r = b.run?.accounts?.[a.id];
+        const info = b.info?.[a.id];
+        const options = allowed(a.id);
+        const left = r?.left ?? info?.left;
+        return <tr key={a.id} className={r?.status === 'playing' ? 'dp-live' : ''}>
+          <td><input type="checkbox" disabled={running} checked={ids.includes(a.id)} onChange={() => setIds(ids.includes(a.id) ? ids.filter(i => i !== a.id) : [...ids, a.id])} aria-label={a.name} /></td>
+          <td><b>{a.name}</b></td>
+          <td>{levelOf(a.id) ?? '—'}</td>
+          <td>{options.length ? <select className="dp-select" disabled={running} value={pick(a.id) || ''} onChange={e => setPlan({ ...plan, [a.id]: e.target.value })}>{bosses.map(o => <option key={o.id} value={o.id} disabled={!options.some(p => p.id === o.id)}>{o.name} · {o.tier} · {levelOf(a.id) != null && levelOf(a.id) < o.levelRequired ? fill(x.pg.needs, { n: o.levelRequired }) : `Lv ${o.levelRequired}`}</option>)}</select> : <span className="muted">{bosses.length ? x.pg.noBoss : '—'}</span>}</td>
+          <td>{left == null ? '—' : `${left}/${info?.max ?? 2}`}</td>
+          <td className={r?.status === 'error' ? 'bad-text' : ''}>{r ? (x.pg.st[r.status] || r.status) + (r.status === 'error' && r.reason ? `: ${r.reason}` : '') : ''}</td>
+          <td>{r?.played ? fill(x.pg.wl, { w: r.won, l: r.lost }) : '—'}</td>
+        </tr>;
+      })}</tbody></SortTable></div>
+    <details className="panel pvp-how"><summary>{x.howTitle}</summary><ul>{x.pg.bossHow.map(l => <li key={l}>{l}</li>)}</ul></details>
+  </>;
+}
+
+// Elite Ascent: every chosen account plays its current floor until the attempts are used.
+function AscentTab({ state, x, toast }) {
+  const e = state.eliteAscent || {};
+  const accounts = state.accounts || [];
+  const running = Boolean(e.running);
+  const [ids, setIds] = useSavedIds(state, 'ascentAccountIds', accounts);
+  const [checking, setChecking] = useState(false);
+  const check = async () => { if (!api.ascent) return toast(x.notReady, 'error'); setChecking(true); try { await api.ascent.status(ids.length ? ids : accounts.map(a => a.id)); } catch (er) { toast(er.message, 'error'); } finally { setChecking(false); } };
+  const allOn = accounts.length > 0 && accounts.every(a => ids.includes(a.id));
+  const start = async () => { try { await api.ascent.start(Object.fromEntries(ids.map(id => [id, true]))); } catch (er) { toast(er.message, 'error'); } };
+  return <>
+    <div className="panel pg-bar">
+      <button className="btn ghost" disabled={running} onClick={() => setIds(allOn ? [] : accounts.map(a => a.id))}>{allOn ? x.clear : x.selectAll}</button>
+      <span className="pg-hint">{x.pg.ascentHint}</span>
+      <span className="sp" />
+      <button className="btn ghost" disabled={checking || running} onClick={check}>{checking ? x.checking : x.pg.refreshAscent}</button>
+      {running ? <button className="btn danger-soft" onClick={() => api.ascent.stop().catch(er => toast(er.message, 'error'))}>{x.stop}</button>
+        : <button className="btn primary" disabled={!ids.length} onClick={start}>{fill(x.pg.start, { n: ids.length })}</button>}
+    </div>
+    <div className="panel table-panel dp-table"><SortTable><thead><tr><th className="select-col"><input type="checkbox" disabled={running} checked={allOn} onChange={() => setIds(allOn ? [] : accounts.map(a => a.id))} aria-label={x.selectAll} /></th><th>{x.account}</th><th>{x.pg.floor}</th><th>{x.pg.enemy}</th><th>{x.pg.attempts}</th><th>{x.status}</th><th>{x.pg.result}</th></tr></thead>
+      <tbody>{accounts.map(a => {
+        const r = e.run?.accounts?.[a.id];
+        const info = e.info?.[a.id];
+        const left = r?.left ?? info?.left;
+        return <tr key={a.id} className={r?.status === 'playing' ? 'dp-live' : ''}>
+          <td><input type="checkbox" disabled={running} checked={ids.includes(a.id)} onChange={() => setIds(ids.includes(a.id) ? ids.filter(i => i !== a.id) : [...ids, a.id])} aria-label={a.name} /></td>
+          <td><b>{a.name}</b></td>
+          <td>{r?.floor ?? info?.floor ?? '—'}{r?.floorStart != null && r?.floor > r.floorStart && <small className="cell-sub good-text">+{r.floor - r.floorStart}</small>}</td>
+          <td>{r?.enemy || info?.enemy || '—'}</td>
+          <td>{left == null ? '—' : `${left}/2`}</td>
+          <td className={r?.status === 'error' ? 'bad-text' : ''}>{r ? (x.pg.st[r.status] || r.status) + (r.status === 'error' && r.reason ? `: ${r.reason}` : '') : ''}</td>
+          <td>{r?.played ? fill(x.pg.wl, { w: r.won, l: r.lost }) : '—'}</td>
+        </tr>;
+      })}</tbody></SortTable></div>
+    <details className="panel pvp-how"><summary>{x.howTitle}</summary><ul>{x.pg.ascentHow.map(l => <li key={l}>{l}</li>)}</ul></details>
+  </>;
+}
+
+// Props: one button per account; the bag counts update while props are used.
+function PropsTab({ state, x, toast }) {
+  const p = state.props || {};
+  const accounts = state.accounts || [];
+  const [checking, setChecking] = useState(false);
+  const read = async () => { if (!api.props) return toast(x.notReady, 'error'); setChecking(true); try { await api.props.bags(accounts.map(a => a.id)); } catch (e) { toast(e.message, 'error'); } finally { setChecking(false); } };
+  useEffect(() => { if (api.props) read(); }, []);
+  const busy = new Set(p.busy || []);
+  const status = r => {
+    if (!r) return '';
+    let txt = x.pr.st[r.status] || r.status;
+    if (r.status === 'waitingHalftime' && r.quarter) txt += ` · ${fill(x.pr.quarter, { n: r.quarter })}`;
+    if (r.status === 'using' && r.countdown != null) txt += ` · ${fill(x.pr.countdown, { s: r.countdown })}`;
+    if (r.status === 'error' && r.message) txt += `: ${r.message}`;
+    return txt;
+  };
+  return <>
+    <div className="panel pg-bar"><span className="pg-hint">{x.pr.how[0]}</span><span className="sp" /><button className="btn ghost" disabled={checking} onClick={read}>{checking ? x.checking : x.pr.refresh}</button></div>
+    <div className="panel table-panel dp-table"><SortTable><thead><tr><th>{x.account}</th><th>{x.pr.small}</th><th>{x.pr.medium}</th><th>{x.pr.used}</th><th>{x.status}</th><th>{x.pr.players}</th><th></th></tr></thead>
+      <tbody>{accounts.map(a => {
+        const r = p.runs?.[a.id];
+        const bag = p.bags?.[a.id];
+        const live = r && ['using', 'waitingHalftime', 'finding'].includes(r.status);
+        const small = live && r.bagSmall != null ? r.bagSmall : bag?.small;
+        const medium = live && r.bagMedium != null ? r.bagMedium : bag?.medium;
+        return <tr key={a.id} className={r?.status === 'using' ? 'dp-live' : ''}>
+          <td><b>{a.name}</b></td>
+          <td className="num">{small ?? '—'}</td>
+          <td className="num">{medium ?? '—'}</td>
+          <td className="num">{r?.used ? `${r.used.small}×10 · ${r.used.medium}×30` : '—'}</td>
+          <td className={['error', 'noMatch', 'late'].includes(r?.status) ? 'bad-text' : r?.status === 'done' ? 'good-text' : ''}>{status(r)}</td>
+          <td className="pr-players">{(r?.players || []).map(pl => <span key={pl.id} className={pl.stamina >= 95 ? 'ok' : 'low'} title={`${pl.name}: ${pl.start} → ${pl.stamina}`}>{pl.name.split(' ').slice(-1)[0]} {pl.stamina}</span>)}</td>
+          <td className="actions">{busy.has(a.id) ? <button className="btn danger-soft small" onClick={() => api.props.stop(a.id).catch(e => toast(e.message, 'error'))}>{x.pr.stop}</button> : <button className="btn primary small" onClick={() => api.props.run(a.id).catch(e => toast(e.message, 'error'))}>{x.pr.button}</button>}</td>
+        </tr>;
+      })}</tbody></SortTable></div>
+    <details className="panel pvp-how"><summary>{x.howTitle}</summary><ul>{x.pr.how.map(l => <li key={l}>{l}</li>)}</ul></details>
   </>;
 }
 
@@ -334,12 +488,15 @@ export default function DailyPage({ state, t, toast }) {
   const x = TEXT[t.lang] || TEXT.en;
   const [tab, setTab] = useState(() => state.settings?.dailyTab || 'goup');
   const choose = id => { setTab(id); api.settings.update({ dailyTab: id }).catch(() => {}); };
-  const live = { goup: state.goup?.running, quiz: state.quiz?.running, cheer: state.cheer?.busy, chat: state.chat?.running };
+  const live = { props: (state.props?.busy || []).length > 0, boss: state.dailyBoss?.running, ascent: state.eliteAscent?.running, goup: state.goup?.running, quiz: state.quiz?.running, cheer: state.cheer?.busy, chat: state.chat?.running };
   const asking = Object.values(state.quiz?.run?.accounts || {}).some(r => r.status === 'askUser');
   return <div className="page daily-page">
     <div className="page-title"><div><h1>{x.title}</h1><span className="subtitle">{x.subtitle}</span></div></div>
     <div className="dp-tabs">{Object.keys(x.tabs).map(id => <button key={id} className={tab === id ? 'active' : ''} onClick={() => choose(id)}>{x.tabs[id]}{live[id] && <i className={`dp-dot ${id === 'quiz' && asking ? 'ask' : ''}`} />}</button>)}</div>
     {tab === 'goup' && <GoUpTab state={state} x={x} toast={toast} />}
+    {tab === 'boss' && <BossTab state={state} x={x} toast={toast} />}
+    {tab === 'ascent' && <AscentTab state={state} x={x} toast={toast} />}
+    {tab === 'props' && <PropsTab state={state} x={x} toast={toast} />}
     {tab === 'quiz' && <QuizTab state={state} x={x} toast={toast} />}
     {tab === 'cheer' && <CheerTab state={state} x={x} toast={toast} />}
     {tab === 'chat' && <ChatTab state={state} x={x} toast={toast} />}

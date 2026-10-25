@@ -40,6 +40,16 @@ contextBridge.exposeInMainWorld('dreamteam', {
     pauseAll: () => ipcRenderer.invoke('app:pause-all'),
     resumeAll: () => ipcRenderer.invoke('app:resume-all')
   },
+  props: {
+    run: (accountId) => ipcRenderer.invoke('props:run', accountId),
+    stop: (accountId) => ipcRenderer.invoke('props:stop', accountId),
+    bags: (accountIds) => ipcRenderer.invoke('props:bags', accountIds)
+  },
+  activate: {
+    start: (options) => ipcRenderer.invoke('activate:start', options),
+    stop: () => ipcRenderer.invoke('activate:stop'),
+    levels: (levels) => ipcRenderer.invoke('activate:levels', levels)
+  },
   synthesis: {
     start: (options) => ipcRenderer.invoke('synthesis:start', options),
     stop: () => ipcRenderer.invoke('synthesis:stop')
@@ -47,6 +57,16 @@ contextBridge.exposeInMainWorld('dreamteam', {
   tower: {
     start: (accountIds) => ipcRenderer.invoke('tower:start', accountIds),
     stop: (accountIds) => ipcRenderer.invoke('tower:stop', accountIds)
+  },
+  boss: {
+    start: (plan) => ipcRenderer.invoke('boss:start', plan),
+    stop: () => ipcRenderer.invoke('boss:stop'),
+    status: (accountIds) => ipcRenderer.invoke('boss:status', accountIds)
+  },
+  ascent: {
+    start: (plan) => ipcRenderer.invoke('ascent:start', plan),
+    stop: () => ipcRenderer.invoke('ascent:stop'),
+    status: (accountIds) => ipcRenderer.invoke('ascent:status', accountIds)
   },
   goup: {
     start: (accountIds, options = {}) => ipcRenderer.invoke('goup:start', { accountIds, ...options }),

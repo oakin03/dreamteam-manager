@@ -33,8 +33,9 @@ function fakeGame({ users, listings }) {
       if (event === 'getUserBasicInfo') { const u = st.users[p.userId]; return reply('userBasicInfo', { success: true, autoPKTickets: u.apk, ticket: u.tix, funds: 1000 }); }
       if (event === 'market:getMarketPlayers') {
         const mode = p.paymentMode;
-        const tickets = st.listings.filter(l => l.status === 'LISTED' && (!mode || l.paymentMode === mode) && l.player.name.toLowerCase().includes(p.search.toLowerCase())).sort((a, b) => a.price - b.price).slice(0, 8);
-        return reply('market:marketPlayersData', { tickets, total: tickets.length });
+        const all = st.listings.filter(l => l.status === 'LISTED' && (!mode || l.paymentMode === mode) && l.player.name.toLowerCase().includes(p.search.toLowerCase())).sort((a, b) => a.price - b.price);
+        const page = Number(p.page) || 1;
+        return reply('market:marketPlayersData', { tickets: all.slice((page - 1) * 8, page * 8), total: all.length });
       }
       if (!s.registered) return reply(event === 'market:buyPlayer' ? 'market:buyResult' : 'x', { success: false, message: 'Authentication required' });
       const me = s.registered;
@@ -265,3 +266,20 @@ test('already owned: equipment, skill and lineup are put back exactly; a stock l
   assert.equal(pickFiller(rows.filter(x => !['l', 'r'].includes(x.ticketId)), { cap: 1000, used: 500 }, now).ticketId, 'o', 'then on sale over the cap');
   assert.equal(pickFiller([], {}, now), null);
 });
+
+test('Auto Buy reads every page of the name search: a listing behind similar names on page 2 is found', async () => {
+  const others = Array.from({ length: 9 }, (_, i) => L('o' + i, 'p9', 'Jay Huff Jr', 5 + i, 30));
+  const game = fakeGame({ users: { 'u-a': { apk: 100, tix: 0 } }, listings: [...others, L('t1', 'p1', 'Jay Huff', 18, 40)] });
+  const scans = [];
+  const { svc, data } = service(game, [['a', 'Trophy3']]);
+  svc.onScan = (ids, currency, tickets, scope) => scans.push({ ids, n: tickets.length, scope });
+  svc.addWatch([{ id: 'p1', name: 'Jay Huff' }]);
+  svc.updateWatch(data().watch[0].id, { maxPrice: 20, maxSalary: 50, currency: 'APK', unlimited: false, qty: 1 });
+  await svc.startAuto({ accountIds: ['a'], intervalSec: 3 });
+  await new Promise(r => setTimeout(r, 400));
+  svc.stopAuto?.();
+  await svc.done?.catch?.(() => {});
+  assert.equal(game.st.listings.find(l => l.id === 't1').status, 'SOLD', 'the page-2 listing was bought');
+  assert.equal(game.calls.filter(c => c.event === 'market:getMarketPlayers').some(c => c.payload.page === 2), true);
+  assert.equal(scans[0].scope.complete, true);
+}, { timeout: 10000 });

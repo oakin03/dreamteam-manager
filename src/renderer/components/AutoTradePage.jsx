@@ -296,7 +296,11 @@ function CardCounts({ run, totals, x, Modal, toast }) {
   const reset = async () => { try { await api.autoTrade.resetCards(); } catch (e) { toast(e.message, 'error'); } setConfirm(false); };
   const rows = ids.map(id => ({ id, name: run.cardCounts?.[id]?.name || totals[id]?.name, now: run.cardCounts?.[id]?.count || 0, total: totals[id]?.count || 0 })).sort((a, b) => b.now - a.now || b.total - a.total);
   return <><div className="at2-section-head"><h3 className="section-title">{x.cards}</h3><button className="btn ghost small" onClick={() => setConfirm(true)}>{x.resetCards}</button></div>
-    <div className="panel table-panel"><SortTable><thead><tr><th>{x.player}</th><th>{x.thisRun}</th><th>{x.total}</th></tr></thead><tbody>{rows.map(r => <tr key={r.id}><td><b>{r.name}</b></td><td>{r.now}</td><td>{r.total}</td></tr>)}</tbody></SortTable></div>
+    {/* Spreadsheet-like cells as wide as the longest name: "name" on top, "this run/total" small at the bottom left. */}
+    <div className="panel at2-cells" style={{ '--cell': `${Math.max(10, ...rows.map(r => String(r.name || '').length)) + 3}ch` }}>
+      <div className="at2-cells-legend"><b>3/8</b> = {x.thisRun} / {x.total}</div>
+      <div className="at2-cells-grid">{rows.map(r => <div key={r.id} className={`at2-cell ${r.now ? 'now' : ''}`} title={`${r.name} · ${x.thisRun} ${r.now} · ${x.total} ${r.total}`}><span>{r.name}</span><b>{r.now}/{r.total}</b></div>)}</div>
+    </div>
     {confirm && <Modal title={x.resetCards} onClose={() => setConfirm(false)}><p>{x.resetCardsConfirm}</p><div className="modal-actions"><button className="btn ghost" onClick={() => setConfirm(false)}>{x.cancel}</button><button className="btn danger-soft" onClick={reset}>{x.yes}</button></div></Modal>}</>;
 }
 
