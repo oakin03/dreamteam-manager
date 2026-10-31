@@ -17,6 +17,7 @@ contextBridge.exposeInMainWorld('dreamteam', {
     sell: (entryId, price, currency) => ipcRenderer.invoke('buy:sell', { entryId, price, currency }),
     cheapest: (query) => ipcRenderer.invoke('buy:cheapest', query),
     removeBought: (ids) => ipcRenderer.invoke('buy:remove-bought', ids),
+    convert: (entryId) => ipcRenderer.invoke('buy:convert', entryId),
     addWatch: (players) => ipcRenderer.invoke('buy:add-watch', players),
     updateWatch: (id, patch) => ipcRenderer.invoke('buy:update-watch', { id, patch }),
     removeWatch: (ids) => ipcRenderer.invoke('buy:remove-watch', ids),
@@ -63,6 +64,9 @@ contextBridge.exposeInMainWorld('dreamteam', {
     stop: () => ipcRenderer.invoke('boss:stop'),
     status: (accountIds) => ipcRenderer.invoke('boss:status', accountIds)
   },
+  valuePredict: {
+    refresh: () => ipcRenderer.invoke('vp:refresh')
+  },
   tk: {
     start: (config) => ipcRenderer.invoke('tk:start', config),
     stop: () => ipcRenderer.invoke('tk:stop')
@@ -93,6 +97,7 @@ contextBridge.exposeInMainWorld('dreamteam', {
     conversation: (accountId, friendId) => ipcRenderer.invoke('social:conversation', { accountId, friendId }),
     send: (accountId, friendId, text) => ipcRenderer.invoke('social:send', { accountId, friendId, text }),
     act: (accountId, action, targetId) => ipcRenderer.invoke('social:act', { accountId, action, targetId }),
+    search: (accountId, text) => ipcRenderer.invoke('social:search', { accountId, text }),
     claimMail: (accountId, mailId) => ipcRenderer.invoke('social:claimMail', { accountId, mailId }),
     poll: () => ipcRenderer.invoke('social:poll')
   },
@@ -128,7 +133,8 @@ contextBridge.exposeInMainWorld('dreamteam', {
     start: (id) => ipcRenderer.invoke('accounts:start', id),
     stop: (id) => ipcRenderer.invoke('accounts:stop', id),
     selectTask: (id, taskId) => ipcRenderer.invoke('accounts:select-task', { id, taskId }),
-    setMain: (id) => ipcRenderer.invoke('accounts:set-main', id)
+    setMain: (id) => ipcRenderer.invoke('accounts:set-main', id),
+    setRole: (id, role) => ipcRenderer.invoke('accounts:set-role', { id, role })
   },
   scout: {
     open: (accountId) => ipcRenderer.invoke('scout:open', accountId),
@@ -143,6 +149,7 @@ contextBridge.exposeInMainWorld('dreamteam', {
     loadRelist: (accountIds) => ipcRenderer.invoke('market:load-relist', accountIds),
     relist: (items, options) => ipcRenderer.invoke('market:relist', items, options),
     clearRelist: () => ipcRenderer.invoke('market:clear-relist'),
+    removeListings: (ticketIds, options) => ipcRenderer.invoke('market:remove', ticketIds, options),
     stop: () => ipcRenderer.invoke('market:stop')
   },
   autoTrade: {
@@ -155,10 +162,20 @@ contextBridge.exposeInMainWorld('dreamteam', {
     reset: () => ipcRenderer.invoke('auto-trade:reset'),
     resetCards: () => ipcRenderer.invoke('auto-trade:reset-cards'),
     respondListing: (items) => ipcRenderer.invoke('auto-trade:respond-listing', items),
+    respondRole: (dir) => ipcRenderer.invoke('auto-trade:respond-role', dir),
     listPlayers: (accountId, items) => ipcRenderer.invoke('auto-trade:list-players', { accountId, items }),
+    firePlayer: (accountId, playerId) => ipcRenderer.invoke('auto-trade:fire-player', { accountId, playerId }),
+    saveDraft: form => ipcRenderer.invoke('auto-trade:save-draft', form),
+    firePlayers: (accountId, playerIds) => ipcRenderer.invoke('auto-trade:fire-players', { accountId, playerIds }),
     attention: (kind) => ipcRenderer.invoke('auto-trade:attention', kind)
   },
+  signup: {
+    create: (form) => ipcRenderer.invoke('signup:create', form),
+    stop: () => ipcRenderer.invoke('signup:stop')
+  },
   equipment: {
+    batch: (opts) => ipcRenderer.invoke('equipment:batch', opts),
+    batchStop: () => ipcRenderer.invoke('equipment:batch-stop'),
     open: (accountId) => ipcRenderer.invoke('equipment:open', accountId),
     scan: () => ipcRenderer.invoke('equipment:scan'),
     close: () => ipcRenderer.invoke('equipment:close'),

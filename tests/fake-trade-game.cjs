@@ -23,7 +23,7 @@ function createWorld(users) {
     world.calls.push({ user: s.userId, event, payload: p });
     const uid = p?.userId || s.userId;
     const u = world.users[uid];
-    const needAuth = ['market:buyPlayer', 'market:settleTicket', 'signFreeAgent', 'CallBackFreeAgent', 'starcard:makeStarCards', 'market:sellPlayer', 'createTradeRoom', 'joinTradeRoom', 'selectTradePlayers', 'acceptTrade', 'confirmTrade'];
+    const needAuth = ['market:buyPlayer', 'market:settleTicket', 'signFreeAgent', 'CallBackFreeAgent', 'starcard:makeStarCards', 'market:sellPlayer', 'createTradeRoom', 'joinTradeRoom', 'selectTradePlayers', 'acceptTrade', 'confirmTrade', 'firePlayer'];
     if (needAuth.includes(event) && !s.userId) return reply({ success: false, message: 'Authentication required' });
     switch (event) {
       case 'register': s.userId = p.userId; return push('registrationSuccess');
@@ -49,6 +49,13 @@ function createWorld(users) {
         const signed = me.discount?.includes(a.id) ? Math.round(a.baseSalary * 0.95) : a.baseSalary;
         me.bench.push({ ...player(a.id, a.baseSalary, { name: a.name, newBaseSalary: a.newBaseSalary }), signedSalary: signed, benchSlot: me.bench.length + 1 });
         return reply({ success: true, message: 'Player signed successfully.' });
+      }
+      case 'firePlayer': {
+        const me = world.users[s.userId];
+        if (!me.bench.some(x => x.id === p.playerId)) return reply({ success: false, error: 'Player not found' });
+        me.bench = me.bench.filter(x => x.id !== p.playerId);
+        (me.fired ||= []).push(p.playerId);
+        return reply({ success: true });
       }
       case 'starcard:makeStarCards': {
         const me = world.users[s.userId];

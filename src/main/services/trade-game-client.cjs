@@ -55,6 +55,8 @@ class TradeGameAccount {
   }
   bench() { return this._ack('starcard:getUserBench', { userId: this.userId }); }
   makeCards(playerIds) { return this._ack('starcard:makeStarCards', { userId: this.userId, playerIds }); }
+  // the game's FIRE button (roster): ack { success, error, promoted }
+  fire(playerId) { return this._ack('firePlayer', { userId: this.userId, playerId }, { retries: 0 }); }
 
   async funds() {
     const info = await this.conn.call('getUserBasicInfo', { userId: this.userId }, 'userBasicInfo', { signal: this.signal, timeoutMs: TIMEOUT_MS });

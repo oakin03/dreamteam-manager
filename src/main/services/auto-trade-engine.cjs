@@ -4,6 +4,8 @@ const { TradeGameAccount, sleep, abortError } = require('./trade-game-client.cjs
 const { OwnedSwap } = require('./owned-swap.cjs');
 const R = require('./trade-rules.cjs');
 
+const TRADE_MIN_LEVEL = 10; // the game opens trading at level 10
+
 // Auto Trade over the game's socket (no browser). Main scouts and turns its players
 // into star cards; sides (highest TK first) scout too and swap players with main in
 // password-protected trade rooms the side hosts. Every step re-reads rosters from
@@ -48,12 +50,13 @@ class AutoTradeEngine {
     this.controller = null;
     this.pauseGate = null;
     this.listingWaiter = null;
+    this.roleWaiter = null;
     const saved = this.store.getAutoTrade2();
     this.state = saved?.run || null;
     this.cardTotals = saved?.cardTotals || {};
     this.lastConfig = saved?.lastConfig || null;
     // An app restart in the middle of a run leaves it continuable, never "running".
-    if (this.state && ['running', 'paused', 'awaitingListing', 'stopping'].includes(this.state.status)) {
+    if (this.state && ['running', 'paused', 'awaitingListing', 'awaitingRole', 'stopping'].includes(this.state.status)) {
       this.state.status = 'stopped';
       this.state.message = 'interrupted';
     }
@@ -106,6 +109,19 @@ class AutoTradeEngine {
   _teamPlayers() { return R.teamPlayersFrom(this.store.getCards?.() || {}, this.store.getCardMetadata?.() || {}); }
   _roleNames() { return new Map((this.store.getCardRoles?.() || []).map(r => [r.id, r.name])); }
 
+  // The account role (Accounts page) of a side: "2. Main", its own role, or Side.
+  _accountRoleId(id) {
+    if (this.store.getAccountProfile?.()?.secondMainId === id) return 'main2';
+    const role = this.store.getAccounts().find(a => a.id === id)?.role;
+    const defs = this.store.getSettings?.()?.accountRoleDefs;
+    return role && (!Array.isArray(defs) || defs.some(d => d.id === role)) ? role : 'side';
+  }
+  // What a side may sign, by its account role (user 2026-10-31); main has no limits.
+  _ruleFor(id) {
+    if (!this.state || id === this.state.config.mainId) return null;
+    return this.state.config.roleRules?.[this._accountRoleId(id)] || null;
+  }
+
   _defaultRoles() {
     const roles = this.store.getCardRoles?.() || [];
     const byName = n => roles.find(r => String(r.name).toLocaleLowerCase('tr-TR') === n)?.id;
@@ -118,8 +134,12 @@ class AutoTradeEngine {
   // ---------- pre-checks (no login: rosters and TK are readable by user id) ----------
   _userIdOf(accountId) { return this.store.getAccountProfile?.()?.accounts?.[accountId]?.userId || null; }
 
+  // Trading opens at level 10 in the game: lower accounts never join a run (user 2026-10-30).
+  // An account whose level is not known yet is let through.
+  _tradeLocked(id) { const lv = Number(this.store.getAccountProfile?.()?.accounts?.[id]?.level); return Number.isFinite(lv) && lv > 0 && lv < TRADE_MIN_LEVEL; }
+
   async preflight({ accountIds, config = {} } = {}) {
-    const accounts = this.store.getAccounts().filter(a => accountIds.includes(a.id));
+    const accounts = this.store.getAccounts().filter(a => accountIds.includes(a.id) && !this._tradeLocked(a.id));
     const roleMap = this._roleMap();
     const roleNames = this._roleNames();
     const cfg = this._config(config);
@@ -162,10 +182,35 @@ class AutoTradeEngine {
   // ---------- controls ----------
   isRunning() { return Boolean(this.controller); }
 
+  // The form's choices are saved as they change (user 2026-10-31: the page forgot the
+  // role rules and account choices when the run was not started), not only on Start.
+  saveDraft(raw = {}) {
+    const last = { ...(this.lastConfig || {}) };
+    const ids = v => Array.isArray(v) ? v.filter(s => typeof s === 'string') : undefined;
+    if (ids(raw.accountIds)) last.accountIds = ids(raw.accountIds);
+    if (ids(raw.sideToMainRoleIds)) last.sideToMainRoleIds = ids(raw.sideToMainRoleIds);
+    if (ids(raw.mainToSideRoleIds)) last.mainToSideRoleIds = ids(raw.mainToSideRoleIds);
+    const price = Math.floor(Number(raw.maxPrice));
+    if (raw.maxPrice !== '' && raw.maxPrice != null && Number.isFinite(price)) last.maxPrice = Math.min(2500, Math.max(0, price));
+    if (raw.roleRules && typeof raw.roleRules === 'object') last.roleRules = R.normalizeRoleRules(raw.roleRules);
+    if (typeof raw.roomDescription === 'string') last.roomDescription = raw.roomDescription.slice(0, 50);
+    if (typeof raw.roomPassword === 'string' && raw.roomPassword) last.roomPasswordEncrypted = this.credentials.encryptSecret(raw.roomPassword);
+    if (['off', 'count', 'infinite'].includes(raw.loopMode)) last.loopMode = raw.loopMode;
+    if (raw.loopCount != null && Number(raw.loopCount) >= 1) last.loopCount = Math.min(999, Math.floor(Number(raw.loopCount)));
+    if (raw.baseAsSellable != null) last.baseAsSellable = Boolean(raw.baseAsSellable);
+    if (raw.baseProjected != null) last.baseProjected = raw.baseProjected !== false;
+    this.lastConfig = last;
+    this._save();
+    return true;
+  }
+
   async start(options = {}) {
     if (this.controller) throw new Error('Auto Trade is already running.');
+    this.roleAnswers = new Map();
     const all = this.store.getAccounts();
-    const accountIds = (options.accountIds || []).filter(id => all.some(a => a.id === id));
+    const locked = (options.accountIds || []).filter(id => all.some(a => a.id === id) && this._tradeLocked(id));
+    for (const id of locked) this._log('warning', 'at2.lowLevel', { name: this._name(id), min: TRADE_MIN_LEVEL }, `${this._name(id)} is below level ${TRADE_MIN_LEVEL} (trading is closed) · left out`, id);
+    const accountIds = (options.accountIds || []).filter(id => all.some(a => a.id === id) && !locked.includes(id));
     const realMain = this.store.getAccountProfile?.()?.mainAccountId || null;
     const mainId = accountIds.includes(realMain) ? realMain : options.actingMainId;
     if (!mainId || !accountIds.includes(mainId)) throw new Error('Choose which selected account acts as main.');
@@ -177,6 +222,7 @@ class AutoTradeEngine {
     const config = {
       accountIds, mainId,
       sideToMainRoleIds: cfg.sideToMainRoleIds, mainToSideRoleIds: cfg.mainToSideRoleIds, maxPrice: cfg.maxPrice,
+      roleRules: R.normalizeRoleRules(cfg.roleRules),
       roomDescription: String(cfg.roomDescription || DEFAULTS.roomDescription).slice(0, 50),
       roomPasswordEncrypted: this.credentials.encryptSecret(password),
       loopMode: ['off', 'count', 'infinite'].includes(cfg.loopMode) ? cfg.loopMode : 'off',
@@ -243,6 +289,7 @@ class AutoTradeEngine {
     this.controller.abort();
     this.pauseGate?.release();
     this.listingWaiter?.(null);
+    this.roleWaiter?.(null);
     await this.done?.catch(() => {});
     return this.snapshot();
   }
@@ -266,6 +313,9 @@ class AutoTradeEngine {
 
   // Answer to the "side roster is full of players to keep" pop-up: items to list, or null to skip.
   respondListing(items) { const w = this.listingWaiter; this.listingWaiter = null; w?.(Array.isArray(items) ? items : null); return true; }
+
+  // Answer to "this player has roles both ways": 'main' (to cards), 'side' (Satılabilir) or null (leave it).
+  respondRole(dir) { const w = this.roleWaiter; this.roleWaiter = null; w?.(['main', 'side'].includes(dir) ? dir : null); return true; }
 
   async shutdown() { if (this.controller) { this.controller.abort(); await this.done?.catch(() => {}); } this._closeAll(); }
 
@@ -494,8 +544,15 @@ class AutoTradeEngine {
         const r = await conn.sell(p.id, d.price, d.currency);
         this._log(r?.success ? 'success' : 'warning', r?.success ? 'at2.listed' : 'at2.listFailed', { name: p.name, price: d.price, currency: d.currency, error: r?.message || '' }, `${p.name} listed · ${d.price} ${d.currency}`, id);
         if (r?.success) acc.listed += 1;
-      } else if (d.action === 'trade') {
+      } else if (d.action === 'fire') {
+        // confirmed by the user before the start
+        await this._gate(signal);
+        const r = await conn.fire(p.id);
+        this._log(r?.success ? 'success' : 'warning', r?.success ? 'at2.fired' : 'at2.fireFailed', { name: p.name, error: r?.error || r?.message || '' }, r?.success ? `${p.name} fired` : `${p.name} could not be fired: ${r?.error || r?.message || ''}`, id);
+      } else if (d.action === 'trade' || d.action === 'card') {
+        // 'card': to main and into a star card whatever its roles say
         const row = this._row(p, cfg, undefined, undefined, { status: 'existing' });
+        if (d.action === 'card') row.dir = 'main';
         if (row.dir) { row.status = this._statusFor(row.dir, acc.role); acc.players[p.id] = row; }
       }
     }
@@ -544,7 +601,9 @@ class AutoTradeEngine {
   async _scout(id, role, signal) {
     const conn = this.conns.get(id);
     const acc = this._acc(id);
-    const cfg = this.state.config;
+    // a side signs only what its account role allows, with the role's own price limit
+    const rule = role === 'main' ? null : this._ruleFor(id);
+    const cfg = R.configFor(this.state.config, rule);
     const roleMap = this._roleMap();
     const roleNames = this._roleNames();
     for (let round = 0; round < 50; round++) {
@@ -555,7 +614,7 @@ class AutoTradeEngine {
       this.onScout?.(id, fa);
       let roster = R.rosterOf(await conn.roster());
       acc.funds = await conn.funds().catch(() => acc.funds);
-      const candidates = (fa?.freeAgents || []).filter(a => !a.isSigned && !(acc.parked || {})[a.id] && R.classify(a, cfg, roleMap));
+      const candidates = (fa?.freeAgents || []).filter(a => !a.isSigned && !(acc.parked || {})[a.id] && R.classify(a, cfg, roleMap) && R.accountAllows(rule, R.signReason(a, cfg, roleMap), a, roleMap, cfg));
       this._step('scouting', { name: this._name(id), candidates: candidates.length, attempts: acc.scout.attemptsLeft }, id);
       this._save();
       for (const agent of candidates) {
@@ -596,7 +655,8 @@ class AutoTradeEngine {
         const signedAs = (await conn.roster().catch(() => null))?.players?.bench?.find(p => p.id === agent.id);
         const salary = Number(signedAs?.signedSalary) || price;
         const row = this._row({ ...agent, ...(signedAs || {}), signedSalary: salary }, cfg, roleMap, roleNames);
-        row.status = this._statusFor(row.dir, role);
+        if (row.dir === 'ask') row.dir = await this._askRole(id, row, signal);
+        row.status = row.dir ? this._statusFor(row.dir, role) : 'none';
         row.discounted = salary < price;
         acc.players[agent.id] = row;
         if (cfg.baseAsSellable && row.dir === 'side' && R.classify(agent, { ...cfg, baseAsSellable: false }, roleMap) === 'main') {
@@ -824,6 +884,28 @@ class AutoTradeEngine {
     this._save();
   }
 
+  // A signed player with roles both ways: Auto Trade waits for the user's choice. The answer
+  // counts for the same player for the rest of the run.
+  async _askRole(id, row, signal) {
+    this.roleAnswers ||= new Map();
+    if (this.roleAnswers.has(row.id)) return this.roleAnswers.get(row.id);
+    const acc = this._acc(id);
+    this.state.roleRequest = { accountId: id, name: acc.name, player: { id: row.id, name: row.name, salary: row.salary, price: row.price, base: row.base, roles: row.roles } };
+    const before = this.state.status;
+    this.state.status = 'awaitingRole';
+    this._save();
+    this._log('info', 'at2.askRole', { player: row.name, roles: (row.roles || []).join(', ') }, `${row.name} has roles both ways (${(row.roles || []).join(', ')}) · waiting for your choice`, id);
+    this.onAttention?.('roleAsk', `${row.name} · ${acc.name}`);
+    const dir = await new Promise(resolve => { this.roleWaiter = resolve; signal.addEventListener('abort', () => resolve(null), { once: true }); });
+    this.state.roleRequest = null;
+    this.state.status = before === 'awaitingRole' ? 'running' : before;
+    this._save();
+    if (signal.aborted) throw abortError();
+    this.roleAnswers.set(row.id, dir);
+    this._log('info', 'at2.roleChosen', { player: row.name, dir: dir || 'none' }, `${row.name} → ${dir === 'main' ? 'cards' : dir === 'side' ? 'Satılabilir' : 'left alone'}`, id);
+    return dir;
+  }
+
   // A side full of players it keeps: ask the user which to list on the market.
   async _askListing(id, roster, signal) {
     const acc = this._acc(id);
@@ -880,6 +962,36 @@ class AutoTradeEngine {
       if (temp) this._close(accountId);
       if (prev) Object.assign(this.state, prev);
       this._log(acc.listed - before === items.length ? 'success' : 'warning', 'at2.listDone', { name: this._name(accountId), listed: acc.listed - before, total: items.length }, `Market listing finished · ${this._name(accountId)} · ${acc.listed - before}/${items.length}`, accountId);
+      this._save();
+    }
+    return this.snapshot();
+  }
+
+  // One player left on a side, fired from its row in "List on market" (the user confirms
+  // in the page first). The row leaves the list.
+  async firePlayer(accountId, playerId) {
+    return this.firePlayers(accountId, [playerId]);
+  }
+
+  // "Fire all" of one side's list: one connection, the players one by one. A refusal stops
+  // nothing; the error of the last refusal is thrown at the end.
+  async firePlayers(accountId, playerIds) {
+    const rows = (playerIds || []).map(id => [id, this.state?.accounts?.[accountId]?.players?.[id]]).filter(([, row]) => row);
+    if (!rows.length) throw new Error('Player not found.');
+    const signal = this.controller?.signal || new AbortController().signal;
+    const temp = !this.conns.has(accountId);
+    let failed = null;
+    try {
+      const conn = temp ? await this._open(accountId, signal) : this.conns.get(accountId);
+      for (const [id, row] of rows) {
+        const r = await conn.fire(id);
+        this._log(r?.success ? 'success' : 'warning', r?.success ? 'at2.fired' : 'at2.fireFailed', { name: row.name, error: r?.error || r?.message || '' }, r?.success ? `${row.name} fired` : `${row.name} could not be fired: ${r?.error || r?.message || ''}`, accountId);
+        if (r?.success) row.status = 'fired';
+        else failed = r?.error || r?.message || 'Fire refused';
+      }
+      if (failed) throw new Error(failed);
+    } finally {
+      if (temp) this._close(accountId);
       this._save();
     }
     return this.snapshot();

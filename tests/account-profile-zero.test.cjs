@@ -169,3 +169,23 @@ test('Stadium header with joined text: level and EXP are read from their own ele
     assert.deepEqual([d.level,d.expCurrent,d.expMax,d.expPercent],[37,88107,136551,65]);
   }finally{global.document=prior;}
 });
+
+test('level, TK, TIX and APK are read from the game for every account with a userId',async()=>{
+  let saved={version:1,mainAccountId:null,accounts:{a:{userId:'u-a',level:3,tk:100},b:{level:9}}};
+  const logs=[];
+  const service=new AccountProfileService({
+    store:{getAccounts:()=>[{id:'a',name:'A'},{id:'b',name:'B'}],getAccountProfile:()=>saved,saveAccountProfile:v=>{saved=v;}},
+    activity:{add:e=>logs.push(e)}
+  });
+  const asked=[];
+  const socket={call:async(event,p)=>{asked.push([event,p.userId]);return {success:true,id:p.userId,teamName:'A',level:5,experience:955,nextLvl:2736,funds:2837,ticket:0,autoPKTickets:4,totalSalaryUsed:3829,salaryCap:4550,totalValue:3829};},close(){socket.closed=true;}};
+  await service.refreshFromGame({openSocket:async()=>socket});
+  assert.deepEqual(asked,[['getUserBasicInfo','u-a']]);
+  assert.equal(saved.accounts.a.level,5);
+  assert.equal(saved.accounts.a.tk,2837);
+  assert.equal(saved.accounts.a.apk,4);
+  assert.equal(saved.accounts.a.expPercent,34);
+  assert.equal(saved.accounts.b.level,9);
+  assert.ok(socket.closed);
+  assert.deepEqual(logs.map(l=>l.code),['st.levelUp']);
+});

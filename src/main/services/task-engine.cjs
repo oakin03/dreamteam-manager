@@ -1,4 +1,5 @@
 const { io } = require('socket.io-client');
+const { httpLogin } = require('./http-login.cjs');
 
 function abortError() {
   const error = new Error('Aborted');
@@ -39,6 +40,16 @@ class TaskEngine {
     this.onChanged = onChanged;
     this.workers = new Map();
     this.prepared = new Map();
+    // One Quick Play search at a time across the user's accounts: two of them searching
+    // together were paired with each other (user 2026-10-30).
+    this.matchChain = Promise.resolve();
+  }
+
+  // Runs `fn` alone: the next account's search starts only after this one is matched.
+  _matchTurn(fn) {
+    const run = this.matchChain.then(fn, fn);
+    this.matchChain = run.catch(() => {});
+    return run;
   }
 
   states() {
@@ -53,7 +64,9 @@ class TaskEngine {
         phase: worker.phase || null,
         startedAt: worker.startedAt || null,
         lastActionAt: worker.lastActionAt || null,
-        nextActionAt: worker.nextActionAt || null
+        nextActionAt: worker.nextActionAt || null,
+        opponent: worker.opponent || null,
+        opponentOwn: Boolean(worker.opponentOwn)
       };
     }
     for (const [accountId, prepared] of this.prepared) {
@@ -62,7 +75,7 @@ class TaskEngine {
           status: 'preparing',
           taskId: prepared.taskId,
           taskName: prepared.taskName,
-          mode: prepared.mode || '',
+          mode: prepared.mode === 'socket' ? '' : (prepared.mode || ''),   // the normal (socket) way needs no label
           message: prepared.message || 'Prepared',
           startedAt: null,
           lastActionAt: null,
@@ -138,6 +151,12 @@ class TaskEngine {
       socket: {
         create: (url, options) => io(url, options)
       },
+      // sign in over HTTP (no Chromium); the plugin falls back to the browser if it fails
+      httpLogin: () => httpLogin(account.login, this.credentials.decryptSecret(account.passwordEncrypted), { signal }),
+      // Quick Play: one account's search at a time (see _matchTurn) and the user ids of
+      // all accounts, to see when the opponent is one of them.
+      matchTurn: fn => this._matchTurn(fn),
+      ownUserIds: () => new Set(Object.values(this.store.getAccountProfile?.()?.accounts || {}).map(a => a?.userId).filter(Boolean)),
       // Plugins wait here while the game is unreachable instead of retrying on their own.
       gameHealth: this.gameHealth ? {
         isDown: () => this.gameHealth.isDown(),
@@ -168,14 +187,14 @@ class TaskEngine {
     const runtime = this.buildRuntime(account, manifest, worker, controller.signal);
     const visible = visibleBrowser ?? Boolean(account.visibleBrowser);
 
-    this.prepared.set(accountId, {
-      ...worker,
+    // one object from preparing to running: the runtime's setState / log write to it
+    this.prepared.set(accountId, Object.assign(worker, {
       runtime,
       plugin,
       manifest,
       visibleBrowser: visible,
       activateAt
-    });
+    }));
     this.onChanged?.();
 
     this.activity.add({
@@ -200,7 +219,7 @@ class TaskEngine {
         throw abortError();
       }
       entry.preparedData = preparedData;
-      entry.mode = preparedData?.mode || '';
+      entry.mode = preparedData?.mode === 'socket' ? '' : (preparedData?.mode || '');
       entry.message = 'Ready to start';
       this.activity.add({
         level: 'success',
@@ -234,14 +253,15 @@ class TaskEngine {
     if (!entry) throw new Error('No prepared task for this account.');
     this.prepared.delete(accountId);
 
-    const worker = {
-      ...entry,
+    // the same object as the prepared entry: the plugin's setState / log (opponent, message)
+    // were bound to it while preparing and went to a dropped copy before
+    const worker = Object.assign(entry, {
       status: 'running',
       message: 'Running',
       startedAt: new Date().toISOString(),
       lastActionAt: null,
       nextActionAt: null
-    };
+    });
     this.workers.set(accountId, worker);
     this.onChanged?.();
 

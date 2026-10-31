@@ -1,10 +1,12 @@
-// Session cookie + user id per account, read once per app run through a
-// short headless login and shared by every socket-based service, so an
+// Session cookie + user id per account, read once per app run (an HTTP sign in, the
+// browser login only when that fails) and shared by every socket-based service, so an
 // account never signs in twice for Market and Tournament.
 const LOGIN_CONCURRENCY = 2;
+const { httpLogin } = require('./http-login.cjs');
 
 class GameSessions {
-  constructor({ browserService, credentials, accountProfile = null }) {
+  constructor({ browserService, credentials, accountProfile = null, httpLogin: login = httpLogin }) {
+    this.httpLogin = login;
     this.browser = browserService;
     this.credentials = credentials;
     this.accountProfile = accountProfile;
@@ -31,6 +33,17 @@ class GameSessions {
     if (cached) return cached;
     if (this.pending.has(account.id)) return this.pending.get(account.id);
     const promise = (async () => {
+      // HTTP sign in first: no Chromium, no slot to wait for (user 2026-10-31: less RAM, and
+      // the browser login timed out when many accounts started together)
+      try {
+        const session = await this.httpLogin(account.login, this.credentials.decryptSecret(account.passwordEncrypted));
+        this.cache.set(account.id, session);
+        this.accountProfile?.merge?.(account.id, { userId: session.userId });
+        this.pending.delete(account.id);
+        return session;
+      } catch (error) {
+        log('warning', `Sign in without a browser failed (${error.message}) · trying with Chromium.`);
+      }
       await this._slot();
       try {
         const result = await this.browser.authenticate(account, {
@@ -49,6 +62,13 @@ class GameSessions {
     })();
     this.pending.set(account.id, promise);
     return promise;
+  }
+
+  // A session read elsewhere (bulk account creation signs in over HTTP).
+  seed(accountId, session) {
+    if (!session?.userId || !session?.cookieHeader) return;
+    this.cache.set(accountId, { userId: session.userId, cookieHeader: session.cookieHeader });
+    this.accountProfile?.merge?.(accountId, { userId: session.userId });
   }
 
   peek(accountId) { return this.cache.get(accountId) || null; }

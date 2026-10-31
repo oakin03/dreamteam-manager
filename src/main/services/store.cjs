@@ -60,6 +60,8 @@ class AppStore {
       socialArchive: path.join(baseDir, 'social-archive.json'),
       chatHistory: path.join(baseDir, 'chat-history.json'),
       buyData: path.join(baseDir, 'buy.json'),
+      valuePredict: path.join(baseDir, 'value-predict.json'),
+      injuries: path.join(baseDir, 'injuries.json'),
       towerReport: path.join(baseDir, 'tower-report.json'),
       synthesisData: path.join(baseDir, 'synthesis.json'),
       playerMarketData: path.join(baseDir, 'player-market.json'),
@@ -126,7 +128,16 @@ class AppStore {
 
   getAccounts() { return this._get('accounts', []); }
   saveAccounts(v) { this._save('accounts', v); }
-  getAccountProfile() { return this._get('accountProfile', { version: 1, mainAccountId: null, accounts: {} }); }
+  getAccountProfileRaw() { return this._get('accountProfile', { version: 1, mainAccountId: null, accounts: {} }); }
+  // What every automation reads: `mainAccountId` is the Main account, or the "2. Main"
+  // account while there is no Main (user 2026-10-31). `realMainAccountId` is the Main role.
+  getAccountProfile() {
+    const raw = this.getAccountProfileRaw();
+    const ids = new Set(this.getAccounts().map(a => a.id));
+    const main = ids.has(raw.mainAccountId) ? raw.mainAccountId : null;
+    const second = ids.has(raw.secondMainId) ? raw.secondMainId : null;
+    return { ...raw, mainAccountId: main || second || null, realMainAccountId: main, secondMainId: second };
+  }
   saveAccountProfile(v) { this._save('accountProfile', v); }
   getSchedules() { return this._get('schedules', []); }
   saveSchedules(v) { this._save('schedules', v); }
@@ -179,6 +190,10 @@ class AppStore {
   saveSynthesisData(v) { this._save('synthesisData', v); }
   getTowerReport() { return this._get('towerReport', null); }
   saveTowerReport(v) { this._save('towerReport', v); }
+  getInjuries() { return this._get('injuries', null); }
+  saveInjuries(v) { this._save('injuries', v); }
+  getValuePredict() { return this._get('valuePredict', null); }
+  saveValuePredict(v) { this._saveDeferred('valuePredict', v); }
   getBuyData() { return this._get('buyData', null); }
   saveBuyData(v) { this._saveDeferred('buyData', v); }
   getPvpReport() { return this._get('pvpReport', null); }

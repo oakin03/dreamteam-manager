@@ -268,3 +268,19 @@ test('relist of an already-owned player: another own listing makes room, the ros
   assert.ok(game.state.roster.has('dup'), 'the original is back in the roster');
   assert.ok(logs.some(l => l.code === 'os.restored'));
 });
+
+test('take off market brings the players back; take off and fire also fires them', async () => {
+  const game = fakeGame([ticket('l1', 'LISTED'), ticket('l2', 'LISTED'), ticket('e1', 'EXPIRED')]);
+  const { s, logs } = service(game);
+  await s.loadRelist(['a1']);
+  const off = await s.removePlayers(['l1']);
+  assert.equal(off.removed, 1);
+  assert.equal(off.fired, 0);
+  assert.ok(game.state.roster.has('p-l1'));
+  assert.ok(!game.calls.some(c => c.event === 'firePlayer'));
+  const fire = await s.removePlayers(['l2', 'e1'], { fire: true });
+  assert.equal(fire.fired, 2);
+  assert.deepEqual(game.calls.filter(c => c.event === 'firePlayer').map(c => c.payload.playerId), ['p-l2', 'p-e1']);
+  assert.ok(logs.some(l => l.code === 'mk.fired'));
+  await assert.rejects(() => s.removePlayers([]), /Select at least one/);
+});

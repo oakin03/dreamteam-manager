@@ -133,5 +133,7 @@ export default function SortTable({ children, className, ...rest }) {
     });
     rows = groups.flatMap(g => g.rows);
   }
-  return <table className={className} {...rest}>{newHead}{cloneElement(body, { ref: bodyRef }, rows)}</table>;
+  // a <colgroup> (fixed column widths) stays in front of the head
+  const cols = parts.find(p => isValidElement(p) && p.type === 'colgroup');
+  return <table className={className} {...rest}>{cols}{newHead}{cloneElement(body, { ref: bodyRef }, rows)}</table>;
 }

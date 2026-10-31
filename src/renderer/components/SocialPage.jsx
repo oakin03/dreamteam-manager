@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { filOf } from '../i18n-fil';
+import { GroupedPicks } from './AccountGroups';
 
 const api = window.dreamteam;
 const SITE = 'https://www.dreamteamph.com';
@@ -17,7 +18,7 @@ const TEXT = {
     mail: { claimAll: 'Hepsini topla ({n})', claim: 'Topla', claimed: 'Toplandı', noRewards: 'Ödül yok', empty: 'Gelen kutusu boş.', system: 'Sistem', expires: '{t} tarihinde silinir', rewards: 'Ödüller', subject: 'Konu', date: 'Tarih', status: 'Durum' },
     friends: { empty: 'Bu hesabın arkadaşı yok.', online: 'Çevrimiçi', offline: 'Çevrimdışı', chat: 'Sohbet', remove: 'Çıkar', sure: 'Emin misin?', yes: 'Evet, çıkar', no: 'Vazgeç', count: '{n}/50 arkadaş', unread: '{n} yeni' },
     chat: { pick: 'Soldan bir arkadaş seç.', empty: 'Bu sohbette mesaj yok.', placeholder: '{name} kullanıcısına yaz…', send: 'Gönder', sending: 'Gönderiliyor…', archived: 'Oyun sohbetleri her gün 19:00 civarında siler; uygulama bir gün daha saklar.', you: 'Sen', noFriends: 'Sohbet için önce arkadaş gerekir.' },
-    requests: { incoming: 'Gelen istekler', outgoing: 'Gönderilen istekler', accept: 'Kabul et', decline: 'Reddet', cancel: 'İptal et', noneIn: 'Bekleyen gelen istek yok.', noneOut: 'Bekleyen gönderilmiş istek yok.' },
+    requests: { incoming: 'Gelen istekler', outgoing: 'Gönderilen istekler', accept: 'Kabul et', decline: 'Reddet', cancel: 'İptal et', noneIn: 'Bekleyen gelen istek yok.', noneOut: 'Bekleyen gönderilmiş istek yok.', send: 'Arkadaşlık isteği gönder', search: 'Takım adı ara (en az 2 harf)…', find: 'Ara', noResults: 'Bu adla takım bulunamadı.', add: 'İstek gönder', status: { PENDING: 'İstek bekliyor', ACCEPTED: 'Zaten arkadaş', BLOCKED: 'Engelli' }, level: 'Lv {n}', sent: 'Arkadaşlık isteği gönderildi' },
     blocked: { unblock: 'Engeli kaldır', empty: 'Engellenen oyuncu yok.' },
     done: { accept: 'İstek kabul edildi', decline: 'İstek reddedildi', cancel: 'İstek iptal edildi', remove: 'Arkadaş çıkarıldı', unblock: 'Engel kaldırıldı', claim: 'Ödüller toplandı', sent: 'Mesaj gönderildi' }
   },
@@ -29,7 +30,7 @@ const TEXT = {
     mail: { claimAll: 'Claim all ({n})', claim: 'Claim', claimed: 'Claimed', noRewards: 'No rewards', empty: 'The inbox is empty.', system: 'System', expires: 'deleted on {t}', rewards: 'Rewards', subject: 'Subject', date: 'Date', status: 'Status' },
     friends: { empty: 'This account has no friends.', online: 'Online', offline: 'Offline', chat: 'Chat', remove: 'Remove', sure: 'Sure?', yes: 'Yes, remove', no: 'Cancel', count: '{n}/50 friends', unread: '{n} new' },
     chat: { pick: 'Pick a friend on the left.', empty: 'No messages in this chat.', placeholder: 'Write to {name}…', send: 'Send', sending: 'Sending…', archived: 'The game wipes chats every day around 19:00; the app keeps them one more day.', you: 'You', noFriends: 'A chat needs a friend first.' },
-    requests: { incoming: 'Incoming requests', outgoing: 'Sent requests', accept: 'Accept', decline: 'Decline', cancel: 'Cancel', noneIn: 'No incoming requests.', noneOut: 'No sent requests waiting.' },
+    requests: { incoming: 'Incoming requests', outgoing: 'Sent requests', accept: 'Accept', decline: 'Decline', cancel: 'Cancel', noneIn: 'No incoming requests.', noneOut: 'No sent requests waiting.', send: 'Send a friend request', search: 'Search a team name (2+ letters)…', find: 'Search', noResults: 'No team with this name.', add: 'Send request', status: { PENDING: 'Request pending', ACCEPTED: 'Already friends', BLOCKED: 'Blocked' }, level: 'Lv {n}', sent: 'Friend request sent' },
     blocked: { unblock: 'Unblock', empty: 'No blocked players.' },
     done: { accept: 'Request accepted', decline: 'Request declined', cancel: 'Request cancelled', remove: 'Friend removed', unblock: 'Unblocked', claim: 'Rewards claimed', sent: 'Message sent' }
   },
@@ -92,6 +93,10 @@ export default function SocialPage({ state, t, toast }) {
     setBusy(true);
     try { setView(await api.social.act(accountId, action, id)); toast(done, 'success'); } catch (e) { toast(e.message, 'error'); } finally { setBusy(false); setConfirm(null); }
   };
+  const [q, setQ] = useState('');
+  const [found, setFound] = useState(null);
+  const find = async () => { if (q.trim().length < 2) return; setBusy(true); try { setFound(await api.social.search(accountId, q)); } catch (e) { toast(e.message, 'error'); } finally { setBusy(false); } };
+  const request = async u => { await act('request', u.id, x.requests.sent); setFound(f => (f || []).map(v => v.id === u.id ? { ...v, friendshipStatus: 'PENDING' } : v)); };
   const claim = async mailId => {
     setBusy(true);
     try { setView(await api.social.claimMail(accountId, mailId)); toast(x.done.claim, 'success'); } catch (e) { toast(e.message, 'error'); } finally { setBusy(false); }
@@ -132,9 +137,9 @@ export default function SocialPage({ state, t, toast }) {
     </div>
 
     <div className="so-overview" aria-label={x.overview}>
-      {accounts.map(a => { const k = badges[a.id] || {}; const alert = (k.requests || 0) + (k.unread || 0); return <button key={a.id} className={`so-acc ${a.id === accountId ? 'active' : ''}`} title={fill(x.badgeHint, { r: k.requests || 0, u: k.unread || 0, m: k.mail || 0 })} onClick={() => setAccountId(a.id)}>
+      <GroupedPicks storeKey="social" multi={false} accounts={accounts} selected={accountId ? [accountId] : []} onSet={() => {}} render={a => { const k = badges[a.id] || {}; const alert = (k.requests || 0) + (k.unread || 0); return <button key={a.id} className={`so-acc ${a.id === accountId ? 'active' : ''}`} title={fill(x.badgeHint, { r: k.requests || 0, u: k.unread || 0, m: k.mail || 0 })} onClick={() => setAccountId(a.id)}>
         <span>{a.name}</span>{alert > 0 && <i className="so-dot">{alert}</i>}{k.mail > 0 && <i className="so-mail">✉ {k.mail}</i>}
-      </button>; })}
+      </button>; }} />
     </div>
 
     <div className="so-tabs" role="tablist">
@@ -199,6 +204,13 @@ export default function SocialPage({ state, t, toast }) {
       </section>
     </div>}
 
+    {tab === 'requests' && <div className="panel so-panel so-search"><div className="so-panel-head"><b>{x.requests.send}</b></div>
+      <div className="so-search-bar"><input value={q} placeholder={x.requests.search} onChange={e => setQ(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') find(); }} /><button className="btn primary small" disabled={busy || q.trim().length < 2} onClick={find}>{x.requests.find}</button></div>
+      {found && (!found.length ? <div className="empty">{x.requests.noResults}</div> : <div className="so-list">{found.map(u => <div key={u.id} className="so-row">
+        <Avatar url={u.avatarUrl} name={u.teamName}/><div className="so-who"><b>{u.teamName}</b><small>{(x.requests.level || '').replace('{n}', u.level ?? '?')}</small></div><span className="sp"/>
+        {u.friendshipStatus && u.friendshipStatus !== 'NONE' ? <span className="muted">{x.requests.status[u.friendshipStatus] || u.friendshipStatus}</span> : <button className="btn primary small" disabled={busy} onClick={() => request(u)}>{x.requests.add}</button>}
+      </div>)}</div>)}
+    </div>}
     {tab === 'requests' && <div className="so-two">
       <div className="panel so-panel"><div className="so-panel-head"><b>{x.requests.incoming}</b></div>
         {!incoming.length ? <div className="empty">{x.requests.noneIn}</div> : <div className="so-list">{incoming.map(r => <div key={r.id} className="so-row">

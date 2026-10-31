@@ -81,3 +81,48 @@ test('base as sellable uses the Cards team, including teams the user gave or too
   assert.equal(R.salaryAtBase({ signedSalary: 48, newBaseSalary: 48 }), true);
   assert.equal(R.salaryAtBase({ signedSalary: 48, newBaseSalary: 48 }, { projected: true }), false);
 });
+
+test('classify: roles both ways are asked, before the price rule; Base still wins', () => {
+  const both = new Map([['dual', ['card', 'sellable']]]);
+  const c = { maxPrice: 100, sideToMainRoleIds: ['card'], mainToSideRoleIds: ['sellable'] };
+  assert.equal(R.classify({ id: 'dual', baseSalary: 600 }, c, both), 'ask');
+  assert.equal(R.classify({ id: 'dual', baseSalary: 60 }, c, both), 'ask', 'the price rule does not decide for a dual-role player');
+  const team = new Set(['dual']);
+  assert.equal(R.classify({ id: 'dual', baseSalary: 60, signedSalary: 40, newBaseSalary: 50 }, { ...c, baseAsSellable: true, baseProjected: false }, both, team), 'side', 'at Base: Satılabilir without asking');
+});
+
+test('rules by account role: a side signs only what its role allows, with the role\'s own price limit', () => {
+  const R = require('../src/main/services/trade-rules.cjs');
+  const roleMap = new Map([['card1', ['card']], ['sell1', ['sellable']]]);
+  const cfg = { sideToMainRoleIds: ['card'], mainToSideRoleIds: ['sellable'], maxPrice: 100 };
+  const card = { id: 'card1', baseSalary: 400 }, sell = { id: 'sell1', baseSalary: 300 }, cheap = { id: 'c', baseSalary: 90 }, mid = { id: 'm', baseSalary: 110 };
+  assert.equal(R.signReason(card, cfg, roleMap), 'card');
+  assert.equal(R.signReason(sell, cfg, roleMap), 'sellable');
+  assert.equal(R.signReason(cheap, cfg, roleMap), 'price');
+  const rules = R.normalizeRoleRules({ tournament: { sellable: false, card: true, cheap: true }, farm: { sellable: false, card: false, cheap: true, maxPrice: '120' } });
+  assert.equal(R.accountAllows(rules.tournament, 'sellable'), false);
+  assert.equal(R.accountAllows(rules.tournament, 'card'), true);
+  assert.equal(R.accountAllows(undefined, 'sellable'), true, 'a role without rules signs everything');
+  assert.equal(R.accountAllows(rules.farm, 'card'), false);
+  assert.equal(R.signReason(mid, cfg, roleMap), null, 'over the general 100 limit')
+  // the farm role: only players under its own 120 TK limit
+  const farmCfg = R.configFor(cfg, rules.farm);
+  assert.equal(R.signReason(mid, farmCfg, roleMap), 'price');
+  assert.equal(R.accountAllows(rules.farm, R.signReason(mid, farmCfg, roleMap)), true);
+  assert.equal(R.accountAllows(rules.farm, R.signReason(card, farmCfg, roleMap)), false);
+  assert.equal(rules.tournament.maxPrice, null);
+});
+
+test('rules by account role: every player role has its own column (Stok too)', () => {
+  const R = require('../src/main/services/trade-rules.cjs');
+  const roleMap = new Map([['s1', ['stok']], ['sell1', ['sellable']], ['c1', ['card']]]);
+  const cfg = { sideToMainRoleIds: ['card'], mainToSideRoleIds: ['sellable', 'stok'], maxPrice: 0 };
+  const rule = R.normalizeRoleRules({ farm: { roles: { stok: false } } }).farm;
+  const allows = p => R.accountAllows(rule, R.signReason(p, cfg, roleMap), p, roleMap, cfg);
+  assert.equal(allows({ id: 's1', baseSalary: 500 }), false, 'Stok turned off for this role');
+  assert.equal(allows({ id: 'sell1', baseSalary: 500 }), true, 'Satılabilir still on');
+  assert.equal(allows({ id: 'c1', baseSalary: 500 }), true);
+  // old saved rules ({ sellable: false }) keep working for every side-bound role
+  const old = R.normalizeRoleRules({ x: { sellable: false } }).x;
+  assert.equal(R.accountAllows(old, 'sellable', { id: 's1' }, roleMap, cfg), false);
+});

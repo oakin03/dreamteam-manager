@@ -193,7 +193,8 @@ class AccountProfileService {
   }
 
   _state() {
-    const raw = this.store.getAccountProfile();
+    // the stored roles, not the effective main (store.getAccountProfile)
+    const raw = this.store.getAccountProfileRaw ? this.store.getAccountProfileRaw() : this.store.getAccountProfile();
     const accounts = raw?.accounts && typeof raw.accounts === 'object' ? raw.accounts : {};
     const sanitizedAccounts = {};
     for (const [accountId, stats] of Object.entries(accounts)) {
@@ -205,6 +206,7 @@ class AccountProfileService {
     return {
       version: 1,
       mainAccountId: raw?.mainAccountId || null,
+      secondMainId: raw?.secondMainId || null,
       accounts: sanitizedAccounts
     };
   }
@@ -213,7 +215,10 @@ class AccountProfileService {
     const state = this._state();
     const accounts = this.store.getAccounts();
     const validIds = new Set(accounts.map(a => a.id));
-    const mainAccountId = validIds.has(state.mainAccountId) ? state.mainAccountId : null;
+    const realMainAccountId = validIds.has(state.mainAccountId) ? state.mainAccountId : null;
+    const secondMainId = validIds.has(state.secondMainId) ? state.secondMainId : null;
+    // "2. Main" acts as the main account while there is no Main (user 2026-10-31)
+    const mainAccountId = realMainAccountId || secondMainId;
     let totalUsableApk = mainAccountId ? 0 : null;
     let totalUsableTix = mainAccountId ? 0 : null;
     const effectiveApk = {};
@@ -229,7 +234,7 @@ class AccountProfileService {
     }
 
     return {
-      ...state, mainAccountId, effectiveApk, effectiveTix,
+      ...state, mainAccountId, realMainAccountId, secondMainId, effectiveApk, effectiveTix,
       totalUsableApk: totalUsableApk == null ? null : Math.floor(totalUsableApk),
       totalUsableTix: totalUsableTix == null ? null : Math.floor(totalUsableTix)
     };
@@ -240,6 +245,18 @@ class AccountProfileService {
     if (accountId && !accounts.some(a => a.id === accountId)) throw new Error('Account not found.');
     const state = this._state();
     state.mainAccountId = accountId || null;
+    if (accountId && state.secondMainId === accountId) state.secondMainId = null;
+    this.store.saveAccountProfile(state);
+    this.onChanged?.();
+    return this.snapshot();
+  }
+
+  setSecondMain(accountId) {
+    const accounts = this.store.getAccounts();
+    if (accountId && !accounts.some(a => a.id === accountId)) throw new Error('Account not found.');
+    const state = this._state();
+    state.secondMainId = accountId || null;
+    if (accountId && state.mainAccountId === accountId) state.mainAccountId = null;
     this.store.saveAccountProfile(state);
     this.onChanged?.();
     return this.snapshot();
@@ -248,6 +265,7 @@ class AccountProfileService {
   removeAccount(accountId) {
     const state = this._state();
     if (state.mainAccountId === accountId) state.mainAccountId = null;
+    if (state.secondMainId === accountId) state.secondMainId = null;
     if (state.accounts?.[accountId]) delete state.accounts[accountId];
     this.store.saveAccountProfile(state);
     this.onChanged?.();
@@ -336,6 +354,45 @@ class AccountProfileService {
     const stored = this._state().accounts[accountId] || {};
     const shown = seen ? `screen showed APK ${seen.apk} · TIX ${seen.tix ?? '—'}` : 'Stadium numbers were not visible';
     this._log(accountId, 'warning', `Stadium APK/TIX could not be confirmed (${shown}) · kept APK ${stored.apk ?? '—'} · TIX ${stored.tix ?? '—'}.`, 'st.unverified', { apk: stored.apk ?? '—', tix: stored.tix ?? '—' });
+  }
+
+  // Socket mode closes Chromium after the start, so the Stadium is read only then and
+  // level / TK went stale for hours (user 2026-10-31). `getUserBasicInfo {userId}` is
+  // answered without signing in (checked live), so every account with a known userId
+  // is read on one plain socket. Only a level change is logged; TK moves all day.
+  async refreshFromGame({ openSocket, signal = null } = {}) {
+    const state = this._state();
+    const targets = this.store.getAccounts().map(a => [a.id, state.accounts[a.id]?.userId]).filter(([, userId]) => userId);
+    if (!targets.length || typeof openSocket !== 'function') return 0;
+    const socket = await openSocket(signal);
+    let updated = 0;
+    try {
+      for (const [accountId, userId] of targets) {
+        if (signal?.aborted) break;
+        const info = await socket.call('getUserBasicInfo', { userId }, 'userBasicInfo', { signal, timeoutMs: 10000 }).catch(() => null);
+        if (!info?.success || String(info.id || userId) !== String(userId)) continue;
+        const before = this._state().accounts[accountId] || {};
+        const expCurrent = Number(info.experience), expMax = Number(info.nextLvl);
+        const saved = this.merge(accountId, {
+          teamName: info.teamName || null,
+          level: info.level,
+          expCurrent: Number.isFinite(expCurrent) ? expCurrent : null,
+          expMax: Number.isFinite(expMax) && expMax > 0 ? expMax : null,
+          expPercent: Number.isFinite(expCurrent) && expMax > 0 ? Math.floor((expCurrent / expMax) * 100) : null,
+          tk: normalizeNumber(info.funds),
+          tix: normalizeNumber(info.ticket),
+          apk: normalizeNumber(info.autoPKTickets),
+          salary: normalizeNumber(info.totalSalaryUsed),
+          salaryCap: normalizeNumber(info.salaryCap),
+          teamValue: normalizeNumber(info.totalValue)
+        });
+        if (saved) updated++;
+        if (saved?.level != null && before.level != null && saved.level !== before.level) {
+          this._log(accountId, 'success', `Level up · LV ${before.level} → ${saved.level}.`, 'st.levelUp', { from: before.level, to: saved.level });
+        }
+      }
+    } finally { try { socket.close(); } catch {} }
+    return updated;
   }
 
   updateFromScout(accountId, scoutData) {

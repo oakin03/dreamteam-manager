@@ -71,6 +71,8 @@ async function syncMcpConfig({ projectRoot, dataDir = defaultDataDir(), accounts
     const file = path.join(dataDir, 'accounts.json');
     accounts = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : [];
   }
+  // a copy: accounts added while this runs (bulk creation) wait for the next sync
+  accounts = [...accounts];
   const configFile = path.join(projectRoot, '.mcp.json');
   let config = {};
   try { config = JSON.parse(fs.readFileSync(configFile, 'utf8')); } catch {}
@@ -104,6 +106,8 @@ async function syncMcpConfig({ projectRoot, dataDir = defaultDataDir(), accounts
     try {
       if (await seedProfile(path.join(dataDir, 'browser-profiles', account.id), profile)) seeded.push(names[i]);
     } catch (err) {
+      // the app's browser has the profile open (a login running): seeded at a later sync
+      if (err.code === 'EBUSY' || err.code === 'EPERM') continue;
       errors.push(`${names[i]}: ${err.message}`);
     }
   }

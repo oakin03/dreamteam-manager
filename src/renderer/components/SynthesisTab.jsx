@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import SortTable from './SortTable';
+import InjuryMark from './InjuryMark';
 import { filOf } from '../i18n-fil';
 
 const api = window.dreamteam;
@@ -54,17 +55,17 @@ export default function SynthesisTab({ state, t, toast }) {
       {cur && <div className="synth-flow">
         <div className="synth-used"><small>{running && !cur.result ? x.live : x.lastResult} · {x.used}</small><div>{cur.used.map((n, i) => <span key={i} className="synth-card">{n}<i>{stars(cur.level)}</i></span>)}</div></div>
         <div className={`synth-arrow ${cur.result ? (cur.ok ? 'ok' : 'bad') : 'wait'}`}>{cur.result ? (cur.ok ? '➜' : '✕') : '…'}</div>
-        <div className="synth-got"><small>{cur.ok === false ? x.fail : x.got}</small>{cur.result ? <span className={`synth-card big ${cur.ok ? 'ok' : 'bad'}`}>{cur.result.name}<i>{stars(cur.result.level)}</i>{cur.result.returned && <u>{x.returned}</u>}</span> : <span className="synth-card wait">…</span>}</div>
+        <div className="synth-got"><small>{cur.ok === false ? x.fail : x.got}</small>{cur.result ? <span className={`synth-card big ${cur.ok ? 'ok' : 'bad'}`}>{cur.result.name}<InjuryMark name={cur.result.name} /><i>{stars(cur.result.level)}</i>{cur.result.returned && <u>{x.returned}</u>}</span> : <span className="synth-card wait">…</span>}</div>
       </div>}
     </div>}
 
     {run && <div className="synth-grid">
       <section><h3 className="section-title">{x.obtained} <small>{x.obtainedHint}</small></h3>
-        <div className="panel synth-obtained">{run.obtained.length ? run.obtained.map(o => <span key={o.playerId + o.level} className="synth-card ok">{o.name}<i>{stars(o.level)}</i>{o.count > 1 && <b>×{o.count}</b>}</span>) : <p className="muted-text">{x.noObtained}</p>}</div></section>
+        <div className="panel synth-obtained">{run.obtained.length ? run.obtained.map(o => <span key={o.playerId + o.level} className="synth-card ok">{o.name}<InjuryMark name={o.name} /><i>{stars(o.level)}</i>{o.count > 1 && <b>×{o.count}</b>}</span>) : <p className="muted-text">{x.noObtained}</p>}</div></section>
       <section><h3 className="section-title">{x.history}</h3>
         <div className="panel table-panel synth-history"><SortTable><tbody>{run.history.map((h, i) => <tr key={i} className={h.ok ? '' : 'synth-fail-row'}>
           <td className="muted-text">{new Date(h.at).toLocaleTimeString()}</td><td><b>{stars(h.level)}→{stars(h.level + 1)}</b></td><td className="synth-used-cell">{h.used.join(', ')}</td>
-          <td>{h.ok ? <span className="green-text">➜ <b>{h.result?.name}</b> {stars(h.result?.level)}{h.result?.random ? <small className="muted-text"> · {x.random}</small> : null}</span> : <span className="bad-text">✕ {x.fail}{h.result ? ` · ${h.result.name} ${x.returned}` : ''}</span>}</td>
+          <td>{h.ok ? <span className="green-text">➜ <b>{h.result?.name}</b><InjuryMark name={h.result?.name} /> {stars(h.result?.level)}{h.result?.random ? <small className="muted-text"> · {x.random}</small> : null}</span> : <span className="bad-text">✕ {x.fail}{h.result ? ` · ${h.result.name} ${x.returned}` : ''}</span>}</td>
         </tr>)}</tbody></SortTable></div></section>
     </div>}
 

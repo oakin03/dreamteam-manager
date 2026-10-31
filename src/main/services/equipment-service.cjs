@@ -5,6 +5,8 @@ const { GameSocket } = require('./game-socket.cjs');
 // Item Collection (register sets, prepare a set: craft → enhance → register).
 // Every write is followed by the server's own numbers, never by a guess.
 const RARITIES = ['COMMON', 'UNCOMMON', 'RARE', 'EPIC', 'LEGENDARY', 'MYTHIC'];
+// The game takes at most 100 at once for a convert or a craft (user 2026-10-31).
+const MAX_PER_ACTION = 100;
 const GEAR_TYPES = ['JERSEY', 'PANTS', 'SLEEVES', 'HEADBAND', 'SHOES'];
 const CALC_URL = 'https://www.dreamteamph.com/api/enhancement/calculate';
 const MAX_ENHANCE_ATTEMPTS = 300;
@@ -186,7 +188,8 @@ class EquipmentService {
       materials: this.raw ? materialSummary(this.raw.inventory) : null,
       hasRecipes: Boolean(this.recipes),
       collections: this.collections ? collectionRows(this.collections) : [],
-      refineConfig: this.refineConfig
+      refineConfig: this.refineConfig,
+      batch: this.batch ? { running: this.batch.running, mode: this.batch.mode, total: this.batch.total, done: this.batch.done, account: this.batch.account, results: this.batch.results.slice(-200) } : null
     };
   }
 
@@ -333,7 +336,7 @@ class EquipmentService {
 
   convert(rarity, conversions) {
     this._requireOpen();
-    const n = Math.max(1, Math.floor(Number(conversions) || 0));
+    const n = Math.max(1, Math.min(MAX_PER_ACTION, Math.floor(Number(conversions) || 0)));
     if (!RARITIES.includes(rarity)) throw new Error('Unknown rarity.');
     return this._exclusive('convert', async signal => {
       this._set({ step: 'convert', stepParams: { rarity, count: n } });
@@ -349,7 +352,7 @@ class EquipmentService {
   // Equipment or material recipe, `count` times (material upgrades are 10:1 / 4:1).
   craft(recipeId, count = 1) {
     this._requireOpen();
-    const n = Math.max(1, Math.min(500, Math.floor(Number(count) || 1)));
+    const n = Math.max(1, Math.min(MAX_PER_ACTION, Math.floor(Number(count) || 1)));
     return this._exclusive('craft', async signal => this._craft(recipeId, n, signal));
   }
 
@@ -559,6 +562,78 @@ class EquipmentService {
     });
   }
 }
+
+// Several sets on several accounts at once (user 2026-10-30): every account runs at the
+// same time on its own connection (the account open on the page uses this instance, the
+// others a worker of their own); each chosen set is registered ('register': the pieces
+// already in the bag) or made and registered ('prepare'). A set that cannot be done is
+// reported and skipped.
+EquipmentService.prototype.batchCollections = async function batchCollections({ accountIds = [], sets = [], mode = 'register' } = {}) {
+  if (this.batch?.running) throw new Error('A collection batch is already running.');
+  const accounts = [...new Set(accountIds)].filter(id => this.store.getAccounts().some(a => a.id === id));
+  if (!accounts.length) throw new Error('Choose at least one account.');
+  if (!sets.length) throw new Error('Choose at least one set.');
+  const wanted = sets.map(s => ({ id: s.id, name: String(s.name || '').toLowerCase() }));
+  const results = [];
+  const active = new Set();
+  const workers = new Map();
+  this.batch = { running: true, mode, total: accounts.length * sets.length, done: 0, account: null, results, stop: false, workers };
+  this.onChanged?.();
+  const name = id => this.store.getAccounts().find(a => a.id === id)?.name || id;
+  const showActive = () => { this.batch.account = [...active].map(name).join(', ') || null; this.onChanged?.(); };
+  const runAccount = async accountId => {
+    const own = this.accountId === accountId;
+    const eq = own ? this : new EquipmentService({ store: this.store, activity: this.activity, sessions: this.sessions, createSocket: this.createSocket, fetchImpl: this.fetch, writeGapScale: this.writeGapScale });
+    if (!own) { eq.recipes = this.recipes; workers.set(accountId, eq); }
+    active.add(accountId); showActive();
+    try {
+      if (this.batch.stop) return;
+      try { await eq.open(accountId); } catch (error) {
+        for (const w of wanted) results.push({ account: name(accountId), set: w.name, result: 'error', detail: error.message });
+        this.batch.done += wanted.length;
+        return;
+      }
+      for (const w of wanted) {
+        if (this.batch.stop) break;
+        // the same set on another account: by id, or by name
+        const set = collectionRows(eq.collections).find(c => c.id === w.id) || collectionRows(eq.collections).find(c => c.name.toLowerCase() === w.name);
+        const row = { account: name(accountId), set: set?.name || w.name, result: 'skipped', detail: '' };
+        try {
+          if (!set) row.detail = 'not found';
+          else if (set.completed) row.result = 'already';
+          else if (mode === 'register') {
+            if (!set.available.length) row.detail = 'nothing ready';
+            else { const r = await eq.registerCollection(set.id); row.result = r?.stopped ? 'stopped' : r?.completed ? 'completed' : 'registered'; }
+          } else {
+            const r = await eq.prepareCollection(set.id);
+            row.result = r?.stopped ? 'stopped' : r?.ok === false ? 'short' : r?.completed ? 'completed' : 'registered';
+            if (r?.ok === false) row.detail = [...r.plan.short.map(s => `${s.name} ${s.have}/${s.need}`), ...r.plan.missing.map(m => m.name)].join(', ');
+          }
+        } catch (error) { row.result = 'error'; row.detail = error.message; }
+        results.push(row);
+        this.batch.done++;
+        this.onChanged?.();
+        if (row.result === 'stopped') this.stopBatch();
+      }
+    } finally {
+      if (!own) { if (!this.recipes && eq.recipes) this.recipes = eq.recipes; await eq.close().catch(() => {}); workers.delete(accountId); }
+      active.delete(accountId); showActive();
+    }
+  };
+  try {
+    await Promise.all(accounts.map(runAccount));
+  } finally {
+    const ok = results.filter(r => ['registered', 'completed'].includes(r.result)).length;
+    this.activity.add({ level: ok ? 'success' : 'warning', accountId: null, accountName: '', taskName: 'Equipment', code: 'eq.batchDone', params: { ok, total: results.length, accounts: accounts.length }, message: `Collections · ${ok}/${results.length} set(s) registered on ${accounts.length} account(s)` });
+    this.batch = { ...this.batch, running: false, account: null, workers: null };
+    this.onChanged?.();
+  }
+  return results;
+};
+EquipmentService.prototype.stopBatch = function stopBatch() {
+  if (this.batch) { this.batch.stop = true; for (const w of this.batch.workers?.values() || []) w.stop(); }
+  return this.stop();
+};
 
 function onlySlot(set, slot) { return slot ? { ...set, items: set.items.filter(i => i.slot === slot) } : set; }
 

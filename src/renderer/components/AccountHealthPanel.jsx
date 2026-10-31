@@ -38,7 +38,6 @@ function LimitsPopover({ h, x, toast, onClose }) {
   return <div className="health-limits" ref={ref}>
     <b>{x.limits}</b>
     {field('lowTk', x.lowTk, { min: 0, step: 1000 })}
-    {field('nearCapPct', x.nearCap, { min: 1, max: 100, step: 1 })}
     {field('rosterWarn', x.rosterWarn, { min: 1, max: h.limits?.rosterMax || 11, step: 1 })}
     <small className="muted-text">{x.defaultsHint}</small>
     <div className="health-limits-actions">

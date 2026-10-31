@@ -1,7 +1,8 @@
 const { GameSocket } = require('./game-socket.cjs');
 
 // Daily Rewards (the Stadium gift, 6 tiers a day with a timer between them) are
-// collected over the game socket while Auto Play runs for an account:
+// collected over the game socket while Auto Play runs for an account, and (setting
+// `dailyRewardIdle`, on unless turned off; user 2026-10-31) for every other account too:
 //   dailyRewards:getProgress {userId} → dailyRewards:progressResult
 //     { success, data: { currentTier, isComplete, isReadyToClaim, timeUntilClaim,
 //       claimedCount, totalTiers, nextClaimTime, currentTierRewards } }
@@ -13,6 +14,7 @@ const { GameSocket } = require('./game-socket.cjs');
 
 const ERROR_RETRY_MS = 60 * 1000;
 const SAFETY_MS = 1500; // claim a moment after the timer, the server clock may lag
+const IDLE_STAGGER_MS = 4000; // accounts without Auto Play start one after another, not all at once
 
 function abortError() {
   const error = new Error('Aborted');
@@ -93,8 +95,11 @@ function retryAfterMs(reply) {
 }
 
 class DailyRewardService {
-  constructor({ store, activity, engine, sessions, createSocket, onChanged, now = () => Date.now() }) {
+  constructor({ store, activity, engine, sessions, createSocket, onChanged, gameHealth = null, isPaused = () => false, now = () => Date.now(), staggerMs = IDLE_STAGGER_MS }) {
     this.store = store;
+    this.gameHealth = gameHealth;
+    this.isPaused = isPaused;
+    this.staggerMs = staggerMs;
     this.activity = activity;
     this.engine = engine;
     this.sessions = sessions;
@@ -175,28 +180,42 @@ class DailyRewardService {
     this.sync().catch(() => {});
   }
 
-  // A worker runs for every account Auto Play is running.
+  // Accounts whose gift is collected without Auto Play: all of them unless the setting is
+  // off; never while "Stop all automations" holds everything.
+  idleIds() {
+    if (this.isPaused()) return [];
+    if (this.store.getSettings?.()?.dailyRewardIdle === false) return [];
+    return this.store.getAccounts().filter(a => a.id && !a.signupPending).map(a => a.id);
+  }
+
+  // A worker runs for every account Auto Play is running (and the idle ones above).
   async sync() {
     const runtime = this.engine.states();
-    const active = new Set(
-      Object.entries(runtime)
-        .filter(([, r]) => r?.status === 'running')
-        .map(([id]) => id)
-    );
+    const playing = Object.entries(runtime)
+      .filter(([, r]) => r?.status === 'running')
+      .map(([id]) => id);
+    const active = new Set(this.isPaused() ? [] : playing);
     for (const id of active) {
       if (!this.workers.has(id)) this.startWorker(id);
+    }
+    let n = 0;
+    for (const id of this.idleIds()) {
+      if (active.has(id)) continue;
+      active.add(id);
+      if (!this.workers.has(id)) this.startWorker(id, (n++) * this.staggerMs);
     }
     for (const id of [...this.workers.keys()]) {
       if (!active.has(id)) this.stopWorker(id);
     }
   }
 
-  startWorker(accountId) {
+  startWorker(accountId, delayMs = 0) {
     if (this.workers.has(accountId)) return;
     const controller = new AbortController();
     const worker = { controller, promise: null };
     this.workers.set(accountId, worker);
-    worker.promise = this.runWorker(accountId, controller.signal)
+    worker.promise = (delayMs > 0 ? sleep(delayMs, controller.signal) : Promise.resolve())
+      .then(() => this.runWorker(accountId, controller.signal))
       .catch(error => {
         if (error?.name !== 'AbortError') {
           const account = this.accountById(accountId);
@@ -229,6 +248,8 @@ class DailyRewardService {
         continue;
       }
       this.clearExpiredDailyHold(accountId);
+      // the game is down: one shared probe checks it, nobody else knocks
+      if (this.gameHealth?.isDown?.()) await this.gameHealth.waitUp(signal);
 
       let result;
       try {
@@ -236,6 +257,7 @@ class DailyRewardService {
       } catch (error) {
         if (error?.name === 'AbortError') throw error;
         if (/auth|session|login|unauthor/i.test(error.message)) this.sessions.invalidate?.(account.id);
+        else if (/connect|timeout|socket|ECONN|network/i.test(error.message)) this.gameHealth?.reportDown?.('Daily Reward', error);
         this.setState(accountId, { status: 'error', error: error.message, nextAt: new Date(this.now() + ERROR_RETRY_MS).toISOString() });
         this.log(account, 'error', 'dw.failed', { error: error.message }, `Daily Reward: ${error.message}`);
         result = { delayMs: ERROR_RETRY_MS };
@@ -274,10 +296,13 @@ class DailyRewardService {
         }
 
         this.setState(account.id, { status: 'claiming', tier, timerText: '00:00', error: null });
-        let reply = await gs.call('dailyRewards:claim', { userId }, 'dailyRewards:claimResult', { signal });
+        // Another service of this account (Auto Play, Auto Trade…) already holds its one
+        // registered connection: claim on that one. Our own `register` would sign it out.
+        const borrowed = GameSocket.borrow?.(userId);
+        let reply = await (borrowed || gs).call('dailyRewards:claim', { userId }, 'dailyRewards:claimResult', { signal });
         // The claim reads the account from a registered socket ("User ID is required"
         // otherwise, seen live 2026-10-25): register once and claim again.
-        if (!reply?.success && /user id is required|not authenticated|authentication/i.test(String(reply?.error || reply?.message || '')) && !gs.userId) {
+        if (!borrowed && !reply?.success && /user id is required|not authenticated|authentication/i.test(String(reply?.error || reply?.message || '')) && !gs.userId) {
           await gs.register(userId, { signal, owner: 'Daily Reward' });
           reply = await gs.call('dailyRewards:claim', { userId }, 'dailyRewards:claimResult', { signal });
         }

@@ -2,6 +2,8 @@ import { useMemo, useState } from 'react';
 import SortTable from './SortTable';
 import { filOf } from '../i18n-fil';
 import { roleColors } from './roleColors';
+import RatingBadge from './RatingBadge';
+import InjuryMark, { injuryOf } from './InjuryMark';
 
 const api = window.dreamteam;
 const GRADES = ['D-', 'D', 'D+', 'C-', 'C', 'C+', 'B-', 'B', 'B+', 'A-', 'A', 'A+', 'S-', 'S', 'S+'];
@@ -19,7 +21,7 @@ const TEXT = {
     all: 'Hepsi', changeUp: 'Artanlar', changeDown: 'Düşenler', changeNone: 'Değişmeyenler', baseOnly: 'Base\'de / altında', baseNear: 'Base\'e %10 yakın', baseNot: 'Base üstünde',
     roleAny: 'Rolü olanlar', roleNone: 'Rolü olmayanlar', cardHas: 'Kartı olanlar', cardNo: 'Kartı olmayanlar', cardNoTeam: 'No Team', injured: 'Sakat', healthy: 'Sağlıklı', health: 'Sağlık',
     reset: 'Filtreleri temizle', player: 'Oyuncu', shown: '{shown} / {total} gösteriliyor', page: 'Sayfa {p} / {n}', noData: 'Liste henüz alınmadı. "Yenile" ile şimdi alabilirsin; her gün 11:05\'ten sonra otomatik alınır.',
-    baseBadge: 'Base', baseHint: 'Değeri Base değerinde ya da altında', ratingWas: 'önceki gün {g}', editRoles: 'Rolleri düzenle', addBuy: 'Auto Buy listesine ekle', addBuySel: 'Seçilileri Auto Buy listesine ekle ({n})', inBuy: 'Auto Buy listesinde', addedBuy: '{n} oyuncu Auto Buy listesine eklendi', clearSel: 'Seçimi temizle', noTeam: 'No Team', stars: '★{s}', cards: '{n} kart', modified: 'Değiştirilmiş'
+    baseBadge: 'Base', baseHint: 'Değerinden %5 indirim düşünce Base ya da altında (75 TK altı gösterilmez)', ratingWas: 'önceki gün {g}', editRoles: 'Rolleri düzenle', addBuy: 'Auto Buy listesine ekle', addBuySel: 'Seçilileri Auto Buy listesine ekle ({n})', inBuy: 'Auto Buy listesinde', addedBuy: '{n} oyuncu Auto Buy listesine eklendi', clearSel: 'Seçimi temizle', noTeam: 'No Team', stars: '★{s}', cards: '{n} kart', modified: 'Değiştirilmiş'
   },
   en: {
     title: 'Players', subtitle: '{count} players · updated {at} · next {next}', never: 'not yet', refresh: 'Refresh', refreshing: 'Refreshing…',
@@ -28,7 +30,7 @@ const TEXT = {
     all: 'All', changeUp: 'Going up', changeDown: 'Going down', changeNone: 'Unchanged', baseOnly: 'At / below base', baseNear: 'Within 10% of base', baseNot: 'Above base',
     roleAny: 'With a role', roleNone: 'Without a role', cardHas: 'With cards', cardNo: 'Without cards', cardNoTeam: 'No Team', injured: 'Injured', healthy: 'Healthy', health: 'Health',
     reset: 'Clear filters', player: 'Player', shown: '{shown} / {total} shown', page: 'Page {p} / {n}', noData: 'No list yet. Press "Refresh" to get it now; it is fetched automatically every day after 11:05.',
-    baseBadge: 'Base', baseHint: 'Value at or below its base', ratingWas: 'was {g} yesterday', editRoles: 'Edit roles', addBuy: 'Add to Auto Buy', addBuySel: 'Add selected to Auto Buy ({n})', inBuy: 'On the Auto Buy list', addedBuy: '{n} player(s) added to Auto Buy', clearSel: 'Clear selection', noTeam: 'No Team', stars: '★{s}', cards: '{n} cards', modified: 'Modified'
+    baseBadge: 'Base', baseHint: 'At or below its Base after the 5% discount (players under 75 TK not shown)', ratingWas: 'was {g} yesterday', editRoles: 'Edit roles', addBuy: 'Add to Auto Buy', addBuySel: 'Add selected to Auto Buy ({n})', inBuy: 'On the Auto Buy list', addedBuy: '{n} player(s) added to Auto Buy', clearSel: 'Clear selection', noTeam: 'No Team', stars: '★{s}', cards: '{n} cards', modified: 'Modified'
   },
   get fil() { return filOf(this.en); }
 };
@@ -50,7 +52,7 @@ export default function PlayersPage({ state, t, toast }) {
   const addToBuy = async list => { try { const r = await api.buy.addWatch(list.map(p => ({ id: p.id, name: p.name, team: p.team, position: p.position, rating: p.rating, value: p.value, base: p.base }))); toast(fill(x.addedBuy, { n: r?.added ?? list.length }), 'success'); setPicked(new Set()); } catch (e) { toast(e.message, 'error'); } };
   const set = patch => { setF(v => ({ ...v, ...patch })); setPage(0); };
   const teams = useMemo(() => [...new Set(list.map(p => p.team).filter(Boolean))].sort(), [list]);
-  const counts = useMemo(() => ({ up: list.filter(p => p.change > 0).length, down: list.filter(p => p.change < 0).length, base: list.filter(p => p.isBase).length, same: list.filter(p => !p.change).length }), [list]);
+  const counts = useMemo(() => ({ up: list.filter(p => p.change > 0).length, down: list.filter(p => p.change < 0).length, base: list.filter(p => p.atBase).length, same: list.filter(p => !p.change).length }), [list]);
 
   const rows = useMemo(() => {
     const q = f.q.trim().toLowerCase();
@@ -65,21 +67,21 @@ export default function PlayersPage({ state, t, toast }) {
       if (f.change === 'up' && !(p.change > 0)) return false;
       if (f.change === 'down' && !(p.change < 0)) return false;
       if (f.change === 'none' && p.change) return false;
-      if (f.base === 'at' && !p.isBase) return false;
+      if (f.base === 'at' && !p.atBase) return false;
       if (f.base === 'near' && !(gapPct(p) != null && gapPct(p) <= 10)) return false;
-      if (f.base === 'not' && p.isBase) return false;
+      if (f.base === 'not' && p.atBase) return false;
       if (f.role === 'any' && !p.roleIds.length) return false;
       if (f.role === 'none' && p.roleIds.length) return false;
-      if (f.role === 'base' && !p.isBase) return false;
+      if (f.role === 'base' && !p.atBase) return false;
       if (f.role && !['any', 'none', 'base'].includes(f.role) && !p.roleIds.includes(f.role)) return false;
       if (f.card === 'has' && !(p.card && p.card.cardCount > 0)) return false;
       if (f.card === 'no' && p.card && p.card.cardCount > 0) return false;
       if (f.card === 'noTeam' && !p.card?.noTeam) return false;
-      if (f.health === 'injured' && !p.injured) return false;
-      if (f.health === 'healthy' && p.injured) return false;
+      if (f.health === 'injured' && !injuryOf(p.name)) return false;
+      if (f.health === 'healthy' && injuryOf(p.name)) return false;
       return true;
     });
-    const val = p => ({ name: String(p.name).toLowerCase(), team: p.team || '', position: p.position || '', rating: gradeRank(p.rating), value: p.value, base: p.base, change: p.change, gap: gapPct(p) ?? 1e9, card: p.card?.stars ?? -1, roles: p.roleIds.length + (p.isBase ? 1 : 0) })[sort.key];
+    const val = p => ({ name: String(p.name).toLowerCase(), team: p.team || '', position: p.position || '', rating: gradeRank(p.rating), value: p.value, base: p.base, change: p.change, gap: gapPct(p) ?? 1e9, card: p.card?.stars ?? -1, roles: p.roleIds.length + (p.atBase ? 1 : 0) })[sort.key];
     out.sort((a, b) => { const av = val(a), bv = val(b); const c = typeof av === 'number' ? av - bv : String(av).localeCompare(String(bv)); return sort.dir === 'asc' ? c : -c; });
     return out;
   }, [list, f, sort]);
@@ -123,20 +125,20 @@ export default function PlayersPage({ state, t, toast }) {
       </div>
       <div className="panel table-panel pl-table"><SortTable>
         <thead><tr><th><input type="checkbox" checked={visible.length > 0 && visible.every(p => picked.has(p.id))} onChange={e => setPicked(prev => { const n = new Set(prev); for (const p of visible) e.target.checked ? n.add(p.id) : n.delete(p.id); return n; })} /></th>{th('name', x.player)}{th('team', x.team)}{th('position', x.position)}{th('rating', x.rating)}{th('value', x.value)}{th('base', x.base)}{th('change', x.change)}{th('gap', x.gap)}{th('roles', x.roles)}{th('card', x.card)}<th></th></tr></thead>
-        <tbody>{visible.map(p => <tr key={p.id} className={p.isBase ? 'pl-base-row' : ''}>
+        <tbody>{visible.map(p => <tr key={p.id} className={p.atBase ? 'pl-base-row' : ''}>
           <td><input type="checkbox" checked={picked.has(p.id)} onChange={() => togglePick(p.id)} /></td>
-          <td><b>{p.name}</b>{p.injured && <span className="pl-injured" title={x.injured}>+</span>}</td>
+          <td><b>{p.name}</b><InjuryMark name={p.name} /></td>
           <td>{p.team || '—'}</td>
           <td>{p.position}</td>
-          <td><span className="grade-badge">{p.rating}</span>{p.ratingBefore && <small className="pl-was">{fill(x.ratingWas, { g: p.ratingBefore })}</small>}</td>
+          <td><RatingBadge grade={p.rating} />{p.ratingBefore && <small className="pl-was">{fill(x.ratingWas, { g: p.ratingBefore })}</small>}</td>
           <td><b>{num(p.value)}</b></td>
           <td>{num(p.base)}</td>
           <td>{p.change ? <span className={p.change > 0 ? 'pl-up' : 'pl-down'}>{p.change > 0 ? '▲' : '▼'} {Math.abs(p.change)}</span> : <span className="muted-text">—</span>}</td>
-          <td>{gapPct(p) == null ? '—' : <span className={p.isBase ? 'pl-down' : ''}>{gapPct(p) > 0 ? '+' : ''}{gapPct(p)}%</span>}</td>
+          <td>{gapPct(p) == null ? '—' : <span className={p.atBase ? 'pl-down' : ''}>{gapPct(p) > 0 ? '+' : ''}{gapPct(p)}%</span>}</td>
           <td><div className="pl-roles" onClick={() => setEditing(editing === p.id ? null : p.id)} title={x.editRoles}>
-            {p.isBase && <span className="role-badge pl-base-badge" title={x.baseHint}>{x.baseBadge}</span>}
+            {p.atBase && <span className="role-badge pl-base-badge" title={x.baseHint}>{x.baseBadge}</span>}
             {p.roleIds.map(id => roles.find(r => r.id === id)).filter(Boolean).map(r => <span key={r.id} className="role-badge" style={roleColors(r.color)}>{r.name}</span>)}
-            {!p.isBase && !p.roleIds.length && <span className="muted-text">+</span>}
+            {!p.atBase && !p.roleIds.length && <span className="muted-text">+</span>}
           </div>
             {editing === p.id && <div className="role-chips pl-role-edit">{roles.map(r => { const on = p.roleIds.includes(r.id); return <button key={r.id} className={on ? 'on' : ''} style={on ? { background: r.color, borderColor: r.color, color: '#fff' } : undefined} onClick={() => toggleRole(p, r.id)}>{r.name}</button>; })}</div>}
           </td>

@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import SortTable from './SortTable';
 import { filOf } from '../i18n-fil';
+import InjuryMark from './InjuryMark';
+import { GroupedPicks } from './AccountGroups';
 
 const api = window.dreamteam;
 const TEXT = {
@@ -107,10 +109,10 @@ export default function TkTransferPage({ state, t, toast }) {
         <label><span>{x.target}</span><input type="number" min="1" step="1" disabled={running} value={targetTk} onChange={e => setTargetTk(e.target.value)} /><small>{x.targetHint}</small></label>
       </div>
       <div className="tk-sides-head"><b>{x.sides}</b><span className="muted">{chosen.length}/{sides.length}</span><span className="sp" /><button className="btn ghost small" disabled={running} onClick={() => setSideIds(allOn ? [] : sides.map(a => a.id))}>{allOn ? x.clear : x.selectAll}</button></div>
-      <div className="tk-sides">{sides.map(a => <label key={a.id} className={chosen.includes(a.id) ? 'on' : ''}>
+      <div className="tk-sides"><GroupedPicks storeKey="tktransfer" accounts={sides} selected={chosen} disabled={running} onSet={setSideIds} render={a => <label key={a.id} className={chosen.includes(a.id) ? 'on' : ''}>
         <input type="checkbox" disabled={running} checked={chosen.includes(a.id)} onChange={() => setSideIds(chosen.includes(a.id) ? chosen.filter(v => v !== a.id) : [...chosen, a.id])} />
         <b>{a.name}</b><span className="num">{x.tk} {num(stat(a.id).tk)}</span><span className="num muted">{x.apk} {num(stat(a.id).apk)}</span>
-      </label>)}</div>
+      </label>} /></div>
       {errors.length > 0 && !running && <div className="tk-errors">{errors.map(e => <span key={e}>{e}</span>)}</div>}
     </div>
 
@@ -136,7 +138,7 @@ export default function TkTransferPage({ state, t, toast }) {
         {!(shown.items || []).length ? <div className="empty">{x.noPlayers}</div> :
           <SortTable><thead><tr><th>{x.round}</th><th>{x.side}</th><th>{x.player}</th><th>{x.salary}</th><th>{x.price}</th><th>{x.status}</th></tr></thead>
             <tbody>{shown.items.map((p, i) => <tr key={i} className={['buying', 'trading', 'listing'].includes(p.status) ? 'dp-live' : ''}>
-              <td className="num">{p.round}</td><td>{p.side}</td><td><b>{p.name}</b></td><td className="num">{num(p.salary)}</td><td className="num">{p.price} APK</td>
+              <td className="num">{p.round}</td><td>{p.side}</td><td><b>{p.name}</b><InjuryMark name={p.name} /></td><td className="num">{num(p.salary)}</td><td className="num">{p.price} APK</td>
               <td><span className={`tk-badge ${ITEM_TONE[p.status] || ''}`} title={p.error || ''}>{x.item[p.status] || p.status}</span>{p.error && <small className="cell-sub bad-text">{p.error}</small>}</td>
             </tr>)}</tbody></SortTable>}
       </>}

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import SortTable from './SortTable';
 import { filOf } from '../i18n-fil';
+import InjuryMark from './InjuryMark';
 
 const api = window.dreamteam;
 const fill = (s, p = {}) => String(s).replace(/\{(\w+)\}/g, (_, k) => p[k] ?? '');
@@ -71,7 +72,7 @@ export default function ActivateTab({ state, t, toast }) {
     </div>
     {!rows.length ? <div className="panel empty big"><b>{x.none}</b></div> : <div className="panel table-panel"><SortTable><thead><tr><th>{x.player}</th><th>{x.team}</th><th>{x.now}</th><th>{x.target}</th><th>{x.cards}</th><th>{x.status}</th></tr></thead>
       <tbody>{rows.map(r => <tr key={r.playerId} className={run?.current?.playerId === r.playerId && running ? 'dp-live' : ''}>
-        <td><b>{r.name}</b></td>
+        <td><b>{r.name}</b><InjuryMark name={r.name} /></td>
         <td>{r.team}</td>
         <td className="num">{r.stars}★</td>
         <td className="num"><b>{r.target}★</b></td>

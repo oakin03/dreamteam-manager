@@ -3,6 +3,8 @@ import DailySummary from './DailySummary';
 import AccountAvatar from './AccountAvatar';
 import { useEffect, useMemo, useState } from 'react';
 import { filOf } from '../i18n-fil';
+import RatingBadge from './RatingBadge';
+import InjuryMark from './InjuryMark';
 
 const num = v => v == null || Number.isNaN(Number(v)) ? '—' : Number(v).toLocaleString();
 const TR_OFFSET_MS = 3 * 3600 * 1000;
@@ -27,7 +29,7 @@ const TEXT = {
     draft: 'Draft', draftLine: '{rooms} odada · {attempts} hesapta hak var', tournament: 'Turnuva', tournamentLine: '{joined} kayıt bu çalıştırmada',
     market: 'Pazar', marketLine: '{sold} satış toplanmayı bekliyor · {listed} ilan', trade: 'Trading Hall', tradeLine: '{count} ilan', equipment: 'Ekipman', equipmentLine: '{name} açık', equipmentIdle: 'Kapalı',
     players: 'Oyuncular', playersLine: '▲ {up} · ▼ {down} · Base {base}', playersNever: 'Liste henüz alınmadı', cards: 'Kartlar', cardsLine: '{players} oyuncu · {teams} takım', schedule: 'Zamanlayıcı', scheduleLine: 'Sıradaki: {name} · {at}', scheduleNone: 'Bekleyen görev yok',
-    risers: 'Bugün en çok artan', fallers: 'Bugün en çok düşen', atBase: 'Base’e düşenler', more: '+{n} daha', noActivity: 'Henüz kayıt yok'
+    risers: 'Bugün en çok artan', fallers: 'Bugün en çok düşen', atBase: 'Base’e düşenler', sinceToday: 'bugün', sinceDays: '{n} gün önce', sinceOld: '{n}+ gün', more: '+{n} daha', noActivity: 'Henüz kayıt yok'
   },
   en: {
     title: 'Command Center', main: 'Main account', noMain: 'No main account (Accounts page)', level: 'Lv', tk: 'TK', apk: 'APK', tix: 'TIX',
@@ -44,7 +46,7 @@ const TEXT = {
     draft: 'Draft', draftLine: 'in {rooms} room(s) · {attempts} account(s) with attempts', tournament: 'Tournament', tournamentLine: '{joined} registered this run',
     market: 'Market', marketLine: '{sold} sale(s) to claim · {listed} listed', trade: 'Trading Hall', tradeLine: '{count} listings', equipment: 'Equipment', equipmentLine: '{name} open', equipmentIdle: 'Closed',
     players: 'Players', playersLine: '▲ {up} · ▼ {down} · Base {base}', playersNever: 'No list yet', cards: 'Cards', cardsLine: '{players} players · {teams} teams', schedule: 'Scheduler', scheduleLine: 'Next: {name} · {at}', scheduleNone: 'Nothing scheduled',
-    risers: 'Biggest risers today', fallers: 'Biggest drops today', atBase: 'At base', more: '+{n} more', noActivity: 'Nothing yet'
+    risers: 'Biggest risers today', fallers: 'Biggest drops today', atBase: 'At base', sinceToday: 'today', sinceDays: '{n} day(s) ago', sinceOld: '{n}+ days', more: '+{n} more', noActivity: 'Nothing yet'
   },
   get fil() { return filOf(this.en); }
 };
@@ -156,7 +158,15 @@ export default function HomePage({ state, t, go, msgText, toast = () => {} }) {
   const next = (state.schedules || []).filter(s => s.enabled && !s.completed && Date.parse(s.startAt) > now).sort((a, b) => Date.parse(a.startAt) - Date.parse(b.startAt))[0];
   const risers = useMemo(() => [...plist].filter(p => p.change > 0).sort((a, b) => b.change - a.change).slice(0, 6), [plist]);
   const fallers = useMemo(() => [...plist].filter(p => p.change < 0).sort((a, b) => a.change - b.change).slice(0, 6), [plist]);
-  const atBase = useMemo(() => plist.filter(p => p.isBase).sort((a, b) => b.value - a.value), [plist]);
+  // at Base, or still reachable with the 5% signing discount (Lv30+); the day it dropped there
+  // comes from the saved daily values, so a rescan keeps it (user 2026-10-30). Newest first.
+  const atBase = useMemo(() => plist.filter(p => p.atBase)
+    .sort((a, b) => String(b.baseSince || '').localeCompare(String(a.baseSince || '')) || b.value - a.value), [plist]);
+  const sinceText = p => {
+    if (!p.baseSince || !state.players?.day) return '';
+    const n = Math.round((Date.parse(state.players.day) - Date.parse(p.baseSince)) / 86400000);
+    return n <= 0 ? x.sinceToday : fill(p.baseSinceUnknown ? x.sinceOld : x.sinceDays, { n });
+  };
   const word = s => x[s] || s;
   const tone = s => s === 'running' || s === 'done' ? 'ok' : s === 'error' ? 'bad' : s === 'paused' || s === 'stopped' ? 'warn' : 'muted';
   const sys = (key, page, title, status, line) => <button key={key} className="cc-sys" onClick={() => go(page)}><div><b>{title}</b><span className={`pill ${tone(status)}`}><i />{word(status)}</span></div><small>{line}</small></button>;
@@ -245,7 +255,7 @@ export default function HomePage({ state, t, go, msgText, toast = () => {} }) {
     {plist.length > 0 && <div className="home-players">
       <PlayerList title={x.risers} rows={risers} go={go} />
       <PlayerList title={x.fallers} rows={fallers} go={go} />
-      <PlayerList title={x.atBase} rows={atBase.slice(0, 6)} go={go} more={atBase.length > 6 ? fill(x.more, { n: atBase.length - 6 }) : null} base />
+      <PlayerList title={x.atBase} rows={atBase.slice(0, 10)} go={go} more={atBase.length > 10 ? fill(x.more, { n: atBase.length - 10 }) : null} base since={sinceText} />
     </div>}
 
     <AccountHealthPanel state={state} t={t} toast={toast} />
@@ -253,9 +263,9 @@ export default function HomePage({ state, t, go, msgText, toast = () => {} }) {
   </div>;
 }
 
-function PlayerList({ title, rows, go, more, base }) {
+function PlayerList({ title, rows, go, more, base, since }) {
   return <div className="panel home-plist"><b onClick={() => go('players')}>{title}</b>
-    {rows.map(p => <div key={p.id} className="home-prow"><span>{p.name}</span><small>{p.team} · {p.rating}</small><em className="num">{Number(p.value).toLocaleString()}</em>{base ? <i className="role-badge pl-base-badge">Base</i> : <i className={p.change > 0 ? 'pl-up' : 'pl-down'}>{p.change > 0 ? '▲' : '▼'} {Math.abs(p.change)}</i>}</div>)}
+    {rows.map(p => <div key={p.id} className="home-prow"><span>{p.name}<InjuryMark name={p.name} /></span><small>{p.team} <RatingBadge grade={p.rating} mini /></small><em className="num">{Number(p.value).toLocaleString()}</em>{base ? <span className="home-base-cell">{since?.(p) && <small className="home-since">{since(p)}</small>}<i className="role-badge pl-base-badge" title={p.isBase ? '' : 'Base (−%5)'}>{p.isBase ? 'Base' : 'Base −5%'}</i></span> : <i className={p.change > 0 ? 'pl-up' : 'pl-down'}>{p.change > 0 ? '▲' : '▼'} {Math.abs(p.change)}</i>}</div>)}
     {more && <small className="muted-text">{more}</small>}
   </div>;
 }

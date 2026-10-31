@@ -12,6 +12,8 @@ const { GameSocket } = require('./game-socket.cjs');
 //   writes use the account's session cookie (no `register`, so nothing is signed out):
 //     sendPrivateMessage {senderId, receiverId, message} -> privateMessageSent {success, message}
 //     acceptFriendRequest / declineFriendRequest / cancelFriendRequest {userId, friendshipId} -> friendRequestActionResult
+//     searchUsers {userId, teamName} -> searchResults {success, users:[{id, teamName, level, online, friendshipStatus NONE|PENDING|ACCEPTED}]} (read)
+//     sendFriendRequest {userId, targetUserId} -> friendRequestResult
 //     removeFriend {userId, friendId} -> friendActionResult;  unblockUser {userId, blockedUserId} -> blockActionResult
 //     markConversationAsRead {userId, friendId};  claimMailItems {mailId} / claimAllMailItems {userId} (acks)
 // The game only pushes new messages / requests to a registered socket, so the app polls.
@@ -194,6 +196,7 @@ class SocialService {
   async act(id, action, targetId) {
     const w = await this._writer(id);
     const spec = {
+      request: ['sendFriendRequest', { targetUserId: targetId }, 'friendRequestResult'],
       accept: ['acceptFriendRequest', { friendshipId: targetId }, 'friendRequestActionResult'],
       decline: ['declineFriendRequest', { friendshipId: targetId }, 'friendRequestActionResult'],
       cancel: ['cancelFriendRequest', { friendshipId: targetId }, 'friendRequestActionResult'],
@@ -208,7 +211,18 @@ class SocialService {
     return this.view(id);
   }
 
+  // Teams whose name contains `text`, as seen by this account (friendship status included).
+  async search(id, text) {
+    const q = String(text || '').trim();
+    if (q.length < 2) return [];
+    const userId = await this._uid(id);
+    const r = await (await this._read()).call('searchUsers', { userId, teamName: q }, 'searchResults', { timeoutMs: TIMEOUT_MS });
+    this.searched = { ...(this.searched || {}), ...Object.fromEntries((r?.users || []).map(u => [u.id, u.teamName])) };
+    return (r?.users || []).filter(u => u.id !== userId);
+  }
+
   _targetName(id, action, targetId) {
+    if (action === 'request') return this.searched?.[targetId] || '?';
     const v = this.views[id] || {};
     const pick = list => (list || []).find(x => x?.id === targetId || x?.friendshipId === targetId);
     const x = pick(v.requests) || pick(v.sent) || pick(v.friends) || pick(v.blocked);

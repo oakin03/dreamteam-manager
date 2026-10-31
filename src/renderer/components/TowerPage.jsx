@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import SortTable from './SortTable';
 import { filOf } from '../i18n-fil';
+import { GroupedPicks } from './AccountGroups';
 
 const api = window.dreamteam;
 const TEXT = {
@@ -10,11 +11,12 @@ const TEXT = {
     live: 'Canlı durum', last: 'Son çalıştırma', account: 'Hesap', status: 'Durum', now: 'Şu an', result: 'Sonuç', none: 'Henüz kule çalıştırılmadı.',
     st: { waitingGame: 'Oyun bekleniyor', queued: 'Sırada', login: 'Giriş yapılıyor', waitingMatch: 'Maçın bitmesi bekleniyor', starting: 'Maç başlatılıyor', playing: 'Maç oynanıyor', done: 'Tamamlandı', finished: 'Bitti', stopped: 'Durduruldu', error: 'Hata', salaryCap: 'Maaş sınırı aşıldı' },
     playing: '{tower} · {floor}. kat', floor: '{floor}/{max}', wl: '{w} G · {l} M',
-    reason: { completed: 'Tamamlandı', losses: '3 kez üst üste kaybetti', user: 'Durduruldu', salary: 'Maaş sınırı', error: 'Hata' },
+    lossLimit: 'Üst üste kayıp sınırı', lossLimitHint: 'Bir kulede aynı katta bu kadar üst üste kaybedilince o kule bırakılır (en az 1).',
+    reason: { completed: 'Tamamlandı', losses: 'Üst üste kayıp sınırına ulaştı', user: 'Durduruldu', salary: 'Maaş sınırı', error: 'Hata' },
     how: 'Nasıl çalışır?',
     howLines: [
       'Önce her kulenin 1. katı, sonra 2. katları… şeklinde, en düşük kattaki kule önce oynanır.',
-      'Bir kulede aynı katta üst üste 3 kez kaybedilirse o kule bırakılır; diğer kuleler devam eder. Üç kule de bitince ya da bırakılınca hesap durur.',
+      'Bir kulede aynı katta üst üste "Üst üste kayıp sınırı" kadar (varsayılan 2) kaybedilirse o kule bırakılır; diğer kuleler devam eder. Üç kule de bitince ya da bırakılınca hesap durur.',
       'Başlatınca seçili hesaplarda çalışan Auto Play durdurulur, kule bitince yeniden başlatılır. Hesap zaten maçtaysa önce o maçın bitmesi beklenir.',
       'Maaş sınırı aşılmışsa o hesap durdurulur ve uyarı gösterilir. Hesaplar aynı anda oynar.'
     ]
@@ -25,11 +27,12 @@ const TEXT = {
     live: 'Live status', last: 'Last run', account: 'Account', status: 'Status', now: 'Now', result: 'Result', none: 'Tower has not run yet.',
     st: { waitingGame: 'Waiting for the game', queued: 'Queued', login: 'Signing in', waitingMatch: 'Waiting for a match to end', starting: 'Starting a match', playing: 'Playing', done: 'Completed', finished: 'Finished', stopped: 'Stopped', error: 'Error', salaryCap: 'Over the salary cap' },
     playing: '{tower} · floor {floor}', floor: '{floor}/{max}', wl: '{w} W · {l} L',
-    reason: { completed: 'Completed', losses: 'Lost 3 times in a row', user: 'Stopped', salary: 'Salary cap', error: 'Error' },
+    lossLimit: 'Losses in a row', lossLimitHint: 'A tower is given up after this many losses in a row on the same floor (at least 1).',
+    reason: { completed: 'Completed', losses: 'Loss limit reached', user: 'Stopped', salary: 'Salary cap', error: 'Error' },
     how: 'How does it work?',
     howLines: [
       'Floor 1 of every tower first, then the 2nd floors…: the tower on the lowest floor is played first.',
-      'After 3 losses in a row on the same floor a tower is given up; the others go on. When all three are done or given up, the account stops.',
+      'After "Losses in a row" losses (default 2) on the same floor a tower is given up; the others go on. When all three are done or given up, the account stops.',
       'On start, Auto Play on the selected accounts is stopped and started again when Tower ends. An account already in a match waits for it first.',
       'Over the salary cap: that account stops with a warning. Accounts play at the same time.'
     ]
@@ -48,6 +51,8 @@ export default function TowerPage({ state, t, toast }) {
   const [stopPick, setStopPick] = useState(() => new Set());
   const running = Boolean(tw.running);
   const live = tw.run;
+  const [lossLimit, setLossLimit] = useState(() => String(state.settings?.towerLossLimit ?? 2));
+  const saveLimit = v => { setLossLimit(v); const n = Math.floor(Number(v)); if (n >= 1) api.settings.update({ towerLossLimit: n }).catch(() => {}); };
   const save = next => { setIds(next); api.settings.update({ towerAccountIds: next }).catch(() => {}); };
   const toggle = id => save(ids.includes(id) ? ids.filter(v => v !== id) : [...ids, id]);
   const act = async fn => { try { await fn(); } catch (e) { toast(e.message, 'error'); } };
@@ -57,6 +62,7 @@ export default function TowerPage({ state, t, toast }) {
   return <div className="page tower-page">
     <div className="page-title"><div><h1>{x.title}</h1><span className="subtitle">{x.subtitle}</span></div>
       <div className="toolbar">
+        <label className="tw-limit" title={x.lossLimitHint}><span>{x.lossLimit}</span><input type="number" min="1" step="1" value={lossLimit} onChange={e => saveLimit(e.target.value)} onBlur={() => { if (!(Math.floor(Number(lossLimit)) >= 1)) saveLimit('1'); }} /></label>
         {running && <button className="btn ghost" disabled={!stopPick.size} onClick={() => act(async () => { await api.tower.stop([...stopPick]); setStopPick(new Set()); })}>{fill(x.stopSel, { n: stopPick.size })}</button>}
         {running ? <button className="btn danger-soft" onClick={() => act(() => api.tower.stop())}>{x.stopAll}</button>
           : <button className="btn primary" disabled={!ids.length} onClick={() => act(() => api.tower.start(ids))}>{fill(x.start, { n: ids.length })}</button>}
@@ -64,7 +70,7 @@ export default function TowerPage({ state, t, toast }) {
 
     {!running && <div className="panel pvp-accounts tw-accounts">
       <div className="pvp-accounts-head"><b>{x.accounts}</b><button className="chip" onClick={() => save(ids.length === accounts.length ? [] : accounts.map(a => a.id))}>{ids.length === accounts.length ? x.clear : x.selectAll}</button></div>
-      <div className="pvp-picks">{accounts.map(a => <button key={a.id} type="button" className={ids.includes(a.id) ? 'selected' : ''} onClick={() => toggle(a.id)}><span>{a.name}</span></button>)}</div>
+      <div className="pvp-picks"><GroupedPicks storeKey="tower" accounts={accounts} selected={ids} onSet={save} render={a => <button key={a.id} type="button" className={ids.includes(a.id) ? 'selected' : ''} onClick={() => toggle(a.id)}><span>{a.name}</span></button>} /></div>
     </div>}
 
     {live && <><h3 className="section-title">{running ? x.live : x.last}</h3>

@@ -21,6 +21,7 @@ const RUN_DELAY_MS = 2 * 60 * 1000;   // runs at 19:12 TR, after the game's rese
 const RETRY_MS = 30 * 60 * 1000;      // an incomplete routine is tried again after this
 const RECHECK_MS = 60 * 60 * 1000;    // and the schedule is looked at again at least hourly
 const REWARD_CHECK_MS = 30 * 60 * 1000; // while Auto Play runs, finished task rewards are claimed this often
+const DONATION_TK = 100;                // daily alliance donation (the game's minimum)
 
 function abortError() { const e = new Error('Aborted'); e.name = 'AbortError'; return e; }
 
@@ -156,6 +157,7 @@ class DailyRoutineService {
     if (!this.selectedIds().includes(account.id)) return null;
     if (this.doneThisCycle(account.id)) {
       // Routine done today: only collect rewards of tasks finished since the last check.
+      await this._donateLate(account, signal);
       const last = this.lastClaimCheck.get(account.id);
       if (last == null || this.now() - last >= REWARD_CHECK_MS) await this._claimSafely(account, signal);
       return null;
@@ -176,6 +178,7 @@ class DailyRoutineService {
         ['signIn', () => this._signIn(account, main, userId, signal)],
         ['signIn600', () => this._signIn600(account, userId, cookie)],
         ['tasks', () => this._startTasks(account, main, userId, signal)],
+        ['donate', () => this._donate(account, userId, cycle, signal)],
         ['friendly', async () => {
           if (await this._taskDone(main, userId, 'friendly_match', signal)) return 'already';
           sim = await GameSocket.open({ createSocket: this.createSocket, path: '/simulation-socket/', cookie, signal });
@@ -220,7 +223,7 @@ class DailyRoutineService {
       this._log(account, 'warning', 'dr.partial', { failed: failed.join(', ') }, `Daily routine incomplete (${failed.join(', ')}); it will be retried at the next Auto Play start`);
     } else {
       const keep = this._saved(account.id) || {};
-      this._save(account.id, { rewards: keep.rewards, tasks: keep.tasks, cycle, doneAt: new Date(this.now()).toISOString(), results });
+      this._save(account.id, { rewards: keep.rewards, tasks: keep.tasks, donation: keep.donation, donateChecked: keep.donateChecked, cycle, doneAt: new Date(this.now()).toISOString(), results });
       this._log(account, 'success', 'dr.done', {}, 'Daily routine finished · Auto Play continues');
     }
     this.onChanged?.();
@@ -366,9 +369,89 @@ class DailyRoutineService {
     }
   }
 
+  // 100 TK to the alliance once a game day (user 2026-10-30), only for accounts in an
+  // alliance and with the TK. The game counts only the first donation of a day, so a
+  // routine retried later the same day does not give again.
+  async _donate(account, userId, cycle, signal) {
+    if (this._saved(account.id)?.donation?.cycle === cycle) return 'already';
+    this._step(account, 'donate');
+    // The alliance events read the account from a registered socket (no userId in them);
+    // unregistered the game answers a bare {success:false} (seen live 2026-10-30). That
+    // socket is opened only here and closed at once, so the routine's own one stays
+    // unregistered. `donateChecked` marks a day whose answer is final.
+    // a connection another service already registered for the account is used as it is:
+    // registering again would sign that service out
+    const borrowed = GameSocket.borrow?.(userId) || null;
+    let reg = borrowed;
+    if (!reg) {
+      const { cookieHeader: cookie } = await this.sessions.get(account, { owner: 'daily-routine' });
+      reg = await GameSocket.open({ createSocket: this.createSocket, cookie, signal });
+    }
+    try {
+      if (!borrowed) await reg.register(userId, { signal, owner: 'Daily routine' });
+      const info = await reg.ack('alliance:getInfo', {}, { signal });
+      if (!info?.success || !info.data?.name) {
+        this._log(account, 'info', 'dr.donateNoAlliance', {}, 'Not in an alliance · no donation');
+        this._markDonate(account.id, cycle);
+        return 'noAlliance';
+      }
+      const basic = await reg.call('getUserBasicInfo', { userId }, 'userBasicInfo', { signal, timeoutMs: 10000 }).catch(() => null);
+      const funds = Number(basic?.funds);
+      if (Number.isFinite(funds) && funds < DONATION_TK) {
+        this._log(account, 'warning', 'dr.donateNoFunds', { tk: funds, amount: DONATION_TK }, `Not enough TK for the alliance donation (${funds} / ${DONATION_TK})`);
+        this._markDonate(account.id, cycle);
+        return 'noFunds';
+      }
+      const r = await this._claimAck(reg, 'alliance:donate', { amount: DONATION_TK }, signal);
+      if (!r?.success) {
+        const why = reasonOf(r);
+        // a new member must wait a day: not an error, tomorrow it works
+        if (/new member|wait 1 day|must wait/i.test(why)) {
+          this._log(account, 'info', 'dr.donateNewMember', {}, 'New alliance member · donations open after one day');
+          this._markDonate(account.id, cycle);
+          return 'newMember';
+        }
+        throw new Error(why);
+      }
+      this._save(account.id, { ...(this._saved(account.id) || {}), donation: { cycle, at: new Date(this.now()).toISOString(), amount: DONATION_TK }, donateChecked: cycle });
+      this._log(account, 'success', 'dr.donated', { amount: DONATION_TK, alliance: info.data.name || '' }, `${DONATION_TK} TK donated to the alliance${info.data.name ? ` ${info.data.name}` : ''}`);
+      return 'donated';
+    } finally { if (!borrowed) { try { reg.close(); } catch {} } }
+  }
+
+  _markDonate(accountId, cycle) { this._save(accountId, { ...(this._saved(accountId) || {}), donateChecked: cycle }); }
+
+  // A routine already done today whose donation was never answered for good (e.g. the
+  // early version that read every account as "not in an alliance"): donate now.
+  async _donateLate(account, signal) {
+    const cycle = this.cycle();
+    const saved = this._saved(account.id);
+    if (saved?.donateChecked === cycle || saved?.donation?.cycle === cycle) return;
+    try {
+      const { userId } = await this.sessions.get(account, { owner: 'daily-routine' });
+      await this._donate(account, userId, cycle, signal);
+    } catch (error) {
+      if (error?.name === 'AbortError') throw error;
+      this._log(account, 'error', 'dr.donateFailed', { error: error.message }, `Alliance donation failed: ${error.message}`);
+      this._markDonate(account.id, cycle);
+    } finally {
+      this.live.delete(account.id);
+      this.onChanged?.();
+    }
+  }
+
   async _signIn(account, main, userId, signal) {
     this._step(account, 'signIn');
-    const status = await main.call('getSignInStatus', { userId }, 'dailySignIn:data', { signal });
+    // A new account has no streak yet: the game answers "signInStatus" {started:false}
+    // (no "dailySignIn:data") until "Start my streak" (startDailySignIn) is pressed.
+    const SIGNIN_EVENTS = ['dailySignIn:data', 'signInStatus'];
+    let status = (await this._race(main, 'getSignInStatus', { userId }, SIGNIN_EVENTS, signal)).data;
+    if (status?.started === false) {
+      const started = await this._race(main, 'startDailySignIn', { userId }, [...SIGNIN_EVENTS, 'dailySignIn:error', 'signInError'], signal);
+      if (/error/i.test(started.event)) throw new Error(String(started.data?.message || started.data || 'Daily Signin could not be started'));
+      this._log(account, 'success', 'dr.signInStarted', {}, 'Daily Signin streak started');
+      status = started.data?.started === false ? status : started.data;
+    }
     if (status?.hasClaimedToday) {
       this._log(account, 'info', 'dr.signInAlready', {}, 'Daily Signin was already claimed today');
       return 'already';

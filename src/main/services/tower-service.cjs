@@ -11,14 +11,15 @@ const { matchStartSlot } = require('./match-start-gate.cjs');
 //   /simulation-socket/ getUserActiveMatch {userId} (ack) -> {match | null}
 // A win moves the tower's currentFloor up by one; a loss leaves it. Three towers
 // (challenger / threat / rival), ~60 floors, reset every Sunday 19:10 TR.
-// Rules (user): play the lowest floor first across the towers; 3 losses in a row on
-// the same floor give that tower up; when every tower is given up or done the account
+// Rules (user): play the lowest floor first across the towers; N losses in a row on
+// the same floor give that tower up (Settings → towerLossLimit, default 2, user 2026-10-30); when every tower is given up or done the account
 // stops. A salary-cap refusal stops the account with the same alert as Auto Play.
 const SIM_PATH = '/simulation-socket/';
 const POLL_MS = 3000;
 const APPEAR_GRACE_MS = 30000;
 const MATCH_MAX_MS = 15 * 60 * 1000;
-const MAX_LOSSES = 3;
+const DEFAULT_LOSS_LIMIT = 2;
+const lossLimitOf = settings => Math.max(1, Math.floor(Number(settings?.towerLossLimit)) || DEFAULT_LOSS_LIMIT);
 const MAX_START_FAILURES = 3;
 
 function abortError() { const e = new Error('Aborted'); e.name = 'AbortError'; return e; }
@@ -185,10 +186,11 @@ class TowerService {
           this._log(id, 'success', 'tw.won', { tower: t.label, floor: floorBefore }, `${t.label} floor ${floorBefore} won`);
         } else {
           t.losses++; t.streak++; row.losses++;
-          this._log(id, 'warning', 'tw.lost', { tower: t.label, floor: floorBefore, n: t.streak }, `${t.label} floor ${floorBefore} lost (${t.streak}/${MAX_LOSSES})`);
-          if (t.streak >= MAX_LOSSES) {
+          const limit = lossLimitOf(this.store.getSettings?.());
+          this._log(id, 'warning', 'tw.lost', { tower: t.label, floor: floorBefore, n: t.streak, max: limit }, `${t.label} floor ${floorBefore} lost (${t.streak}/${limit})`);
+          if (t.streak >= limit) {
             t.state = 'stopped'; t.reason = 'losses';
-            this._log(id, 'warning', 'tw.towerStopped', { tower: t.label, floor: floorBefore }, `${t.label} given up at floor ${floorBefore} after ${MAX_LOSSES} losses in a row`);
+            this._log(id, 'warning', 'tw.towerStopped', { tower: t.label, floor: floorBefore, max: limit }, `${t.label} given up at floor ${floorBefore} after ${limit} losses in a row`);
           }
         }
         this.onChanged();

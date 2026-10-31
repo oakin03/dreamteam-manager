@@ -354,7 +354,7 @@ class TournamentService {
         if (!eligible.length) {
           entry.done = true;
           this.setAccount(entry.account.id, { status: 'done', step: 'outcome', stepParams: { outcome: 'no-tournament', details: `Lv ${entry.level}` }, message: `No tournament for level ${entry.level}.` });
-          this.log('warning', `No tournament accepts level ${entry.level}.`, entry.account, 'tn.noTournament', { level: entry.level });
+          this.log('info', `No tournament accepts level ${entry.level}.`, entry.account, 'tn.noTournament', { level: entry.level });
         }
       }
 

@@ -11,10 +11,11 @@ const NOW = Date.parse('2026-10-21T17:00:00Z'); // 20:00 TR, after the 19:10 res
 function fakeGame(opts = {}) {
   const calls = [];
   const state = {
-    signInClaimed: Boolean(opts.signInClaimed), signed600: Boolean(opts.signed600), tasksStarted: Boolean(opts.tasksStarted),
+    signInClaimed: Boolean(opts.signInClaimed), streak: opts.streak !== false, signed600: Boolean(opts.signed600), tasksStarted: Boolean(opts.tasksStarted),
     fmDone: Boolean(opts.fmDone), matches: opts.matches ? opts.matches.map(m => ({ ...m })) : [],
     active: null, pending: null, hidden: 0, claimed: new Set(opts.claimed || []), claimCooldownOnce: Boolean(opts.claimCooldownOnce), activeLeft: 0, pendingPolls: 0, otherMatch: opts.otherMatch || 0,
-    mails: (opts.mails || []).map(m => ({ ...m }))
+    mails: (opts.mails || []).map(m => ({ ...m })),
+    registered: false, donations: []
   };
   const tasks = () => [
     { taskId: 't-pk', task: { key: 'win_1_match' }, completed: Boolean(opts.pkDone), isClaimed: state.claimed.has('t-pk') },
@@ -45,13 +46,24 @@ function fakeGame(opts = {}) {
     return { success: false, error: 'unknown' };
   };
   const main = (event, p, reply) => {
-    if (event === 'getSignInStatus') return reply('dailySignIn:data', { hasClaimedToday: state.signInClaimed, currentDay: 22 });
+    if (event === 'register') { state.registered = true; return reply('registrationSuccess', {}); }
+    if (event === 'getUserBasicInfo') return reply('userBasicInfo', { success: true, funds: opts.funds ?? 1000 });
+    // a new account has no streak until startDailySignIn
+    if (event === 'getSignInStatus') return state.streak ? reply('dailySignIn:data', { hasClaimedToday: state.signInClaimed, currentDay: 22 }) : reply('signInStatus', { started: false });
+    if (event === 'startDailySignIn') { state.streak = true; return reply('dailySignIn:data', { started: true, hasClaimedToday: false, currentDay: 1 }); }
     if (event === 'claimSignInReward') {
       if (state.signInClaimed) return reply('dailySignIn:error', 'Already signed in today.');
       state.signInClaimed = true; return reply('dailySignIn:claimed', { currentDay: 22 });
     }
   };
   const mainAck = (event, p) => {
+    // alliance events read the account from a registered socket
+    if (event.startsWith('alliance:') && !state.registered) return { success: false, error: 'Authentication required' };
+    if (event === 'alliance:getInfo') return opts.alliance ? { success: true, data: { name: opts.alliance } } : { success: false, error: 'You are not in an alliance' };
+    if (event === 'alliance:donate') {
+      if (opts.newMember) return { success: false, error: 'New members must wait 1 day before donating' };
+      state.donations.push(p.amount); return { success: true, message: 'Donation successful!' };
+    }
     if (event === 'getUserMails') return { success: true, mails: state.mails };
     if (event === 'claimAllMailItems') { for (const m of state.mails) m.isClaimed = true; return { success: true, message: 'Claimed' }; }
     if (event === 'getDailyTasks') return state.tasksStarted ? { tasks: tasks() } : { needsStart: true };
@@ -123,12 +135,12 @@ test('fresh day: claims, signs in, starts tasks, joins an open match and waits f
   const game = fakeGame({ matches: [fm('fm-locked', { hasPassword: true }), fm('fm-full'), fm('fm-open'), fm('fm-started', { status: 'started', opponent: 'x' })], joinFails: ['fm-full'] });
   const { s, logs, mem } = routine(game);
   const results = await s.runIfDue(account);
-  assert.deepEqual(results, { signIn: 'claimed', signIn600: 'signed', tasks: 'started', friendly: 'played' });
+  assert.deepEqual(results, { signIn: 'claimed', signIn600: 'signed', tasks: 'started', donate: 'noAlliance', friendly: 'played' });
   const joins = game.calls.filter(c => c.event === 'joinFM').map(c => c.payload.matchId);
   assert.deepEqual(joins, ['fm-full', 'fm-open'], 'never tries the passworded or started match');
   assert.ok(!game.calls.some(c => c.event === 'createFM'));
-  assert.ok(!game.calls.some(c => c.event === 'register'), 'no register: it would kick the game page');
-  assert.deepEqual(codes(logs), ['dr.start', 'dr.signIn', 'dr.signIn600', 'dr.tasksStarted', 'dr.fmJoinFailed', 'dr.fmJoined', 'dr.fmDone', 'dr.rewardsClaimed', 'dr.done']);
+  assert.equal(game.calls.filter(c => c.event === 'register').length, 1, 'only the alliance check registers, on a socket of its own');
+  assert.deepEqual(codes(logs), ['dr.start', 'dr.signIn', 'dr.signIn600', 'dr.tasksStarted', 'dr.donateNoAlliance', 'dr.fmJoinFailed', 'dr.fmJoined', 'dr.fmDone', 'dr.rewardsClaimed', 'dr.done']);
   assert.deepEqual(game.calls.filter(c => /TaskReward/.test(c.event)).map(c => [c.event, c.payload.taskId]), [['claimDailyTaskReward', 't-fm']], 'one task ready → Obtain');
   assert.deepEqual(s.snapshot().accounts.a1.rewards, { count: 1, xp: 250, at: new Date(NOW).toISOString() });
   assert.equal(mem.daily.accounts.a1.cycle, '2026-10-21T16:10:00.000Z');
@@ -152,9 +164,41 @@ test('only passworded matches: creates one, waits for an opponent, plays it', as
 test('everything already done today: no writes, still marked done', async () => {
   const game = fakeGame({ signInClaimed: true, signed600: true, tasksStarted: true, fmDone: true });
   const { s, logs } = routine(game);
-  assert.deepEqual(await s.runIfDue(account), { signIn: 'already', signIn600: 'already', tasks: 'already', friendly: 'already' });
+  assert.deepEqual(await s.runIfDue(account), { signIn: 'already', signIn600: 'already', tasks: 'already', donate: 'noAlliance', friendly: 'already' });
   assert.ok(!game.calls.some(c => ['claimSignInReward', 'startDailyTasks', 'joinFM', 'createFM'].includes(c.event)));
   assert.equal(codes(logs).at(-1), 'dr.done');
+});
+
+test('new account: starts the Daily Signin streak, then claims day 1', async () => {
+  const game = fakeGame({ streak: false, signed600: true, tasksStarted: true, fmDone: true });
+  const { s, logs } = routine(game);
+  const r = await s.runIfDue(account);
+  assert.equal(r.signIn, 'claimed');
+  assert.deepEqual(game.calls.filter(c => /SignIn/.test(c.event)).map(c => c.event), ['getSignInStatus', 'startDailySignIn', 'claimSignInReward']);
+  assert.ok(codes(logs).includes('dr.signInStarted'));
+});
+
+test('alliance donation: 100 TK once a game day, only in an alliance and with the TK', async () => {
+  const game = fakeGame({ alliance: 'Dream Club', signInClaimed: true, signed600: true, tasksStarted: true, fmDone: true });
+  const { s, logs, mem } = routine(game);
+  assert.equal((await s.runIfDue(account)).donate, 'donated');
+  assert.deepEqual(game.state.donations, [100]);
+  assert.equal(logs.find(l => l.code === 'dr.donated').params.alliance, 'Dream Club');
+  // a routine run again the same game day does not give again
+  mem.daily.accounts.a1.cycle = null;
+  assert.equal((await s.runIfDue(account)).donate, 'already');
+  assert.deepEqual(game.state.donations, [100]);
+
+  const poor = fakeGame({ alliance: 'Dream Club', funds: 99, signInClaimed: true, signed600: true, tasksStarted: true, fmDone: true });
+  const r2 = routine(poor);
+  assert.equal((await r2.s.runIfDue(account)).donate, 'noFunds');
+  assert.deepEqual(poor.state.donations, []);
+  assert.equal(r2.s.snapshot().accounts.a1.status, 'done', 'not enough TK is not a failure');
+
+  const fresh = fakeGame({ alliance: 'Dream Club', newMember: true, signInClaimed: true, signed600: true, tasksStarted: true, fmDone: true });
+  const r3 = routine(fresh);
+  assert.equal((await r3.s.runIfDue(account)).donate, 'newMember');
+  assert.equal(r3.s.snapshot().accounts.a1.status, 'done');
 });
 
 test('accounts that are not selected are skipped', async () => {
@@ -194,7 +238,7 @@ test('stopping Auto Play while waiting for an opponent cancels our match', async
   controller.abort();
   await assert.rejects(run, { name: 'AbortError' });
   assert.ok(game.calls.some(c => c.event === 'cancelMatch'));
-  assert.equal(mem.daily.accounts.a1, undefined);
+  assert.equal(mem.daily.accounts.a1?.cycle, undefined, 'not marked done');
 });
 
 test('TaskEngine runs the routine before the task loop and still runs the loop when it fails', async () => {
@@ -325,4 +369,50 @@ test('Mail rewards are claimed with the task rewards and summed up by item', asy
   assert.deepEqual(log.params, { count: 2, items: '3 Gift Box, 3 Energy Drink' });
   await s.claimRewards(['a1']);
   assert.equal(game.calls.filter(c => c.event === 'claimAllMailItems').length, 1, 'nothing left to claim, no second claim');
+});
+
+test('Auto Play: what the plugin reports while running (opponent, message) reaches the page state', async () => {
+  let release;
+  const plugin = {
+    prepare: async () => ({ mode: 'socket' }),
+    run: async ctx => { ctx.setState({ opponent: 'LEVIATHAN', opponentOwn: false }); ctx.log('success', 'Quick Play started · vs LEVIATHAN.'); await new Promise(r => { release = r; }); }
+  };
+  const engine = new TaskEngine({
+    store: { getAccounts: () => [{ id: 'a1', name: 'Trophy6' }] }, credentials: {}, browserService: {}, activity: { add() {} }, onChanged() {},
+    registry: { load: () => ({ plugin, manifest: { id: 't1', name: 'Quick Play' } }) }
+  });
+  await engine.startAccount('a1', 't1');
+  while (!release) await new Promise(r => setTimeout(r, 10));
+  const st = engine.states().a1;
+  assert.equal(st.opponent, 'LEVIATHAN');
+  assert.equal(st.message, 'Quick Play started · vs LEVIATHAN.');
+  assert.equal(st.mode, '', 'no "socket" label');
+  release();
+  await engine.stopAccount('a1', { quiet: true });
+});
+
+test('a day whose routine read every account as "not in an alliance" donates on the next check', async () => {
+  const game = fakeGame({ alliance: 'Dream Club', signInClaimed: true, signed600: true, tasksStarted: true, fmDone: true });
+  const { s, mem } = routine(game);
+  mem.daily.accounts.a1 = { cycle: s.cycle(), doneAt: 'x', results: { donate: 'noAlliance' } };
+  assert.equal(await s.runIfDue(account), null);
+  assert.deepEqual(game.state.donations, [100]);
+  await s.runIfDue(account);
+  assert.deepEqual(game.state.donations, [100], 'once a day');
+});
+
+test('the donation uses a connection another service registered for the account instead of signing it out', async () => {
+  const { GameSocket } = require('../src/main/services/game-socket.cjs');
+  GameSocket._resetKicks();
+  const game = fakeGame({ alliance: 'Dream Club', signInClaimed: true, signed600: true, tasksStarted: true, fmDone: true });
+  // Daily Reward already holds a registered connection for the account
+  const other = await GameSocket.open({ createSocket: game.createSocket });
+  await other.register(USER, { owner: 'Daily Reward' });
+  const before = game.calls.filter(c => c.event === 'register').length;
+  const { s } = routine(game);
+  assert.equal((await s.runIfDue(account)).donate, 'donated');
+  assert.equal(game.calls.filter(c => c.event === 'register').length, before, 'no second register: Daily Reward keeps its connection');
+  assert.equal(other.closed, undefined, 'the borrowed connection stays open');
+  other.close();
+  GameSocket._resetKicks();
 });

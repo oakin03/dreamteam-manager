@@ -229,3 +229,23 @@ test('prepare one piece: only that piece is made and registered, the other ready
   assert.deepEqual(game.state.collections[0].registeredSlots, ['JERSEY']);
   assert.ok(game.state.inventory.some(g => g.id === 'g2'), 'the ready shoes were not registered');
 });
+
+test('collections batch: every chosen account runs at the same time on its own connection', async () => {
+  const game = fakeGame();
+  const order = [];
+  const logs = [];
+  const s = new EquipmentService({
+    store: { getAccounts: () => [{ id: 'a1', name: 'Trophy6' }, { id: 'a2', name: 'Trophy7' }, { id: 'a3', name: 'Trophy8' }] }, activity: { add: e => logs.push(e) }, onChanged() {},
+    sessions: { get: async a => { order.push('login ' + a.id); await new Promise(r => setTimeout(r, 30)); return { userId: USER, cookieHeader: 'session=x' }; } }, createSocket: game.createSocket,
+    fetchImpl: async () => ({ json: async () => ({ successRate: 100 }) }), writeGapScale: 0
+  });
+  await s.open('a1');
+  order.length = 0;
+  const results = await s.batchCollections({ accountIds: ['a1', 'a2', 'a3'], sets: [{ id: SET.id, name: SET.name }], mode: 'register' });
+  // one after another would finish every a2 login before the first a3 one
+  assert.ok(order.indexOf('login a3') < order.lastIndexOf('login a2') && order.indexOf('login a2') < order.lastIndexOf('login a1'), order.join(', '));
+  assert.deepEqual(results.map(r => r.account).sort(), ['Trophy6', 'Trophy7', 'Trophy8']);
+  assert.equal(s.snapshot().batch.running, false);
+  assert.equal(s.accountId, 'a1', 'the page stays on its account');
+  assert.equal(codes(logs).at(-1), 'eq.batchDone');
+});

@@ -190,6 +190,15 @@ function delay(ms, signal) {
   });
 }
 
+// The connection another service registered for this account, if it is still live. A short
+// job (the daily routine's alliance donation) uses it instead of registering again, which
+// would sign that service out ("duplicateLogin", seen every day at 19:10 on Daily Reward).
+GameSocket.borrow = userId => {
+  const r = registrants.get(String(userId));
+  const gs = r?.gs;
+  return gs && !gs.closed && !gs.kicked && gs.socket?.connected !== false ? gs : null;
+};
+
 // `fn({ userId, owner, by, count, waitMs?, slowed? })` hears every kick (main.cjs logs it).
 GameSocket.onKick = fn => { kickListener = fn; };
 GameSocket._resetKicks = () => { registrants.clear(); kickTimes.clear(); };

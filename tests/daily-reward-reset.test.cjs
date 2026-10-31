@@ -121,3 +121,34 @@ test('An already complete day only waits for the reset', async t => {
   assert.equal(game.claims, 0);
   assert.equal(svc.snapshot().main.status, 'completed');
 });
+
+test('Accounts without Auto Play are collected too, unless turned off or everything is stopped', async t => {
+  const { store, service } = fixture(t, fakeGame({ tier: 7 }));
+  store.saveAccounts([{ id: 'a', name: 'A' }, { id: 'b', name: 'B' }, { id: 'n', name: 'New', signupPending: true }]);
+  let paused = false;
+  const svc = new DailyRewardService({ store, activity: { add() {} }, engine: { states: () => ({}) }, sessions: {}, isPaused: () => paused, staggerMs: 0, onChanged() {} });
+  svc.runWorker = (id, signal) => new Promise(r => signal.addEventListener('abort', r));
+  await svc.sync();
+  assert.deepEqual([...svc.workers.keys()].sort(), ['a', 'b'], 'no worker for an unfinished signup');
+  paused = true;
+  await svc.sync();
+  assert.equal(svc.workers.size, 0, 'Stop all automations stops them');
+  paused = false;
+  store.saveSettings({ ...store.getSettings(), dailyRewardIdle: false });
+  await svc.sync();
+  assert.equal(svc.workers.size, 0, 'setting off: only Auto Play accounts');
+  await svc.stop();
+});
+
+test('The claim uses the registered connection another service already holds', async t => {
+  const { GameSocket } = require('../src/main/services/game-socket.cjs');
+  const game = fakeGame({ tier: 2, ready: true, waitMs: 600000 });
+  const { service, account } = fixture(t, game);
+  const borrowedCalls = [];
+  const original = GameSocket.borrow;
+  GameSocket.borrow = () => ({ call: async (event, payload) => { borrowedCalls.push(event); game.tier++; game.ready = false; return { success: true, data: { currentTier: 2, rewards: [] } }; } });
+  t.after(() => { GameSocket.borrow = original; });
+  await service().checkOrClaim(account, new AbortController().signal);
+  assert.deepEqual(borrowedCalls, ['dailyRewards:claim']);
+  assert.equal(game.emits.filter(e => e.event === 'register').length, 0, 'no own register');
+});

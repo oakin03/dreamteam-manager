@@ -1,6 +1,6 @@
 {
   "name": "dreamteam-manager",
-  "version": "0.2.0",
+  "version": "0.3.2",
   "private": true,
   "description": "DreamTeam desktop manager with Auto Play, Scout and Trading Hall",
   "main": "src/main/main.cjs",

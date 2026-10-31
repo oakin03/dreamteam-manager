@@ -403,6 +403,66 @@ class MarketService {
     return this.snapshot();
   }
 
+  // Take listings off the market (back to the roster); with `fire`, then fire those players
+  // (the game's FIRE, ack { success, error }). The page asks the user before a fire.
+  async removePlayers(ticketIds = [], { fire = false, concurrency = null } = {}) {
+    const rows = ticketIds.map(id => this.relist.rows[id]).filter(Boolean);
+    if (!rows.length) throw new Error('Select at least one player.');
+    const byAccount = new Map();
+    for (const row of rows) {
+      if (!byAccount.has(row.accountId)) byAccount.set(row.accountId, []);
+      byAccount.get(row.accountId).push(row);
+      this._setRelistRow(row.ticketId, { state: 'queued', message: null });
+    }
+    this.relist.status = 'running';
+    this.relist.startedAt = new Date().toISOString();
+    this.relist.report = null;
+    this.relist.lastRun = {};
+    this.onChanged?.();
+    const count = { removed: 0, fired: 0, failed: 0 };
+    await this._runJob(fire ? 'fire' : 'remove', [...byAccount.keys()], async (account, signal, holder) => {
+      const conn = await this._connect(account, signal, holder);
+      const list = byAccount.get(account.id);
+      let done = 0;
+      for (const row of list) {
+        if (signal.aborted) throw abortError();
+        this.set(account.id, { step: fire ? 'firing' : 'removing', stepParams: { name: row.name, done, total: list.length } });
+        this._setRelistRow(row.ticketId, { state: 'removing' });
+        const removed = await this._write(conn, 'market:cancelPlayerListing', { userId: conn.userId, ticketId: row.ticketId }, 'cancelResult', signal);
+        if (!removed?.success) {
+          count.failed++;
+          this._setRelistRow(row.ticketId, { state: 'failed', message: removed?.message || 'unknown reply' });
+          this.log(account, 'warning', `${row.name}: could not be taken off the market · ${removed?.message || 'unknown reply'}`, 'mk.removeFailed', { name: row.name, error: removed?.message || '' });
+          continue;
+        }
+        count.removed++;
+        if (!fire) {
+          this._setRelistRow(row.ticketId, { state: 'removed' });
+          this.log(account, 'success', `${row.name} taken off the market.`, 'mk.removed', { name: row.name });
+        } else {
+          const playerId = removed.playerId || row.playerId;
+          const fired = await conn.socket.ack('firePlayer', { userId: conn.userId, playerId }, { signal, timeoutMs: this.writeTimeoutMs }).catch(error => ({ success: false, error: error.message }));
+          if (fired?.success) {
+            count.fired++;
+            this._setRelistRow(row.ticketId, { state: 'fired' });
+            this.log(account, 'success', `${row.name} taken off the market and fired.`, 'mk.fired', { name: row.name });
+          } else {
+            count.failed++;
+            this._setRelistRow(row.ticketId, { state: 'failed', message: fired?.error || fired?.message || 'unknown reply' });
+            this.log(account, 'warning', `${row.name}: taken off the market but could not be fired · ${fired?.error || fired?.message || 'unknown reply'}`, 'mk.fireFailed', { name: row.name, error: fired?.error || fired?.message || '' });
+          }
+        }
+        done++;
+      }
+      if (!signal.aborted) await this._scanListings(account, conn, signal).catch(() => {});
+      this.set(account.id, { status: 'done', step: fire ? 'fired' : 'removed', stepParams: { done, total: list.length } });
+    }, { concurrency });
+    this.relist.status = 'done';
+    this.relist.finishedAt = new Date().toISOString();
+    this.onChanged?.();
+    return { ...count, snapshot: this.snapshot() };
+  }
+
   // Stop is honoured between players only: once a listing is removed, the
   // player is always offered for sale again, never left half done.
   async _relistOne(account, conn, item, signal) {

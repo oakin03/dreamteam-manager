@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import SortTable from './SortTable';
 import { filOf } from '../i18n-fil';
+import InjuryMark from './InjuryMark';
 
 const api = window.dreamteam;
 const num = v => v == null || v === '' ? '—' : Number(v).toLocaleString();
@@ -10,18 +11,25 @@ export const BUY_TEXT = {
     boughtTitle: 'Satın alınanlar', boughtHint: 'Fiyat ve para birimi seçip pazara koy. Pazardaysa önce çekilir, yeni fiyatla tekrar konur.', none: 'Henüz satın alınan oyuncu yok.',
     account: 'Hesap', player: 'Oyuncu', paid: 'Ödenen', salary: 'Maaş', base: 'Base', status: 'Durum', newPrice: 'Yeni fiyat', from: 'Nereden',
     owned: 'Kadroda', listed: 'Pazarda · {price} {cur}', parked: 'Pazarda · 9.999.999 TIX (bekliyor)', sell: 'Satışa koy', reprice: 'Fiyatı güncelle', remove: 'Listeden kaldır', hall: 'Trading Hall', auto: 'Auto Buy',
-    filterAll: 'Tümü', filterHall: 'Trading Hall', filterAuto: 'Auto Buy', okBought: '{name} alındı', invalid: 'Geçersiz fiyat'
+    filterAll: 'Tümü', filterHall: 'Trading Hall', filterAuto: 'Auto Buy', okBought: '{name} alındı', invalid: 'Geçersiz fiyat',
+    convert: 'Karta çevir', converting: 'Çevriliyor…', converted: 'Karta çevrildi', convertTitle: '{name} karta çevrilsin mi?', convertAsk: 'Oyuncu yıldız karta çevrilir ve kadrodan çıkar; geri alınamaz. Pazardaysa önce pazardan çekilir.', convertYes: 'Karta çevir', cancel: 'Vazgeç',
+    warnLow: 'Maaşı ({salary}) değerinin ({value}) çok altında (%{pct}). Satarsan daha çok kazanabilirsin.', warnBase: 'Bu bir Base oyuncu (maaşı Base seviyesinde).', okConverted: '{name} karta çevrildi', value: 'Değer'
   },
   en: {
     buy: 'Buy', buying: 'Buying…', bought: 'Bought', chooseAccount: 'Buy with which account?', notEnough: 'not enough', noAccounts: 'No accounts',
     boughtTitle: 'Bought players', boughtHint: 'Pick a price and currency and list them. A listed player is taken off first and listed again at the new price.', none: 'No bought players yet.',
     account: 'Account', player: 'Player', paid: 'Paid', salary: 'Salary', base: 'Base', status: 'Status', newPrice: 'New price', from: 'From',
     owned: 'In roster', listed: 'On the market · {price} {cur}', parked: 'On the market · 9,999,999 TIX (waiting)', sell: 'List for sale', reprice: 'Update price', remove: 'Remove from list', hall: 'Trading Hall', auto: 'Auto Buy',
-    filterAll: 'All', filterHall: 'Trading Hall', filterAuto: 'Auto Buy', okBought: '{name} bought', invalid: 'Invalid price'
+    filterAll: 'All', filterHall: 'Trading Hall', filterAuto: 'Auto Buy', okBought: '{name} bought', invalid: 'Invalid price',
+    convert: 'Turn into card', converting: 'Converting…', converted: 'Turned into a card', convertTitle: 'Turn {name} into a card?', convertAsk: 'The player becomes a star card and leaves the roster; this cannot be undone. A listed player is taken off the market first.', convertYes: 'Turn into card', cancel: 'Cancel',
+    warnLow: 'The salary ({salary}) is far below the value ({value}) ({pct}%). Selling could earn more.', warnBase: 'This is a Base player (salary at its Base).', okConverted: '{name} turned into a card', value: 'Value'
   },
   get fil() { return filOf(this.en); }
 };
 const fill = (s, p = {}) => String(s).replace(/\{(\w+)\}/g, (_, k) => p[k] ?? '');
+
+// "Turn into card" warns when the salary is below this share of the player's value.
+const LOW_SALARY_SHARE = 0.8;
 
 const HINT = {
   tr: { ask: 'Öner', asking: '…', none: 'Pazarda başka ilan yok', cheapest: 'En ucuz rakip {p} {cur} ({n} ilan) · önerilen {s}', mine: 'senin en ucuzun {p}', fail: 'okunamadı' },
@@ -98,6 +106,21 @@ export function BoughtList({ state, lang, toast, source = null }) {
   const rows = (state.buy?.bought || []).filter(e => !filter || e.source === filter);
   const busy = state.buy?.busy || {};
   const name = id => (state.accounts || []).find(a => a.id === id)?.name || id;
+  const mainId = state.accountProfile?.mainAccountId || null;
+  const live = new Map((state.players?.players || []).map(p => [p.id, p]));
+  const [ask, setAsk] = useState(null);
+  const warnings = e => {
+    const p = live.get(e.playerId);
+    const value = Number(p?.value);
+    const out = [];
+    if (Number(e.salary) > 0 && value > 0 && e.salary < value * LOW_SALARY_SHARE) out.push(fill(x.warnLow, { salary: num(e.salary), value: num(value), pct: Math.round(e.salary / value * 100) }));
+    if (p?.atBase || (e.salary != null && e.base > 0 && e.salary <= e.base)) out.push(x.warnBase);
+    return out;
+  };
+  const convert = async e => {
+    setAsk(null);
+    try { await api.buy.convert(e.id); toast(fill(x.okConverted, { name: e.name }), 'success'); } catch (err) { toast(err.message, 'error'); }
+  };
   const get = e => ({ price: e.listPrice && e.listPrice !== state.buy?.parkPrice ? e.listPrice : '', currency: e.listCurrency && e.listPrice !== state.buy?.parkPrice ? e.listCurrency : e.currency, ...edits[e.id] });
   const edit = (id, patch) => setEdits(s => ({ ...s, [id]: { ...s[id], ...patch } }));
   const sell = async e => {
@@ -111,11 +134,17 @@ export function BoughtList({ state, lang, toast, source = null }) {
     <div className="panel table-panel">{rows.length ? <SortTable><thead><tr><th>{x.account}</th><th>{x.player}</th><th>{x.paid}</th><th>{x.salary}</th><th>{x.base}</th><th>{x.status}</th><th>{x.newPrice}</th><th></th></tr></thead>
       <tbody>{rows.map(e => { const v = get(e); const parked = e.state === 'listed' && e.listPrice === state.buy?.parkPrice; return <tr key={e.id}>
         <td>{name(e.accountId)}{!source && <small className="cell-sub">{e.source === 'auto' ? x.auto : x.hall}</small>}</td>
-        <td><b>{e.name}</b>{e.salary != null && e.base > 0 && e.salary <= e.base && <span className="base-badge">BASE</span>}{e.position && <small className="cell-sub">{e.position} · {e.grade}</small>}</td>
+        <td><b>{e.name}</b><InjuryMark name={e.name} />{e.salary != null && e.base > 0 && e.salary <= e.base && <span className="base-badge">BASE</span>}{e.position && <small className="cell-sub">{e.position} · {e.grade}</small>}</td>
         <td><b className="price">{num(e.boughtPrice)}</b> {e.currency}</td><td>{num(e.salary)}</td><td>{num(e.base)}</td>
-        <td>{e.state === 'listed' ? <span className={`pill ${parked ? 'warn' : 'ok'}`}><i />{parked ? x.parked : fill(x.listed, { price: num(e.listPrice), cur: e.listCurrency })}</span> : <span className="pill muted"><i />{x.owned}</span>}</td>
-        <td><span className="bought-price"><input className="price-input" type="number" min="1" value={v.price} onChange={ev => edit(e.id, { price: ev.target.value })} /><span className="currency-toggle">{['APK', 'TIX'].map(c => <button type="button" key={c} className={v.currency === c ? 'on' : ''} onClick={() => edit(e.id, { currency: c })}>{c}</button>)}</span><PriceHint playerId={e.playerId} name={e.name} currency={v.currency} lang={lang} onPick={p => edit(e.id, { price: p })} /></span></td>
-        <td className="actions"><button className="btn primary small" disabled={busy[e.id]} onClick={() => sell(e)}>{e.state === 'listed' ? x.reprice : x.sell}</button><button className="icon-btn" title={x.remove} onClick={() => api.buy.removeBought([e.id])}>×</button></td>
+        <td>{e.state === 'converted' ? <span className="pill muted"><i />{x.converted}</span> : e.state === 'listed' ? <span className={`pill ${parked ? 'warn' : 'ok'}`}><i />{parked ? x.parked : fill(x.listed, { price: num(e.listPrice), cur: e.listCurrency })}</span> : <span className="pill muted"><i />{x.owned}</span>}</td>
+        <td>{e.state !== 'converted' && <span className="bought-price"><input className="price-input" type="number" min="1" value={v.price} onChange={ev => edit(e.id, { price: ev.target.value })} /><span className="currency-toggle">{['APK', 'TIX'].map(c => <button type="button" key={c} className={v.currency === c ? 'on' : ''} onClick={() => edit(e.id, { currency: c })}>{c}</button>)}</span><PriceHint playerId={e.playerId} name={e.name} currency={v.currency} lang={lang} onPick={p => edit(e.id, { price: p })} /></span>}</td>
+        <td className="actions">{e.state !== 'converted' && <button className="btn primary small" disabled={busy[e.id]} onClick={() => sell(e)}>{e.state === 'listed' ? x.reprice : x.sell}</button>}{mainId && e.accountId === mainId && e.state !== 'converted' && <button className="btn accent small" disabled={busy[e.id]} onClick={() => setAsk({ e, warn: warnings(e) })}>{busy[e.id] ? x.converting : x.convert}</button>}<button className="icon-btn" title={x.remove} onClick={() => api.buy.removeBought([e.id])}>×</button></td>
       </tr>; })}</tbody></SortTable> : <div className="empty">{x.none}</div>}</div>
+    {ask && <div className="modal-backdrop" onMouseDown={ev => ev.target === ev.currentTarget && setAsk(null)}><div className="modal" style={{ maxWidth: 480 }}>
+      <div className="modal-head"><b>{fill(x.convertTitle, { name: ask.e.name })}</b><button className="icon-btn" onClick={() => setAsk(null)}>×</button></div>
+      {ask.warn.length > 0 && <div className="convert-warn">{ask.warn.map(w => <p key={w}>⚠ {w}</p>)}</div>}
+      <p className="muted-text">{x.convertAsk}</p>
+      <div className="modal-actions"><button className="btn ghost" onClick={() => setAsk(null)}>{x.cancel}</button><button className={`btn ${ask.warn.length ? 'danger-soft' : 'primary'}`} onClick={() => convert(ask.e)}>{x.convertYes}</button></div>
+    </div></div>}
   </section>;
 }

@@ -75,7 +75,8 @@ class TradingHallService {
   // current between full scans. Ignored while a full scan runs.
   // `scope.complete`: every listing of these players in this currency was read, so
   // their old rows are all replaced; otherwise only rows up to `scope.cutoff` are.
-  mergeTickets(playerIds, currency, tickets, scope = null) {
+  // `last`: Auto Buy sends a whole scan at once; the page is told only after the last one.
+  mergeTickets(playerIds, currency, tickets, scope = null, { last = true } = {}) {
     if (['starting', 'running'].includes(this.runtime.status)) return;
     const fresh = (tickets || []).map(t => ticketToRow(t, 1)).filter(r => r && r.currency === currency);
     for (const r of fresh) r.isBase = r.base != null && r.salary <= r.base;
@@ -86,7 +87,7 @@ class TradingHallService {
     this.rows = [...keep, ...fresh.filter(r => !seen.has(r.id))].sort((a, b) => a.price - b.price);
     // The listing counter at the top follows the rows Auto Buy brought in.
     this.runtime = { ...this.runtime, count: this.rows.length, mergedAt: new Date().toISOString() };
-    this.onChanged?.();
+    if (last) this.onChanged?.();
   }
 
   rowsSnapshot() { return ['starting', 'running'].includes(this.runtime.status) ? [] : this.rows; }

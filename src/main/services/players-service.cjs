@@ -3,7 +3,11 @@ const { GameSocket } = require('./game-socket.cjs');
 // All game players (the City player list) over the socket, no login needed. The
 // game moves values once a day at 11:05 TR; the list is fetched after that and a
 // short history is kept so a rating letter change can be shown too.
-const UPDATE_MINUTE_TR = 11 * 60 + 5;          // 11:05 Türkiye (UTC+3)
+// The value day starts at 11:00 TR (when the game moves values, user 2026-10-30); the list is
+// fetched at 11:05. A scan between 11:00 and 11:05 used to be saved as yesterday's and wiped
+// yesterday's values, so the day's changes were lost on the next scan.
+const UPDATE_MINUTE_TR = 11 * 60;              // 11:00 Türkiye (UTC+3)
+const FETCH_DELAY_MS = 5 * 60 * 1000;          // fetch at 11:05
 const TR_OFFSET_MS = 3 * 60 * 60 * 1000;
 const HISTORY_DAYS = 14;
 const PUSH_LEAD_MS = 6 * 60 * 60 * 1000;
@@ -17,6 +21,10 @@ function lastUpdateCutoff(now = Date.now()) {
 
 const dayKey = cutoff => new Date(cutoff + TR_OFFSET_MS).toISOString().slice(0, 10);
 const isBase = p => Number(p?.baseSalary) > 0 && Number(p?.newBaseSalary) > 0 && Number(p.baseSalary) <= Number(p.newBaseSalary);
+// "at Base" for the lists (user 2026-10-30): the price after the 5% signing discount
+// is at or below Base, whatever the day it dropped; players under 75 TK are left out.
+const MIN_BASE_LIST_PRICE = 75;
+const atBaseRule = (value, base) => base > 0 && value >= MIN_BASE_LIST_PRICE && Math.round(value * 0.95) <= base;
 
 function playerRow(p) {
   const value = Number(p.baseSalary) || 0;
@@ -61,13 +69,27 @@ class PlayersService {
     // Roles and card status come from the Cards page records (same player ids).
     const meta = this.store.getCardMetadata?.()?.players || {};
     const cards = this.store.getCards?.()?.players || {};
+    // baseSince: the first day of the run of days (up to today) the player was at Base
+    const histDays = days.filter(d => d <= (data.day || ''));
+    const baseSinceOf = p => {
+      if (!atBaseRule(p.value, p.base)) return null;
+      let since = data.day;
+      for (let i = histDays.length - 1; i >= 0; i--) {
+        const h = data.history[histDays[i]]?.[p.id];
+        if (!h || !atBaseRule(h.value, h.base || p.base)) break;
+        since = histDays[i];
+      }
+      return { since, beforeHistory: since === histDays[0] };
+    };
     const players = data.players.map(p => {
       const old = prev?.[p.id];
+      const bs = baseSinceOf(p);
       const card = cards[`id:${p.id}`];
       const m = meta[`id:${p.id}`] || {};
       return {
         ...p,
         ratingBefore: old && old.rating !== p.rating ? old.rating : null,
+        atBase: Boolean(bs), baseSince: bs?.since || null, baseSinceUnknown: Boolean(bs?.beforeHistory),
         roleIds: Array.isArray(m.roleIds) ? m.roleIds : [],
         card: card ? { stars: card.noTeam ? null : Number(card.stars || 0), cardCount: Number(card.cardCount || 0), noTeam: Boolean(card.noTeam), team: card.team || null, customTeam: m.customTeam || null } : null
       };
@@ -77,15 +99,17 @@ class PlayersService {
 
   nextFetchAt() {
     const cut = lastUpdateCutoff(this.now());
+    const data = this._data();
     // A list taken early on the game's salary-update signal already counts for today.
-    return (this._data().day || '') >= dayKey(cut) ? cut + 24 * 60 * 60 * 1000 : this.now();
+    const done = (data.day || '') >= dayKey(cut) && (data.pushed || Date.parse(data.fetchedAt || 0) >= cut + FETCH_DELAY_MS);
+    return done ? cut + 24 * 60 * 60 * 1000 + FETCH_DELAY_MS : Math.max(this.now(), cut + FETCH_DELAY_MS);
   }
 
   // Fetch now when today's 11:05 list is missing, then every day at 11:05 (+30 s).
   start() {
     const tick = async () => {
       if (this.now() >= this.nextFetchAt()) await this.refresh({ automatic: true }).catch(() => {});
-      const wait = Math.max(60 * 1000, this.nextFetchAt() + 30 * 1000 - this.now());
+      const wait = Math.max(30 * 1000, this.nextFetchAt() + 30 * 1000 - this.now());
       this.timer = setTimeout(tick, Math.min(wait, 60 * 60 * 1000));
       this.timer.unref?.();
     };
@@ -106,14 +130,25 @@ class PlayersService {
       socket = await GameSocket.open({ createSocket: this.createSocket });
       const list = await socket.call('getPlayerRankings', undefined, 'playerRankingsList', { timeoutMs: 30000 });
       if (!Array.isArray(list) || !list.length) throw new Error('The player list came back empty.');
-      const players = list.map(playerRow);
       const cut = lastUpdateCutoff(this.now() + (pushed ? PUSH_LEAD_MS : 0));
       const day = dayKey(cut);
       const data = this._data();
       const previousById = new Map((data.players || []).map(p => [p.id, p]));
-      const history = { ...(data.history || {}), [day]: Object.fromEntries(players.map(p => [p.id, { rating: p.rating, value: p.value }])) };
+      // The game's lastSalary can come back equal to the value on a later scan: then the day's
+      // change is taken from this day's earlier scan, or from yesterday's saved value.
+      const yesterday = (data.history || {})[dayKey(cut - 24 * 60 * 60 * 1000)] || null;
+      const sameDay = data.day === day;
+      const players = list.map(playerRow).map(p => {
+        if (p.change) return p;
+        const old = sameDay ? previousById.get(p.id) : null;
+        if (old?.change && old.value === p.value) return { ...p, previous: old.previous, change: old.change };
+        const y = yesterday?.[p.id];
+        if (y && y.value && y.value !== p.value) return { ...p, previous: y.value, change: p.value - y.value };
+        return p;
+      });
+      const history = { ...(data.history || {}), [day]: Object.fromEntries(players.map(p => [p.id, { rating: p.rating, value: p.value, base: p.base }])) };
       for (const d of Object.keys(history).sort().slice(0, -HISTORY_DAYS)) delete history[d];
-      this.store.savePlayersData({ fetchedAt: new Date(this.now()).toISOString(), day, players, history });
+      this.store.savePlayersData({ fetchedAt: new Date(this.now()).toISOString(), day, players, history, pushed: pushed || (sameDay && Boolean(data.pushed)) });
       const up = players.filter(p => p.change > 0).length;
       const down = players.filter(p => p.change < 0).length;
       const base = players.filter(p => p.isBase).length;
@@ -132,4 +167,4 @@ class PlayersService {
   }
 }
 
-module.exports = { PlayersService, playerRow, isBase, lastUpdateCutoff, dayKey };
+module.exports = { PlayersService, playerRow, isBase, atBaseRule, lastUpdateCutoff, dayKey };

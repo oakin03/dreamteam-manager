@@ -20,6 +20,9 @@ const MAX_FIND_FAILURES = 3;
 const ARENA_WAIT_MS = 3 * 60 * 60 * 1000; // the daily PVP waits this long for a closed arena
 const ARENA_POLL_MS = 60 * 1000;          // besides the game's open/close broadcast
 
+// The PVP day starts at 19:10 TR (16:10 UTC), when the attempts come back.
+function pvpDay(now) { return new Date(now - (16 * 60 + 10) * 60000).toISOString().slice(0, 10); }
+
 function abortError() { const e = new Error('Aborted'); e.name = 'AbortError'; return e; }
 function sleep(ms, signal) {
   if (signal?.aborted) return Promise.reject(abortError());
@@ -62,7 +65,7 @@ class PvpService {
   // For the PVP page: is the arena open and how many attempts each account has left
   // (read without logging in).
   async status(accountIds) {
-    const out = { checkedAt: new Date(this.now()).toISOString(), active: null, attempts: {} };
+    const out = { checkedAt: new Date(this.now()).toISOString(), active: null, attempts: {}, mmr: {}, today: {} };
     const anon = await GameSocket.open({ createSocket: this.createSocket });
     try {
       const st = await anon.call('getPvpArenaStatus', {}, 'pvpArenaStatus', { timeoutMs: 10000 }).catch(() => null);
@@ -74,8 +77,18 @@ class PvpService {
         const r = await anon.call('getUserBasicInfo', { userId }, 'userBasicInfo', { timeoutMs: 10000 }).catch(() => null);
         const n = Number(r?.PVParenaAttempts);
         if (Number.isFinite(n)) out.attempts[id] = n;
+        const mmr = Number(r?.mmr);
+        if (Number.isFinite(mmr)) out.mmr[id] = mmr;
       }
     } finally { anon.close(); }
+    // PVP points (mmr) and today's gain: the first reading of the PVP day (19:10 TR, like the
+    // attempts) is kept as the day's start
+    const day = pvpDay(this.now());
+    const settings = this.store.getSettings?.() || {};
+    const book = settings.pvpPointsDay?.day === day ? settings.pvpPointsDay : { day, start: {} };
+    let added = false;
+    for (const [id, mmr] of Object.entries(out.mmr)) { if (book.start[id] == null) { book.start[id] = mmr; added = true; } out.today[id] = mmr - book.start[id]; }
+    if (added || settings.pvpPointsDay?.day !== day) this.store.saveSettings?.({ ...(this.store.getSettings?.() || {}), pvpPointsDay: book });
     this.lastStatus = out;
     this.onChanged();
     return out;

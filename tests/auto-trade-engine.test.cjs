@@ -13,7 +13,7 @@ function setup(users, opts = {}) {
   const accs = accounts.map(id => ({ id, name: users[id].name || id }));
   const store = {
     getAccounts: () => accs,
-    getAccountProfile: () => ({ mainAccountId: mainId, accounts: Object.fromEntries(accounts.map(id => [id, { userId: id }])) }),
+    getAccountProfile: () => ({ mainAccountId: mainId, accounts: Object.fromEntries(accounts.map(id => [id, { userId: id, level: opts.levels?.[id] }])) }),
     getCardMetadata: () => ({ players: Object.fromEntries(Object.entries(roles).map(([pid, r]) => [`id:${pid}`, { roleIds: [].concat(r) }])) }),
     getCardRoles: () => ROLES,
     getCards: () => ({ players: Object.fromEntries((opts.teams || []).map(([pid, team]) => [`id:${pid}`, { playerId: pid, team, noTeam: team === 'No Team' }])) }),
@@ -272,4 +272,72 @@ test("trade where main gives nothing: no empty selection is sent, so a late one 
   assert.equal(run.status, 'done', JSON.stringify(run.error));
   assert.ok(world.users.M.made.includes('card1'));
   assert.equal(world.calls.filter(c => c.event === 'selectTradePlayers' && c.user === 'M').length, 0);
+});
+
+test('a player with roles both ways waits for the user: Satılabilir keeps it, no card is made', async () => {
+  const { world, engine, attention } = setup({
+    M: { funds: 20000, lists: [[player('dual', 600), player('card1', 500)]] },
+    A: { funds: 9000, lists: [[]] }
+  }, { roles: { dual: ['sellable', 'card'], card1: 'card' } });
+  await engine.start({ accountIds: ['M', 'A'], mainToSideRoleIds: ['sellable'], sideToMainRoleIds: ['card'], maxPrice: 100 });
+  for (let i = 0; i < 200 && engine.snapshot().run?.status !== 'awaitingRole'; i++) await new Promise(r => setTimeout(r, 10));
+  assert.equal(engine.snapshot().run.status, 'awaitingRole');
+  assert.equal(engine.snapshot().run.roleRequest.player.id, 'dual');
+  assert.ok(attention.includes('roleAsk'));
+  engine.respondRole('side');
+  const run = await finish(engine);
+  assert.ok(!world.users.M.made.includes('dual'), 'not turned into a card');
+  assert.ok(world.users.M.made.includes('card1'));
+  // Satılabilir on main goes to the side, like any Satılabilir player
+  assert.equal(run.accounts.A.players.dual.dir, 'side');
+  assert.ok(world.users.A.bench.some(p => p.id === 'dual'));
+});
+
+test('List on market: one player left on a side is fired from its own row', async () => {
+  const { world, engine, logs } = setup({ M: { funds: 50000, lists: [[]] }, A: { funds: 90000, bench: [player('k1', 60), player('k2', 70)], lists: [[]] } }, { accounts: ['M', 'A'] });
+  await engine.start({ accountIds: ['M', 'A'], sideToMainRoleIds: ['card'], mainToSideRoleIds: ['sellable'], maxPrice: 100, benchDecisions: { A: { k1: { action: 'none' }, k2: { action: 'none' } } } });
+  await finish(engine);
+  engine.state.accounts.A.players.k1 = { id: 'k1', name: 'Keeper One', status: 'keep' };
+  engine.state.accounts.A.players.k2 = { id: 'k2', name: 'Keeper Two', status: 'keep' };
+  await engine.firePlayer('A', 'k1');
+  assert.deepEqual(world.users.A.fired, ['k1'], 'only that player');
+  assert.deepEqual(ids(world.users.A.bench), ['k2']);
+  assert.equal(engine.snapshot().run.accounts.A.players.k1.status, 'fired');
+  assert.equal(engine.snapshot().run.accounts.A.players.k2.status, 'keep');
+  assert.equal(codes(logs).filter(c => c === 'at2.fired').length, 1);
+  await assert.rejects(engine.firePlayer('A', 'nobody'), /not found/);
+});
+
+test('List on market: "fire all" fires every player of a side on one connection', async () => {
+  const { world, engine, logs } = setup({ M: { funds: 50000, lists: [[]] }, A: { funds: 90000, bench: [player('k1', 60), player('k2', 70), player('k3', 80)], lists: [[]] } }, { accounts: ['M', 'A'] });
+  await engine.start({ accountIds: ['M', 'A'], sideToMainRoleIds: ['card'], mainToSideRoleIds: ['sellable'], maxPrice: 100, benchDecisions: { A: { k1: { action: 'none' }, k2: { action: 'none' }, k3: { action: 'none' } } } });
+  await finish(engine);
+  engine.state.accounts.A.players.k1 = { id: 'k1', name: 'Keeper One', status: 'keep' };
+  engine.state.accounts.A.players.k2 = { id: 'k2', name: 'Keeper Two', status: 'keep' };
+  await engine.firePlayers('A', ['k1', 'k2', 'nobody']);
+  assert.deepEqual(world.users.A.fired, ['k1', 'k2']);
+  assert.deepEqual(ids(world.users.A.bench), ['k3']);
+  assert.equal(codes(logs).filter(c => c === 'at2.fired').length, 2);
+});
+
+test('the form is remembered as it changes, without starting a run', async () => {
+  const { engine } = setup({ M: { funds: 50000, lists: [[]] }, A: { funds: 90000, lists: [[]] } }, { accounts: ['M', 'A'] });
+  engine.saveDraft({ accountIds: ['A'], maxPrice: '80', roleRules: { side: { roles: { stock: false }, cheap: false, maxPrice: '' } }, loopMode: 'count', loopCount: '3', roomPassword: 'pw123' });
+  const last = engine.snapshot().lastConfig;
+  assert.deepEqual(last.accountIds, ['A']);
+  assert.equal(last.maxPrice, 80);
+  assert.equal(last.roleRules.side.roles.stock, false);
+  assert.equal(last.roleRules.side.cheap, false);
+  assert.equal(last.loopMode, 'count');
+  assert.equal(last.loopCount, 3);
+  assert.equal(last.roomPassword, 'pw123');
+});
+
+test('accounts below level 10 (trading closed) are left out of a run even when selected', async () => {
+  const { engine, logs } = setup({ M: { funds: 50000, lists: [[]] }, A: { funds: 90000, lists: [[]] }, L: { funds: 90000, lists: [[]] } }, { accounts: ['M', 'A', 'L'], levels: { M: 41, A: 12, L: 4 } });
+  await engine.start({ accountIds: ['M', 'A', 'L'], sideToMainRoleIds: ['card'], mainToSideRoleIds: ['sellable'], maxPrice: 100 });
+  const run = await finish(engine);
+  assert.deepEqual(run.config.accountIds, ['M', 'A']);
+  assert.equal(logs.find(l => l.code === 'at2.lowLevel').params.name, 'L');
+  assert.deepEqual((await engine.preflight({ accountIds: ['M', 'A', 'L'] })).accounts.map(r => r.id), ['M', 'A']);
 });

@@ -75,13 +75,13 @@ function fakeGame({ users, listings }) {
 }
 const L = (id, playerId, name, price, salary, mode = 'APK_TICKET', seller = 'Stranger') => ({ id, playerId, price, signedSalary: salary, paymentMode: mode, user: { teamName: seller }, player: { id: playerId, name, newBaseSalary: 40 } });
 
-function service(game, accounts) {
+function service(game, accounts, mainAccountId = null) {
   const logs = [];
   let data = null;
   const merged = {};
   const store = {
     getAccounts: () => accounts.map(([id, name]) => ({ id, name })),
-    getAccountProfile: () => ({ accounts: Object.fromEntries(accounts.map(([id]) => [id, { userId: 'u-' + id }])) }),
+    getAccountProfile: () => ({ mainAccountId, accounts: Object.fromEntries(accounts.map(([id]) => [id, { userId: 'u-' + id }])) }),
     getBuyData: () => data, saveBuyData: v => { data = JSON.parse(JSON.stringify(v)); }
   };
   const svc = new BuyService({
@@ -119,6 +119,24 @@ test('Trading Hall buy: registered purchase, bought list, then listing it at a c
   await svc.sell(entry.id, 199, 'TIX');
   assert.deepEqual(game.st.my.map(t => [t.price, t.status]), [[250, 'CANCELLED'], [199, 'LISTED']]);
   assert.ok(logs.some(l => l.code === 'by.bought') && logs.some(l => l.code === 'by.listed'));
+});
+
+test('Turn into card: only on the main account; a listed player is taken off the market, then made a card', async () => {
+  const game = fakeGame({ users: { 'u-a': { apk: 500, tix: 0 }, 'u-b': { apk: 500, tix: 0 } }, listings: [L('t1', 'p1', 'Jay Huff', 200, 60), L('t2', 'p2', 'Ben Sheppard', 100, 30)] });
+  const { svc, logs, data } = service(game, [['a', 'Trophy3'], ['b', 'Trophy4']], 'a');
+  await svc.buy('a', { id: 't1', playerId: 'p1', name: 'Jay Huff', price: 200, currency: 'APK', salary: 60 });
+  await svc.buy('b', { id: 't2', playerId: 'p2', name: 'Ben Sheppard', price: 100, currency: 'APK', salary: 30 });
+  const side = data().bought.find(e => e.playerId === 'p2');
+  await assert.rejects(svc.convert(side.id), /main account/);
+  const main = data().bought.find(e => e.playerId === 'p1');
+  await svc.sell(main.id, 250, 'APK');
+  await svc.convert(main.id);
+  assert.equal(game.st.my[0].status, 'CANCELLED', 'taken off the market first');
+  const make = game.calls.find(c => c.event === 'starcard:makeStarCards');
+  assert.deepEqual(make.payload, { userId: 'u-a', playerIds: ['p1'] });
+  assert.equal(data().bought.find(e => e.id === main.id).state, 'converted');
+  assert.ok(logs.some(l => l.code === 'by.converted'));
+  await assert.rejects(svc.convert(main.id), /Already/);
 });
 
 test('Auto Buy: buys only matching listings, follows account priority, parks at 9,999,999 TIX, stops when funds run out', async () => {

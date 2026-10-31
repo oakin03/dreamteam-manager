@@ -79,14 +79,15 @@ test('registers every open tournament for the level and never touches a joined o
   const { s, logs, merges } = service(game);
   await runToEnd(s);
   const registers = game.emitted.filter(e => e.event === 'registerMultiplayer');
-  assert.deepEqual(registers.map(e => e.payload), [{ eventId: 'open1', userId: ME }, { eventId: 'open2', userId: ME }]);
+  // order follows the tournament names, which depend on the weekday: compare as a set
+  assert.deepEqual(registers.map(e => e.payload).sort((a, b) => a.eventId.localeCompare(b.eventId)), [{ eventId: 'open1', userId: ME }, { eventId: 'open2', userId: ME }]);
   assert.ok(registers.every(e => e.cookie === 'session=abc' && e.path === '/event-socket/'));
   // Only reads, the room join and registration are ever sent — no way to quit.
   assert.deepEqual([...new Set(game.emitted.map(e => e.event))].sort(), ['MultiRegistrationJoinRoom', 'getActiveMultiplayerEvents', 'getMatchUserData', 'registerMultiplayer']);
   const state = s.snapshot().accounts.a1;
   assert.equal(state.status, 'done');
   assert.equal(state.level, 30);
-  assert.deepEqual(state.joined.map(j => j.id), ['open1', 'open2']);
+  assert.deepEqual(state.joined.map(j => j.id).sort(), ['open1', 'open2']);
   assert.match(state.message, /joined .* · already registered: TK_MATCH 20-39 · 1 full/);
   assert.deepEqual(merges.find(([, d]) => d.level), ['a1', { level: 30 }]);
   assert.equal(s.runtime.status, 'done');
@@ -124,13 +125,13 @@ test('a refused registration is logged and not retried; a full one is reported',
   assert.match(s.snapshot().accounts.a1.message, /1 full/);
 });
 
-test('an account without a tournament for its level finishes with a warning', async () => {
+test('an account without a tournament for its level finishes with a note (info, not a warning: new low-level accounts would fill the log)', async () => {
   const game = fakeGame(() => [ev('rookie', { min: 10, max: 19 })], { level: 5 });
   const { s, logs } = service(game);
   await runToEnd(s);
   assert.equal(game.emitted.filter(e => e.event === 'registerMultiplayer').length, 0);
   assert.match(s.snapshot().accounts.a1.message, /No tournament for level 5/);
-  assert.ok(logs.some(l => l.level === 'warning' && /No tournament accepts level 5/.test(l.message)));
+  assert.ok(logs.some(l => l.level === 'info' && /No tournament accepts level 5/.test(l.message)));
 });
 
 test('stop() ends a waiting run and marks the account stopped', async () => {

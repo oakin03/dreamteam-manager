@@ -59,7 +59,7 @@ function fakeGame({ users, outcome, needsRegister = false }) {
 function service(game, accounts) {
   const logs = [];
   let report = null;
-  const store = { getAccounts: () => accounts.map(([id, name]) => ({ id, name })), getTowerReport: () => report, saveTowerReport: r => { report = r; } };
+  const store = { getAccounts: () => accounts.map(([id, name]) => ({ id, name })), getTowerReport: () => report, saveTowerReport: r => { report = r; }, getSettings: () => ({ towerLossLimit: 3 }) }; // the user setting (default 2) set to 3 here
   const svc = new TowerService({ store, activity: { add: e => logs.push(e) }, onChanged() {}, sessions: { get: async a => ({ userId: 'u-' + a.id, cookieHeader: 'session=' + a.id }) }, createSocket: game.createSocket, timing: { pollMs: 1, appearGraceMs: 50, startGapMs: 0 } });
   return { svc, logs, report: () => report };
 }

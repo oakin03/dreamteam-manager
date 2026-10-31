@@ -41,6 +41,8 @@ const { PvpService } = require('./services/pvp-service.cjs');
 const { GoUpService } = require('./services/goup-service.cjs');
 const { DailyBossService, EliteAscentService, ProfessionalService } = require('./services/proving-service.cjs');
 const { TkTransferService } = require('./services/tk-transfer-service.cjs');
+const { ValuePredictService } = require('./services/value-predict-service.cjs');
+const { InjuryService } = require('./services/injury-service.cjs');
 const { ActivateService } = require('./services/activate-service.cjs');
 const { PropService } = require('./services/prop-service.cjs');
 const { QuizService } = require('./services/quiz-service.cjs');
@@ -54,6 +56,8 @@ const { GameHealth } = require('./services/game-health.cjs');
 const { AccountHealth } = require('./services/account-health.cjs');
 const { watchAlerts } = require('./services/watch-alerts.cjs');
 const { EquipmentService } = require('./services/equipment-service.cjs');
+const { SignupService } = require('./services/signup-service.cjs');
+const PROFILE_REFRESH_MS = 3 * 60 * 1000;
 
 let mainWindow;
 let store;
@@ -88,6 +92,9 @@ let bossDone = null;
 let ascentDone = null;
 let professional;
 let tkTransfer;
+let valuePredict;
+let injuries;
+let lastInjuryRevision = -1;
 let tkDone = null;
 let proDone = null;
 let quizDone = null;
@@ -99,12 +106,14 @@ let synthesis;
 let towerDone = null;
 let autoBuyDone = null;
 let pvpDone = null;
+let lastVpRevision = -1;
 let lastBuyRevision = -1;
 let lastDraftRevision = -1;
 let lastPlayersKey = null;
 let tournament;
 let dailyRoutine;
 let equipment;
+let signup;
 let lastEquipmentRevision = -1;
 let lastAutoTradeRevision = -1;
 let dataDir;
@@ -151,6 +160,7 @@ function snapshot({ incremental = false } = {}) {
     goup: goup?.snapshot() || { running: false, run: null, points: {}, event: null, lastReport: null },
     quiz: quiz?.snapshot() || { running: false, run: null, bankSize: 0, lastReport: null },
     cheer: cheer?.snapshot() || { busy: false, last: null },
+    signup: signup?.snapshot() || { running: false, rows: [] },
     chatFeed: gameEvents?.chatFeed() || [],
     social: social?.snapshot() || { badges: {}, totals: { requests: 0, unread: 0, mail: 0 } },
     chat: chat?.snapshot() || { running: false, run: null, limits: { minIntervalSec: 11, maxText: 50 }, lastReport: null },
@@ -171,6 +181,8 @@ function snapshot({ incremental = false } = {}) {
   // 640 players: sent when the list or the roles changed.
   const playersKey = players ? `${players.revision}:${store.revision('cardMetadata')}:${store.revision('cardRoles')}:${store.revision('cards')}` : null;
   if (players && (!incremental || lastPlayersKey !== playersKey)) { state.players = players.snapshot(); lastPlayersKey = playersKey; }
+  if (injuries && (!incremental || lastInjuryRevision !== injuries.revision)) { state.injuries = injuries.snapshot(); lastInjuryRevision = injuries.revision; }
+  if (valuePredict && (!incremental || lastVpRevision !== valuePredict.revision)) { state.valuePredict = valuePredict.snapshot(); lastVpRevision = valuePredict.revision; }
   if (buy && (!incremental || lastBuyRevision !== buy.revision)) { state.buy = buy.snapshot(); lastBuyRevision = buy.revision; }
   if (draft && (!incremental || lastDraftRevision !== draft.revision)) { state.draft = draft.snapshot(); lastDraftRevision = draft.revision; }
   if (equipment && (!incremental || lastEquipmentRevision !== equipment.revision)) { state.equipment = equipment.snapshot(); lastEquipmentRevision = equipment.revision; }
@@ -238,8 +250,8 @@ function autoTradeAttention(kind, text) {
     }
     if (Notification.isSupported()) {
       const tr = !['en', 'fil'].includes(store?.getSettings()?.language || 'tr');
-      const titles = { error: tr ? 'Auto Trade durdu' : 'Auto Trade stopped', listing: tr ? 'Auto Trade: pazara listeleme' : 'Auto Trade: market listing', draftTurn: tr ? 'Draft: sıra sende' : 'Draft: your turn', done: tr ? 'Auto Trade bitti' : 'Auto Trade finished', conflict: tr ? 'Auto Trade: hesaplar kullanımda' : 'Auto Trade: accounts in use', autoPlayStop: tr ? 'Auto Play durduruldu (günlük saat)' : 'Auto Play stopped (daily time)', watchAlert: tr ? 'İzleme listesi: değer değişimi' : 'Watch list: value change', buyNoFunds: tr ? 'Auto Buy durdu' : 'Auto Buy stopped', buyCannot: tr ? 'Auto Buy: oyuncu alınamadı' : 'Auto Buy: could not buy', buyError: tr ? 'Auto Buy durdu' : 'Auto Buy stopped' };
-      const bodies = { listing: tr ? `${text} kadrosu doldu · hangi oyuncuların listeleneceğini seç` : `${text}'s roster is full · choose players to list`, done: tr ? 'Tüm hesaplar tamamlandı' : 'All accounts are done', draftTurn: tr ? `${text} seçim yapacak · 30 saniye` : `${text} picks now · 30 seconds`, autoPlayStop: tr ? `${text} hesapta Auto Play durduruldu · turnuva öncesi` : `Auto Play stopped on ${text} account(s) · before the tournament`, watchAlert: text, buyNoFunds: tr ? `Hesapların ${text} miktarı yetersiz` : `The accounts do not have enough ${text}`, buyCannot: tr ? `${text} · hiçbir hesap alamadı (kadroda var / bakiye yetersiz) · tarama sürüyor` : `${text} · no account could buy it (already owned / not enough funds) · still scanning` };
+      const titles = { error: tr ? 'Auto Trade durdu' : 'Auto Trade stopped', listing: tr ? 'Auto Trade: pazara listeleme' : 'Auto Trade: market listing', roleAsk: tr ? 'Auto Trade: seçimini bekliyor' : 'Auto Trade: waiting for your choice', draftTurn: tr ? 'Draft: sıra sende' : 'Draft: your turn', done: tr ? 'Auto Trade bitti' : 'Auto Trade finished', conflict: tr ? 'Auto Trade: hesaplar kullanımda' : 'Auto Trade: accounts in use', autoPlayStop: tr ? 'Auto Play durduruldu (günlük saat)' : 'Auto Play stopped (daily time)', watchAlert: tr ? 'İzleme listesi: değer değişimi' : 'Watch list: value change', buyNoFunds: tr ? 'Auto Buy durdu' : 'Auto Buy stopped', buyCannot: tr ? 'Auto Buy: oyuncu alınamadı' : 'Auto Buy: could not buy', buyError: tr ? 'Auto Buy durdu' : 'Auto Buy stopped' };
+      const bodies = { roleAsk: tr ? `${text} · rolü iki yönlü: karta mı çevrilsin, satılabilir mi kalsın?` : `${text} · roles both ways: card or Satılabilir?`, listing: tr ? `${text} kadrosu doldu · hangi oyuncuların listeleneceğini seç` : `${text}'s roster is full · choose players to list`, done: tr ? 'Tüm hesaplar tamamlandı' : 'All accounts are done', draftTurn: tr ? `${text} seçim yapacak · 30 saniye` : `${text} picks now · 30 seconds`, autoPlayStop: tr ? `${text} hesapta Auto Play durduruldu · turnuva öncesi` : `Auto Play stopped on ${text} account(s) · before the tournament`, watchAlert: text, buyNoFunds: tr ? `Hesapların ${text} miktarı yetersiz` : `The accounts do not have enough ${text}`, buyCannot: tr ? `${text} · hiçbir hesap alamadı (kadroda var / bakiye yetersiz) · tarama sürüyor` : `${text} · no account could buy it (already owned / not enough funds) · still scanning` };
       const n = new Notification({ title: titles[kind] || 'Auto Trade', body: bodies[kind] || String(text || '') });
       n.on('click', () => { if (mainWindow && !mainWindow.isDestroyed()) { mainWindow.show(); mainWindow.focus(); } });
       n.show();
@@ -289,7 +301,7 @@ async function pauseServicesFor(accountIds, taskName, { prefix = 'sc', logTask =
   const resume = [];
   const note = (level, code, service, extra = {}) => activity.add({ level, accountId: null, accountName: '', taskName: logTask, code, params: { service, task: taskName, ...extra }, message: `${service} · ${code}` });
   const at = autoTrade.snapshot().run;
-  if (at && ['running', 'paused', 'awaitingListing', 'stopping'].includes(at.status) && overlap(at.config?.accountIds)) {
+  if (at && ['running', 'paused', 'awaitingListing', 'awaitingRole', 'stopping'].includes(at.status) && overlap(at.config?.accountIds)) {
     await autoTrade.stop();
     resume.push(['Auto Trade', () => autoTrade.continue()]);
   }
@@ -610,7 +622,7 @@ function initServices() {
   scheduler = new SchedulerService({ store, engine, activity, onChanged: emitState, pauseServices: (ids, name) => pauseServicesFor(ids, name) });
   scout = new ScoutService({ store, activity, sessions: gameSessions, cardsService: cards, accountProfile, gameHealth, onChanged: emitState });
   trading = new TradingHallService({ store, credentials, browserService, activity, onChanged: emitState });
-  dailyRewards = new DailyRewardService({ store, activity, engine, sessions: gameSessions, onChanged: emitState });
+  dailyRewards = new DailyRewardService({ store, activity, engine, sessions: gameSessions, gameHealth, isPaused: () => Boolean(globalPause), onChanged: emitState });
   autoTrade = new AutoTradeEngine({ gameHealth, store, credentials, activity, sessions: gameSessions, accountProfile, onChanged: emitState, onAttention: autoTradeAttention, onScout: (id, reply) => scout.showSocketScout?.(id, reply), onCycleEnd: () => cards.refresh() });
   market = new MarketService({ store, activity, accountProfile, sessions: gameSessions, onChanged: emitState });
   const alertedDays = new Map(); // playerId -> day already reported
@@ -623,24 +635,49 @@ function initServices() {
         activity.add({ level: 'warning', accountId: null, accountName: '', taskName: 'Auto Buy', code: 'wl.alert', params: { name: h.name, value: h.value, base: h.base, pct: h.pct, kind: h.becameBase ? 'base' : 'drop' }, message: `Watched ${h.name}: ${h.becameBase ? 'fell to its Base' : `value ${h.pct}%`} · ${h.value} (Base ${h.base})` });
       }
       if (hits.length) autoTradeAttention('watchAlert', hits.map(h => `${h.name} ${h.becameBase ? 'Base' : h.pct + '%'}`).join(', '));
+      // a new game list: compare it with the value prediction made before
+      valuePredict?.refresh({ automatic: true }).catch(() => {});
     }
   });
   synthesis = new SynthesisService({ store, activity, sessions: gameSessions, onChanged: emitState, onDone: () => cards.refresh() });
   props = new PropService({ store, activity, sessions: gameSessions, onChanged: emitState });
   activate = new ActivateService({ store, activity, sessions: gameSessions, cards, onChanged: emitState });
   tower = new TowerService({ store, activity, gameHealth, sessions: gameSessions, onChanged: emitState });
-  buy = new BuyService({ store, activity, gameHealth, sessions: gameSessions, accountProfile, onChanged: emitState, onAttention: autoTradeAttention, onScan: (ids, currency, tickets, scope) => trading.mergeTickets(ids, currency, tickets, scope), pauseAccount: pauseAccountForBuy });
+  buy = new BuyService({ store, activity, gameHealth, sessions: gameSessions, accountProfile, onChanged: emitState, onAttention: autoTradeAttention, onScan: (ids, currency, tickets, scope, opts) => trading.mergeTickets(ids, currency, tickets, scope, opts), pauseAccount: pauseAccountForBuy });
   pvp = new PvpService({ store, activity, gameHealth, sessions: gameSessions, onChanged: emitState });
   goup = new GoUpService({ store, activity, gameHealth, sessions: gameSessions, onChanged: emitState });
   dailyBoss = new DailyBossService({ store, activity, gameHealth, sessions: gameSessions, onChanged: emitState });
   eliteAscent = new EliteAscentService({ store, activity, gameHealth, sessions: gameSessions, onChanged: emitState });
   professional = new ProfessionalService({ store, activity, gameHealth, sessions: gameSessions, onChanged: emitState });
+  valuePredict = new ValuePredictService({ store, activity, onChanged: emitState, injuries: () => injuries?.snapshot() });
+  injuries = new InjuryService({ store, activity, onChanged: emitState });
   tkTransfer = new TkTransferService({ store, activity, sessions: gameSessions, onChanged: emitState });
   quiz = new QuizService({ store, activity, gameHealth, sessions: gameSessions, onChanged: emitState });
   cheer = new CheerService({ store, activity, gameHealth, sessions: gameSessions, onChanged: emitState });
   chat = new ChatService({ store, activity, gameHealth, sessions: gameSessions, onChanged: emitState });
   draft = new DraftService({ store, activity, gameHealth, sessions: gameSessions, accountProfile, onChanged: emitState, onAttention: autoTradeAttention });
   equipment = new EquipmentService({ store, activity, sessions: gameSessions, onChanged: emitState });
+  signup = new SignupService({
+    store, activity, sessions: gameSessions, onChanged: emitState,
+    addAccount: payload => addAccountRecord(payload),
+    // registered by an earlier run that stopped before the team (no team name seen yet)
+    // a prefix goes on after its highest number, kept per prefix
+    lastNumber: prefix => Number(store.getSettings().signupNumbers?.[prefix.toLowerCase()]) || 0,
+    saveLastNumber: (prefix, n) => { const s = store.getSettings(); const k = prefix.toLowerCase(); if ((Number(s.signupNumbers?.[k]) || 0) < n) store.saveSettings({ ...s, signupNumbers: { ...(s.signupNumbers || {}), [k]: n } }); },
+    isUnfinished: a => String(a.login || '').toLowerCase().startsWith(`${String(a.name).toLowerCase()}@`) && !store.getAccountProfile().accounts?.[a.id]?.teamName,
+    // the new account joins the daily routine (Daily Signin streak, tasks, Friendly Match)
+    setDaily: id => {
+      const settings = store.getSettings();
+      const ids = Array.isArray(settings.dailyRoutineAccountIds) ? settings.dailyRoutineAccountIds : [];
+      if (!ids.includes(id)) store.saveSettings({ ...settings, dailyRoutineAccountIds: [...ids, id] });
+    },
+    startAccount: async id => {
+      const account = store.getAccounts().find(a => a.id === id);
+      const taskId = account?.selectedTaskId || defaultTaskId();
+      if (!account || !taskId) throw new Error('Task 1 is not available.');
+      await engine.startAccount(id, taskId, { visibleBrowser: false, forceFresh: false });
+    }
+  });
   tournament = new TournamentService({ store, credentials, browserService, accountProfile, activity, sessions: gameSessions, onChanged: emitState });
   scheduler.registerBuiltin('tournament-register', (accountIds, { signal }) => tournament.runAndWait(accountIds, { signal }));
   scheduler.registerBuiltin('market-claim', async (accountIds, { signal }) => {
@@ -656,11 +693,27 @@ function initServices() {
   accountHealth = new AccountHealth({ store, engine, gameHealth, onChanged: emitState });
   accountHealth.start();
   players.start();
+  valuePredict.start();
+  injuries.start();
   dailyRewards.start();
   gameEvents = new GameEvents({ store, activity, onChat: emitState, onSalaryUpdate: async () => { await players.refresh({ automatic: true, pushed: true }); await accountHealth.refresh(); } });
   gameEvents.start();
   social = new SocialService({ store, activity, sessions: gameSessions, onChanged: emitState });
   social.start();
+  // an account creation the app was closed in the middle of: go on with it
+  const pendingSignup = store.getSettings().signupJob;
+  if (pendingSignup?.count > 0 && pendingSignup.passwordEncrypted) {
+    setTimeout(() => {
+      activity.add({ level: 'info', accountId: null, accountName: '', taskName: 'Account creation', code: 'su.resume', params: { prefix: pendingSignup.prefix, n: pendingSignup.count }, message: `Account creation continues · ${pendingSignup.prefix} · ${pendingSignup.count} left` });
+      runSignupJob(pendingSignup);
+    }, 30000);
+  }
+  // Level / TK / TIX / APK of every account, read from the game every few minutes
+  // (the Stadium is seen only when Auto Play opens Chromium).
+  const { GameSocket } = require('./services/game-socket.cjs');
+  const refreshProfiles = () => accountProfile.refreshFromGame({ openSocket: signal => GameSocket.open({ signal }) }).catch(() => {});
+  setTimeout(refreshProfiles, 20000);
+  setInterval(refreshProfiles, PROFILE_REFRESH_MS);
   syncMcpServers();
 }
 
@@ -668,6 +721,12 @@ function initServices() {
 let mcpSyncChain = Promise.resolve();
 function syncMcpServers() {
   if (app.isPackaged) return;
+  // Many account changes in a row (bulk creation) make one sync a few seconds later.
+  clearTimeout(mcpSyncTimer);
+  mcpSyncTimer = setTimeout(runMcpSync, 5000);
+}
+let mcpSyncTimer = null;
+function runMcpSync() {
   // Serialized so two quick account changes never seed the same profile twice.
   mcpSyncChain = mcpSyncChain
     .then(() => syncMcpConfig({ projectRoot: path.join(__dirname, '..', '..'), dataDir, accounts: store.getAccounts() }))
@@ -677,28 +736,53 @@ function syncMcpServers() {
 
 function defaultTaskId() { return registry.list().find(t => !t.loadError)?.id || null; }
 
+// Bulk account creation keeps its job in the settings until it ends, so closing the app
+// mid-run continues it at the next start (user 2026-10-31). `count` = accounts still to make.
+function runSignupJob(job) {
+  store.saveSettings({ ...store.getSettings(), signupJob: job });
+  const password = credentials.decryptSecret(job.passwordEncrypted);
+  return signup.create({ prefix: job.prefix, count: job.count, password, avatar: job.avatar, parallel: job.parallel }, {
+    onProgress: ({ created }) => { const s = store.getSettings(); if (s.signupJob) store.saveSettings({ ...s, signupJob: { ...s.signupJob, count: Math.max(0, job.count - created) } }); }
+  }).catch(() => null).finally(() => { const { signupJob, ...rest } = store.getSettings(); if (signupJob) store.saveSettings(rest); emitState(); });
+}
+
+// Adds an account (Accounts page, bulk account creation).
+function addAccountRecord(payload) {
+  const accounts = store.getAccounts();
+  const id = crypto.randomUUID();
+  const account = {
+    id,
+    name: String(payload.name || payload.login || 'Account').trim(),
+    login: String(payload.login || '').trim(),
+    passwordEncrypted: credentials.encryptSecret(String(payload.password || '')),
+    selectedTaskId: payload.selectedTaskId || defaultTaskId(),
+    visibleBrowser: false,
+    taskConfig: {},
+    createdAt: new Date().toISOString(),
+    // bulk creation: registered, first steps (team, logo) not done yet
+    ...(payload.signupPending ? { signupPending: true } : {})
+  };
+  if (!account.login || !payload.password) throw new Error('Login and password are required.');
+  accounts.push(account); store.saveAccounts(accounts);
+  activity.add({ level: 'success', accountId: id, accountName: account.name, message: 'Account added.' });
+  syncMcpServers();
+  emitState(); return sanitizeAccount(account);
+}
+
 function registerIpc() {
   ipcMain.handle('app:bootstrap', async () => snapshot());
 
-  ipcMain.handle('accounts:add', async (_event, payload) => {
-    const accounts = store.getAccounts();
-    const id = crypto.randomUUID();
-    const account = {
-      id,
-      name: String(payload.name || payload.login || 'Account').trim(),
-      login: String(payload.login || '').trim(),
-      passwordEncrypted: credentials.encryptSecret(String(payload.password || '')),
-      selectedTaskId: payload.selectedTaskId || defaultTaskId(),
-      visibleBrowser: false,
-      taskConfig: {},
-      createdAt: new Date().toISOString()
-    };
-    if (!account.login || !payload.password) throw new Error('Login and password are required.');
-    accounts.push(account); store.saveAccounts(accounts);
-    activity.add({ level: 'success', accountId: id, accountName: account.name, message: 'Account added.' });
-    syncMcpServers();
-    emitState(); return sanitizeAccount(account);
+  ipcMain.handle('accounts:add', async (_event, payload) => addAccountRecord(payload));
+  ipcMain.handle('signup:create', async (_event, form) => {
+    const clean = SignupService.validate(form || {});
+    if (signup.snapshot().running) throw new Error('Account creation is already running.');
+    runSignupJob({ prefix: clean.prefix, count: clean.count, avatar: clean.avatar, parallel: clean.parallel, passwordEncrypted: credentials.encryptSecret(clean.password) });
+    await new Promise(r => setTimeout(r, 50));
+    const snap = signup.snapshot();
+    if (!snap.running && snap.error) throw new Error(snap.error);
+    return snap;
   });
+  ipcMain.handle('signup:stop', async () => { signup.stop(); return true; });
 
   // The saved order is the order every page lists the accounts in.
   ipcMain.handle('accounts:reorder', async (_event, ids) => {
@@ -759,6 +843,23 @@ function registerIpc() {
     emitState();
     return true;
   });
+  // Account roles (user 2026-10-31): Main and "2. Main" live in the profile (one account
+  // each), the others on the account; no role = Side. Every role but Main counts as Side for
+  // the automations, "2. Main" as main while there is no Main.
+  ipcMain.handle('accounts:set-role', async (_event, { id, role }) => {
+    const accounts = store.getAccounts();
+    const account = accounts.find(a => a.id === id);
+    if (!account) throw new Error('Account not found.');
+    const prof = accountProfile.snapshot();
+    if (role !== 'main' && prof.realMainAccountId === id) accountProfile.setMainAccount(null);
+    if (role !== 'main2' && prof.secondMainId === id) accountProfile.setSecondMain(null);
+    if (role === 'main') accountProfile.setMainAccount(id);
+    if (role === 'main2') accountProfile.setSecondMain(id);
+    account.role = ['main', 'main2', 'side'].includes(role) || !role ? null : String(role);
+    store.saveAccounts(accounts);
+    emitState();
+    return true;
+  });
 
   ipcMain.handle('scout:open', async (_event, accountId) => scout.open(accountId));
   ipcMain.handle('scout:refresh', async (_event, accountId) => scout.refresh(accountId));
@@ -771,6 +872,7 @@ function registerIpc() {
   ipcMain.handle('market:load-relist', async (_event, accountIds) => market.loadRelist(accountIds));
   ipcMain.handle('market:relist', async (_event, items, options) => market.relistPlayers(items, options || {}));
   ipcMain.handle('market:clear-relist', async () => { market.clearRelist(); return true; });
+  ipcMain.handle('market:remove', async (_event, ticketIds, options) => market.removePlayers(ticketIds, options || {}));
   ipcMain.handle('market:stop', async () => market.stop());
 
   ipcMain.handle('trade:save-account', async (_event, payload) => trading.saveAccount(payload));
@@ -791,6 +893,8 @@ function registerIpc() {
   ipcMain.handle('equipment:refine', async (_event, inventoryId) => equipment.refine(inventoryId));
   ipcMain.handle('equipment:register', async (_event, collectionId) => equipment.registerCollection(collectionId));
   ipcMain.handle('equipment:plan', async (_event, collectionId, slot) => equipment.planCollection(collectionId, slot || null));
+  ipcMain.handle('equipment:batch', async (_event, opts) => equipment.batchCollections(opts || {}));
+  ipcMain.handle('equipment:batch-stop', async () => equipment.stopBatch());
   ipcMain.handle('equipment:prepare', async (_event, collectionId, slot) => equipment.prepareCollection(collectionId, slot || null));
   ipcMain.handle('tournament:start', async (_event, accountIds) => tournament.start(accountIds));
   ipcMain.handle('tournament:stop', async () => tournament.stop());
@@ -809,7 +913,11 @@ function registerIpc() {
   ipcMain.handle('auto-trade:reset', async () => autoTrade.reset());
   ipcMain.handle('auto-trade:reset-cards', async () => autoTrade.resetCardCounts());
   ipcMain.handle('auto-trade:respond-listing', async (_event, items) => autoTrade.respondListing(items));
+  ipcMain.handle('auto-trade:respond-role', async (_event, dir) => autoTrade.respondRole(dir));
   ipcMain.handle('auto-trade:list-players', async (_event, { accountId, items }) => autoTrade.listPlayers(accountId, items));
+  ipcMain.handle('auto-trade:fire-player', async (_event, { accountId, playerId }) => autoTrade.firePlayer(accountId, playerId));
+  ipcMain.handle('auto-trade:save-draft', async (_event, form) => autoTrade.saveDraft(form));
+  ipcMain.handle('auto-trade:fire-players', async (_event, { accountId, playerIds }) => autoTrade.firePlayers(accountId, playerIds));
 
 
   ipcMain.handle('cards:add-role', async (_event, payload) => cards.addRole(payload?.name ?? payload, payload?.color));
@@ -863,6 +971,14 @@ function registerIpc() {
     const settings = { ...store.getSettings(), ...patch };
     store.saveSettings(settings);
     if ('dailyRoutineAccountIds' in (patch || {})) for (const id of Object.keys(engine.states())) engine.recheckBeforeRun(id);
+    // a deleted role: its accounts go back to Side
+    if (Array.isArray(patch?.accountRoleDefs)) {
+      const known = new Set(patch.accountRoleDefs.map(r => r.id));
+      const accounts = store.getAccounts();
+      let changed = false;
+      for (const a of accounts) if (a.role && !known.has(a.role)) { a.role = null; changed = true; }
+      if (changed) store.saveAccounts(accounts);
+    }
     if ('openAtLogin' in (patch || {})) applyLoginItem(patch.openAtLogin);
     if ('language' in (patch || {})) updateTray();
     emitState(); return settings;
@@ -899,10 +1015,13 @@ function registerIpc() {
   ipcMain.handle('settings:open-data-folder', async () => shell.openPath(dataDir));
   ipcMain.handle('activity:clear', async () => { activity.clear(); return true; });
   ipcMain.handle('players:refresh', async () => players.refresh());
+  ipcMain.handle('vp:refresh', async () => valuePredict.refresh());
+  ipcMain.handle('injuries:refresh', async () => injuries.refresh());
   ipcMain.handle('buy:buy', async (_event, { accountId, ticket }) => buy.buy(accountId, ticket));
   ipcMain.handle('buy:cheapest', async (_event, query) => buy.cheapest(query || {}));
   ipcMain.handle('buy:sell', async (_event, { entryId, price, currency }) => buy.sell(entryId, price, currency));
   ipcMain.handle('buy:remove-bought', async (_event, ids) => buy.removeBought(ids || []));
+  ipcMain.handle('buy:convert', async (_event, entryId) => buy.convert(entryId));
   ipcMain.handle('buy:add-watch', async (_event, players) => buy.addWatch(players || []));
   ipcMain.handle('buy:update-watch', async (_event, { id, patch }) => buy.updateWatch(id, patch || {}));
   ipcMain.handle('buy:remove-watch', async (_event, ids) => buy.removeWatch(ids || []));
@@ -950,6 +1069,7 @@ function registerIpc() {
   ipcMain.handle('social:view', async (_event, accountId) => social.view(accountId));
   ipcMain.handle('social:conversation', async (_event, { accountId, friendId } = {}) => social.conversation(accountId, friendId));
   ipcMain.handle('social:send', async (_event, { accountId, friendId, text } = {}) => social.send(accountId, friendId, text));
+  ipcMain.handle('social:search', async (_event, { accountId, text } = {}) => social.search(accountId, text));
   ipcMain.handle('social:act', async (_event, { accountId, action, targetId } = {}) => social.act(accountId, action, targetId));
   ipcMain.handle('social:claimMail', async (_event, { accountId, mailId } = {}) => social.claimMail(accountId, mailId || null));
   ipcMain.handle('social:poll', async () => { await social.poll(); return social.snapshot(); });
@@ -992,6 +1112,8 @@ async function shutdownServices() {
     () => eliteAscent?.stop(),
     () => professional?.stop(),
     () => tkTransfer?.stop(),
+    () => valuePredict?.stop(),
+    () => injuries?.stop(),
     () => quiz?.stop(),
     () => chat?.stop(),
     () => cheer?.stop(),

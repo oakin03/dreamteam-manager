@@ -331,6 +331,51 @@ class BuyService {
     return this.snapshot();
   }
 
+  // Bought player on the main account -> star card (Make). A listed one is taken off the
+  // market first.
+  async convert(entryId) {
+    const entry = this._data().bought.find(e => e.id === entryId);
+    if (!entry) throw new Error('Player not found in the bought list.');
+    const mainId = this.store.getAccountProfile?.()?.mainAccountId || null;
+    if (!mainId || entry.accountId !== mainId) throw new Error('Only players bought on the main account can be turned into cards.');
+    if (entry.state === 'converted') throw new Error('Already turned into a card.');
+    if (this.busy[entryId]) throw new Error('Already working on this player.');
+    this.busy[entryId] = true;
+    this.onChanged();
+    const task = entry.source === 'auto' ? 'Auto Buy' : 'Trading Hall';
+    try {
+      return await this._withAccount(entry.accountId, task, async () => {
+        const conn = await this._conn(entry.accountId);
+        if (entry.state === 'listed') {
+          const listing = await this._findListing(conn, entry, null);
+          if (listing) {
+            const removed = await this._write(conn, 'market:cancelPlayerListing', { userId: conn.userId, ticketId: listing.id }, 'cancelResult', null);
+            if (!removed?.success) {
+              const message = removed?.message || 'unknown reply';
+              this._log('warning', 'by.unlistFailed', { name: entry.name, error: message }, `${entry.name} could not be taken off the market · ${message}`, entry.accountId, task);
+              throw new Error(message);
+            }
+          }
+          const data = this._data();
+          const e = data.bought.find(x => x.id === entryId);
+          if (e) { Object.assign(e, { state: 'owned', listPrice: null, listCurrency: null }); this._save(data); }
+        }
+        this._touch(conn.accountId);
+        const r = await conn.socket.ack('starcard:makeStarCards', { userId: conn.userId, playerIds: [entry.playerId] }, { timeoutMs: 20000 }).catch(error => ({ success: false, message: error.message }));
+        if (!r?.success) {
+          const message = r?.message || r?.error || 'unknown reply';
+          this._log('error', 'by.convertFailed', { name: entry.name, error: message }, `${entry.name} could not be turned into a card · ${message}`, entry.accountId, task);
+          throw new Error(message);
+        }
+        const data = this._data();
+        const e = data.bought.find(x => x.id === entryId);
+        if (e) { Object.assign(e, { state: 'converted', convertedAt: new Date(this.now()).toISOString() }); this._save(data); }
+        this._log('success', 'by.converted', { name: entry.name }, `${entry.name} turned into a star card`, entry.accountId, task);
+        return this.snapshot();
+      });
+    } finally { delete this.busy[entryId]; this.onChanged(); }
+  }
+
   async _findListing(conn, entry, signal) {
     for (let page = 1; page <= 20; page++) {
       this._touch(conn.accountId);
@@ -511,11 +556,15 @@ class BuyService {
         await sleep(this.timing.offlineRetryMs, signal);
         continue;
       }
+      // What the scan read goes to the Trading Hall in one go when the scan ends: updating it
+      // player by player while scanning made the hall jump around (user 2026-10-30).
+      const scans = [];
+      const boughtTickets = new Set();
       for (const row of rows) {
         if (signal.aborted) throw abortError();
         if (!ok.has(row.currency)) continue;
         const reply = await this._searchAll(anon, row, signal);
-        if (reply) { try { this.onScan?.([row.playerId], row.currency, reply.tickets.filter(t => (t.playerId || t.player?.id) === row.playerId), { complete: reply.complete, cutoff: reply.cutoff }); } catch {} }
+        if (reply) scans.push({ playerIds: [row.playerId], currency: row.currency, tickets: reply.tickets.filter(t => (t.playerId || t.player?.id) === row.playerId), scope: { complete: reply.complete, cutoff: reply.cutoff } });
         for (const ticket of matchingTickets(row, reply?.tickets)) {
           if (failedTickets.has(ticket.id)) continue;
           const price = Number(ticket.price);
@@ -534,6 +583,7 @@ class BuyService {
             const fresh = await this._balance(accountId, this.conns.get(accountId), signal).catch(() => null);
             if (fresh) balances[accountId] = fresh;
             if (r.ok) {
+              boughtTickets.add(ticket.id);
               this.auto.bought += 1;
               this.auto.spent[row.currency] += price;
               this._countBought(row);
@@ -564,6 +614,7 @@ class BuyService {
         this.auto.balances = { ...balances };
         this.onChanged();
       }
+      scans.forEach((s, i) => { try { this.onScan?.(s.playerIds, s.currency, s.tickets.filter(t => !boughtTickets.has(t.id)), s.scope, { last: i === scans.length - 1 }); } catch {} });
       this.auto.lastScanAt = new Date(this.now()).toISOString();
       this.auto.nextScanAt = new Date(this.now() + interval * 1000).toISOString();
       this.onChanged();

@@ -43,7 +43,48 @@ function emitAck(socket, event, payload, timeoutMs = 12000) {
   });
 }
 
+// Sign in over HTTP and open the socket without any Chromium (user 2026-10-31: many
+// accounts starting together overloaded the PC, the browser logins timed out and accounts
+// got stuck in the browser fallback). Level / TK / APK are read every few minutes by the
+// app and the Daily Reward has its own service, so the Stadium visit is not needed here.
+async function openSocket(ctx, auth) {
+  const socket = ctx.socket.create('https://dreamteamph.com', {
+    path: '/simulation-socket/',
+    transports: ['websocket'],
+    withCredentials: true,
+    reconnection: true,
+    reconnectionAttempts: Infinity,
+    reconnectionDelay: 1000,
+    reconnectionDelayMax: 5000,
+    extraHeaders: {
+      Cookie: auth.cookieHeader
+    }
+  });
+  await waitForSocket(socket, ctx.signal, 15000);
+  ctx.log('info', 'Socket connected. Verifying the session…');
+  const probe = await emitAck(socket, 'requestMatchList', undefined, 12000);
+  if (!probe || probe.success !== true) {
+    socket.disconnect();
+    throw new Error(probe?.error || 'Socket session verification failed.');
+  }
+  return socket;
+}
+
+const BROWSER_FAILS_TO_SOCKET = 3; // browser-mode failures in a row before socket mode is tried again
+
 async function prepareSocketMode(ctx) {
+  if (ctx.httpLogin) {
+    try {
+      ctx.log('info', 'Signing in (no browser)…');
+      const auth = await ctx.httpLogin();
+      const socket = await openSocket(ctx, auth);
+      ctx.log('success', 'Socket mode ready (no browser).');
+      return { mode: 'socket', socket, userId: auth.userId };
+    } catch (error) {
+      if (error?.name === 'AbortError') throw error;
+      ctx.log('warning', `Sign in without a browser failed (${error.message}) · trying with Chromium.`);
+    }
+  }
   ctx.log('info', 'Opening a temporary Chromium session…');
   const auth = await ctx.browser.authenticate(ctx.account, ctx.credentials(), {
     visible: false,
@@ -70,27 +111,7 @@ async function prepareSocketMode(ctx) {
 
   await ctx.browser.release(ctx.account.id, auth.owner, { closeWhenUnused: true }).catch(() => {});
 
-  const socket = ctx.socket.create('https://dreamteamph.com', {
-    path: '/simulation-socket/',
-    transports: ['websocket'],
-    withCredentials: true,
-    reconnection: true,
-    reconnectionAttempts: Infinity,
-    reconnectionDelay: 1000,
-    reconnectionDelayMax: 5000,
-    extraHeaders: {
-      Cookie: auth.cookieHeader
-    }
-  });
-
-  await waitForSocket(socket, ctx.signal, 15000);
-  ctx.log('info', 'Socket connected. Verifying the session…');
-  const probe = await emitAck(socket, 'requestMatchList', undefined, 12000);
-  if (!probe || probe.success !== true) {
-    socket.disconnect();
-    throw new Error(probe?.error || 'Socket session verification failed.');
-  }
-
+  const socket = await openSocket(ctx, auth);
   ctx.log('success', 'Socket mode ready. Chromium is closed to save RAM.');
   return { mode: 'socket', socket, userId: auth.userId };
 }
@@ -145,6 +166,27 @@ function throwSalaryCap(ctx, reason) {
   throw error;
 }
 
+// The started match as the game sees it: { status 'waiting' | 'started', host, opponent, opponentName }.
+async function activeMatch(socket, userId) {
+  const r = await emitAck(socket, 'getUserActiveMatch', { userId }, 8000).catch(() => null);
+  return r?.match || null;
+}
+
+// After quickPlay: wait (up to 30 s) until the match has its opponent, so the next own
+// account does not search at the same moment and get paired with this one.
+async function waitPaired(ctx, socket, userId) {
+  for (let i = 0; i < 15; i++) {
+    const m = await activeMatch(socket, userId);
+    // right after quickPlay the match can take a moment to show up: a few empty polls are
+    // waited out instead of giving up (the opponent name was often missing)
+    if (!m && i >= 3) return null;
+    if (m && (m.status === 'started' || (m.opponent && m.opponent !== userId))) return m;
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    aborted(ctx.signal);
+  }
+  return null;
+}
+
 async function doSocketAction(ctx, prepared) {
   aborted(ctx.signal);
   const { socket, userId } = prepared;
@@ -153,10 +195,20 @@ async function doSocketAction(ctx, prepared) {
     await waitForSocket(socket, ctx.signal, 15000);
   }
 
-  const response = await emitAck(socket, 'quickPlay', { userId }, 15000);
+  const turn = ctx.matchTurn || (fn => fn());
+  const { response, match } = await turn(async () => {
+    const response = await emitAck(socket, 'quickPlay', { userId }, 15000);
+    const match = response?.success ? await waitPaired(ctx, socket, userId).catch(() => null) : null;
+    return { response, match };
+  });
   if (response?.success) {
-    const matchSuffix = response.matchId ? ` · Match ${response.matchId}` : '';
-    ctx.log('success', `Quick Play started${matchSuffix}.`);
+    const mine = match && match.host === userId;
+    const opponentId = match ? (mine ? match.opponent : match.host) : null;
+    const opponent = match ? (mine ? match.opponentName : match.hostName) : null;
+    const own = Boolean(opponentId && ctx.ownUserIds?.().has(opponentId));
+    ctx.setState({ opponent: opponent || null, opponentOwn: own });
+    if (own) ctx.log('warning', `Quick Play paired this account with your own account ${opponent}.`);
+    else ctx.log('success', `Quick Play started${opponent ? ` · vs ${opponent}` : ''}.`);
     return true;
   }
 
@@ -239,9 +291,12 @@ async function doBrowserAction(ctx, prepared) {
 async function run(ctx, prepared) {
   const intervalMs = Math.max(60, Number(ctx.config?.intervalSeconds || 270)) * 1000;
   const retryMs = Math.max(10, Number(ctx.config?.retrySeconds || 30)) * 1000;
-  ctx.setState({ mode: prepared.mode, message: prepared.mode === 'socket' ? 'Socket mode' : 'Browser mode' });
+  ctx.setState({ mode: prepared.mode === 'socket' ? '' : 'browser', message: prepared.mode === 'socket' ? 'Running' : 'Browser mode' });
 
-  const netError = error => /could not connect|websocket error|disconnect|timed out|transport|ECONN|ENOTFOUND|EAI_AGAIN|ETIMEDOUT/i.test(String(error?.message || error));
+  // A browser-mode page element that did not show up ("Timed out waiting for img[alt=Match]")
+  // is this account's own trouble, not the game being down: reporting it would pause every
+  // account's Quick Play (seen 2026-10-30 with a new account in browser fallback).
+  const netError = error => { const m = String(error?.message || error); return !/waiting for/i.test(m) && /could not connect|websocket error|disconnect|timed out|transport|ECONN|ENOTFOUND|EAI_AGAIN|ETIMEDOUT/i.test(m); };
   // While the game is unreachable every account waits for the one shared check
   // (every 2 minutes) instead of reconnecting on its own every few seconds.
   const waitForGame = async () => {
@@ -252,6 +307,7 @@ async function run(ctx, prepared) {
     ctx.log('info', 'The game is reachable again · Quick Play continues.');
   };
 
+  let browserFailures = 0;
   while (!ctx.signal.aborted) {
     if (ctx.gameHealth?.isDown()) { await waitForGame(); continue; }
     let success = false;
@@ -268,7 +324,25 @@ async function run(ctx, prepared) {
         continue;
       }
       ctx.log('error', `Quick Play error: ${error.message}`);
+      // stuck in the browser fallback (the page never shows the Match screen): after a few
+      // failures go back to socket mode instead of failing every 2 minutes for hours
+      if (prepared.mode === 'browser' && !ctx.visibleBrowser && ++browserFailures >= BROWSER_FAILS_TO_SOCKET) {
+        browserFailures = 0;
+        try {
+          const next = await prepareSocketMode(ctx);
+          await disposePrepared(prepared);
+          for (const k of ['session', 'owner', 'accountId', 'browserRelease', 'button']) delete prepared[k];
+          Object.assign(prepared, next);
+          ctx.setState({ mode: '', message: 'Running' });
+          ctx.log('success', 'Back in socket mode.');
+          continue;
+        } catch (e) {
+          if (e?.name === 'AbortError') throw e;
+          ctx.log('warning', `Socket mode still unavailable: ${e.message}`);
+        }
+      }
     }
+    if (success) browserFailures = 0;
 
     const delay = success ? intervalMs : retryMs;
     const next = new Date(Date.now() + delay).toISOString();

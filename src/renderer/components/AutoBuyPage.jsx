@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { BoughtList } from './BuyParts';
 import SortTable from './SortTable';
 import { filOf } from '../i18n-fil';
+import InjuryMark from './InjuryMark';
 
 const api = window.dreamteam;
 const num = v => v == null || v === '' ? '—' : Number(v).toLocaleString();
@@ -58,7 +59,10 @@ export default function AutoBuyPage({ state, t, toast }) {
   const move = (i, d) => setOrder(o => { const n = [...o]; const j = i + d; if (j < 0 || j >= n.length) return o; [n[i], n[j]] = [n[j], n[i]]; return n; });
   const toggleInc = id => setIncluded(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
   const chosen = order.filter(id => included.has(id));
-  const watch = b.watch || [];
+  // value, Base, team and rating come from the current player list (they change every day);
+  // the saved copy is only the fallback
+  const live = useMemo(() => new Map((state.players?.players || []).map(p => [p.id, p])), [state.players]);
+  const watch = useMemo(() => (b.watch || []).map(w => { const p = live.get(w.playerId); return p ? { ...w, value: p.value, base: p.base, team: p.team || w.team, rating: p.rating || w.rating, position: p.position || w.position } : w; }), [b.watch, live]);
   const suggestions = useMemo(() => {
     const s = q.trim().toLowerCase();
     if (s.length < 2) return [];
@@ -92,7 +96,7 @@ export default function AutoBuyPage({ state, t, toast }) {
       <section>
         <h3 className="section-title">{x.watch} <small>{x.watchHint}</small></h3>
         <div className="ab-add"><input placeholder={x.add} value={q} onChange={e => setQ(e.target.value)} />
-          {suggestions.length > 0 && <div className="ab-sugg">{suggestions.map(p => <button key={p.id} onClick={() => run(async () => { await api.buy.addWatch([p]); setQ(''); })}><b>{p.name}</b><small>{p.team} · {p.position} · {p.rating} · {num(p.value)}</small></button>)}</div>}
+          {suggestions.length > 0 && <div className="ab-sugg">{suggestions.map(p => <button key={p.id} onClick={() => run(async () => { await api.buy.addWatch([p]); setQ(''); })}><b>{p.name}</b><InjuryMark name={p.name} /><small>{p.team} · {p.position} · {p.rating} · {num(p.value)}</small></button>)}</div>}
           {watch.length > 0 && <button className="btn ghost small" onClick={() => { if (window.confirm(x.confirmClear)) run(() => api.buy.removeWatch(watch.map(w => w.id))); }}>{x.clearAll}</button>}
         </div>
         <div className="panel table-panel">{watch.length ? <SortTable><thead><tr><th>{x.active}</th><th>{x.player}</th><th>{x.value}</th><th>{x.base}</th><th>{x.maxSalary}</th><th>{x.maxPrice}</th><th>{x.currency}</th><th>{x.qty}</th><th></th></tr></thead>
@@ -129,7 +133,7 @@ function WatchRow({ w, x, run }) {
   const ok = ready({ ...w, ...v });
   return <tr className={w.enabled === false ? 'row-dim' : ''}>
     <td><input type="checkbox" checked={w.enabled !== false} onChange={e => save({ enabled: e.target.checked })} /></td>
-    <td><b>{w.name}</b><small className="cell-sub">{[w.team, w.position, w.rating].filter(Boolean).join(' · ')}</small>{!ok && <small className="cell-sub bad-text">{x.incomplete}</small>}</td>
+    <td><b>{w.name}</b><InjuryMark name={w.name} /><small className="cell-sub">{[w.team, w.position, w.rating].filter(Boolean).join(' · ')}</small>{!ok && <small className="cell-sub bad-text">{x.incomplete}</small>}</td>
     <td>{num(w.value)}</td><td>{num(w.base)}</td>
     <td><input className="price-input" type="number" min="0" value={v.maxSalary} onChange={e => setV(s => ({ ...s, maxSalary: e.target.value }))} onBlur={() => String(v.maxSalary) !== String(w.maxSalary) && save({ maxSalary: v.maxSalary })} /></td>
     <td><input className="price-input" type="number" min="1" value={v.maxPrice} onChange={e => setV(s => ({ ...s, maxPrice: e.target.value }))} onBlur={() => String(v.maxPrice) !== String(w.maxPrice) && save({ maxPrice: v.maxPrice })} /></td>

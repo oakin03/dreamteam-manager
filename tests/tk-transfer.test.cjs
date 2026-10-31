@@ -66,3 +66,14 @@ test('TK transfer refuses values outside the allowed ranges', async () => {
   await assert.rejects(svc.runAndWait({ mainId: 'main', sideIds: ['side'], minSalary: 100, maxApk: 10, targetTk: 10 }), /at least 20/);
   await assert.rejects(svc.runAndWait({ mainId: 'main', sideIds: [], minSalary: 100, maxApk: 30, targetTk: 10 }), /side account/);
 });
+
+test('a player the side already holds is never bought (the trade back would fail as a duplicate)', async () => {
+  const { world, svc, settings } = setup({
+    main: { name: 'Main', funds: 0, apk: 500 },
+    side: { name: 'Side', funds: 9000, bench: [player('p1', 600, { name: 'p1' })], market: [listing('p1', 600, 30), listing('p2', 500, 30)] }
+  });
+  await svc.runAndWait({ mainId: 'main', sideIds: ['side'], minSalary: 0, maxApk: 40, targetTk: 500 });
+  assert.equal(settings().tkTransferReport.reason, 'target');
+  assert.ok(world.tickets.some(t => t.playerId === 'p1' && t.status === 'LISTED'), 'p1 stays listed');
+  assert.ok(!world.users.main.bench.length);
+});

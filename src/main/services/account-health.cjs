@@ -76,8 +76,8 @@ class AccountHealth {
   static issues(row, worker, limits = DEFAULT_LIMITS) {
     const out = [];
     if (row.cap && row.used != null) {
+      // only over the cap is a problem; close to it is not (user 2026-10-30)
       if (row.used > row.cap) out.push({ kind: 'overCap', level: 'bad', used: row.used, cap: row.cap });
-      else if (row.used >= row.cap * limits.nearCapPct / 100) out.push({ kind: 'nearCap', level: 'warn', used: row.used, cap: row.cap });
     }
     if (row.roster != null && row.roster >= limits.rosterWarn) out.push({ kind: 'rosterFull', level: 'warn', roster: row.roster });
     if (row.tk != null && row.tk < limits.lowTk) out.push({ kind: 'lowTk', level: 'warn', tk: row.tk });

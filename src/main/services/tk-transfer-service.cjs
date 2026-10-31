@@ -36,12 +36,14 @@ function normalizeConfig(raw = {}) {
 }
 
 // A side's listings main may buy now, best first (more salary = more TK per round).
-function pickListings(listings, { minSalary, maxApk, mainOwned, count, sideFunds }) {
+// sideOwned: the side's roster — a player it already holds cannot come back in the trade
+// ("guest/host would end up with duplicate players"), so it is never bought.
+function pickListings(listings, { minSalary, maxApk, mainOwned, sideOwned = new Set(), count, sideFunds }) {
   const seen = new Set();
   const out = [];
   let salary = 0;
   const usable = listings
-    .filter(t => t.status === 'LISTED' && t.currency === 'APK' && t.price <= maxApk && t.salary >= minSalary && t.playerId && !mainOwned.has(t.playerId))
+    .filter(t => t.status === 'LISTED' && t.currency === 'APK' && t.price <= maxApk && t.salary >= minSalary && t.playerId && !mainOwned.has(t.playerId) && !sideOwned.has(t.playerId))
     .sort((a, b) => b.salary - a.salary || a.price - b.price);
   for (const t of usable) {
     if (out.length >= count) break;
@@ -202,9 +204,9 @@ class TkTransferService {
         const listings = await this._listings(side.c);
         const sideRoster = R.rosterOf(await side.c.roster());
         const room = Math.min(ROUND_MAX, mainFree, R.ROSTER_MAX - sideRoster.total);
-        let picks = pickListings(listings, { minSalary: config.minSalary, maxApk: config.maxApk, mainOwned: mainRoster.ids, count: room, sideFunds: side.tk });
+        let picks = pickListings(listings, { minSalary: config.minSalary, maxApk: config.maxApk, mainOwned: mainRoster.ids, sideOwned: sideRoster.ids, count: room, sideFunds: side.tk });
         if (!picks.length) {
-          const any = listings.some(t => t.status === 'LISTED' && t.currency === 'APK' && t.price <= config.maxApk && t.salary >= config.minSalary && !mainRoster.ids.has(t.playerId));
+          const any = listings.some(t => t.status === 'LISTED' && t.currency === 'APK' && t.price <= config.maxApk && t.salary >= config.minSalary && !mainRoster.ids.has(t.playerId) && !sideRoster.ids.has(t.playerId));
           this._row(side.id, { status: 'idle', note: any ? (room <= 0 ? 'roomFull' : 'noTk') : 'noListings' });
           blocked.add(side.id);
           continue;

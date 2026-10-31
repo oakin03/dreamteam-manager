@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import SortTable from './SortTable';
 import { filOf } from '../i18n-fil';
+import { GroupedPicks, useGroupedRows } from './AccountGroups';
 
 const api = window.dreamteam;
 const num = v => (v == null ? '—' : Number(v).toLocaleString());
@@ -116,8 +117,8 @@ function AccountPicks({ accounts, ids, setIds, disabled, x, extra }) {
   const all = ids.length === accounts.length;
   return <div className="dp-picks-wrap">
     <button className="chip" disabled={disabled} onClick={() => setIds(all ? [] : accounts.map(a => a.id))}>{all ? x.clear : x.selectAll}</button>
-    <div className="pvp-picks">{accounts.map(a => <button key={a.id} type="button" disabled={disabled} className={ids.includes(a.id) ? 'selected' : ''} onClick={() => setIds(ids.includes(a.id) ? ids.filter(v => v !== a.id) : [...ids, a.id])}>
-      <span>{a.name}</span>{extra?.(a)}</button>)}</div>
+    <div className="pvp-picks"><GroupedPicks storeKey="daily" accounts={accounts} selected={ids} disabled={disabled} onSet={setIds} render={a => <button key={a.id} type="button" disabled={disabled} className={ids.includes(a.id) ? 'selected' : ''} onClick={() => setIds(ids.includes(a.id) ? ids.filter(v => v !== a.id) : [...ids, a.id])}>
+      <span>{a.name}</span>{extra?.(a)}</button>} /></div>
   </div>;
 }
 
@@ -180,7 +181,19 @@ function GoUpTab({ state, x, toast }) {
 }
 
 // Daily Boss: per account the boss to play (only bosses its level allows).
+// A closed group of same-prefix accounts: one row (box = the whole group, name opens it).
+function groupHeadRow(g, { open, toggle }, { ids = [], setIds = null, disabled = false, select = true, rest = 0 }) {
+  const gi = g.accounts.map(a => a.id);
+  const on = gi.filter(id => ids.includes(id)).length;
+  return <tr key={g.key} className="grp-row">
+    {select && <td><input type="checkbox" disabled={disabled} checked={on === gi.length} ref={el => { if (el) el.indeterminate = on > 0 && on < gi.length; }} onChange={() => setIds(on === gi.length ? ids.filter(id => !gi.includes(id)) : [...new Set([...ids, ...gi])])} aria-label={g.label} /></td>}
+    <td className="grp-name" onClick={toggle}><i className="grp-arrow">{open ? '▾' : '▸'}</i><b>{g.label}</b> <small className="muted-text">{select ? `${on}/${gi.length}` : gi.length}</small></td>
+    {rest > 0 && <td colSpan={rest} className="muted-text" onClick={toggle} />}
+  </tr>;
+}
+
 function BossTab({ state, x, toast }) {
+  const grp = useGroupedRows('dp-boss');
   const b = state.dailyBoss || {};
   const accounts = state.accounts || [];
   const running = Boolean(b.running);
@@ -209,7 +222,7 @@ function BossTab({ state, x, toast }) {
         : <button className="btn primary" disabled={!chosen.length} onClick={start}>{fill(x.pg.start, { n: chosen.length })}</button>}
     </div>
     <div className="panel table-panel dp-table"><SortTable><thead><tr><th className="select-col"><input type="checkbox" disabled={running} checked={allOn} onChange={() => setIds(allOn ? [] : accounts.map(a => a.id))} aria-label={x.selectAll} /></th><th>{x.account}</th><th>{x.pg.level}</th><th>{x.pg.boss}</th><th>{x.pg.attempts}</th><th>{x.status}</th><th>{x.pg.result}</th></tr></thead>
-      <tbody>{accounts.map(a => {
+      <tbody>{grp(accounts, a => {
         const r = b.run?.accounts?.[a.id];
         const info = b.info?.[a.id];
         const options = allowed(a.id);
@@ -223,13 +236,14 @@ function BossTab({ state, x, toast }) {
           <td className={r?.status === 'error' ? 'bad-text' : ''}>{r ? (x.pg.st[r.status] || r.status) + (r.status === 'error' && r.reason ? `: ${r.reason}` : '') : ''}</td>
           <td>{r?.played ? fill(x.pg.wl, { w: r.won, l: r.lost }) : '—'}</td>
         </tr>;
-      })}</tbody></SortTable></div>
+      }, (g, o) => groupHeadRow(g, o, { ids, setIds, disabled: running, select: true, rest: 5 }))}</tbody></SortTable></div>
     <details className="panel pvp-how"><summary>{x.howTitle}</summary><ul>{x.pg.bossHow.map(l => <li key={l}>{l}</li>)}</ul></details>
   </>;
 }
 
 // Professional: season and playoffs play by themselves; Hall of Fame accounts play the opponent picked here.
 function ProTab({ state, x, toast }) {
+  const grp = useGroupedRows('dp-pro');
   const p = state.professional || {};
   const accounts = state.accounts || [];
   const running = Boolean(p.running);
@@ -265,7 +279,7 @@ function ProTab({ state, x, toast }) {
         : <button className="btn primary" disabled={!ids.length} onClick={start}>{fill(x.pf.start, { n: ids.length })}</button>}
     </div>
     <div className="panel table-panel dp-table"><SortTable><thead><tr><th className="select-col"><input type="checkbox" disabled={running} checked={allOn} onChange={() => setIds(allOn ? [] : accounts.map(a => a.id))} aria-label={x.selectAll} /></th><th>{x.account}</th><th>{x.pf.stage}</th><th>{x.pf.next}</th><th>{x.pf.left}</th><th>{x.pf.cards}</th><th>{x.pf.status}</th><th>{x.pf.result}</th></tr></thead>
-      <tbody>{accounts.map(a => {
+      <tbody>{grp(accounts, a => {
         const r = p.run?.accounts?.[a.id];
         const i = p.info?.[a.id];
         const teams = openTeams(a.id).slice().sort((m, n) => ((m.off || 0) + (m.def || 0)) - ((n.off || 0) + (n.def || 0)));
@@ -283,13 +297,14 @@ function ProTab({ state, x, toast }) {
           <td className={r?.status === 'error' ? 'bad-text' : ''}>{r ? (x.pf.st[r.status] || x.pg.st[r.status] || r.status) + (r.status === 'error' && r.reason ? `: ${r.reason}` : '') : ''}</td>
           <td>{r?.played ? fill(x.pg.wl, { w: r.won, l: r.lost }) : '—'}</td>
         </tr>;
-      })}</tbody></SortTable></div>
+      }, (g, o) => groupHeadRow(g, o, { ids, setIds, disabled: running, select: true, rest: 6 }))}</tbody></SortTable></div>
     <details className="panel pvp-how"><summary>{x.howTitle}</summary><ul>{x.pf.how.map(l => <li key={l}>{l}</li>)}</ul></details>
   </>;
 }
 
 // Elite Ascent: every chosen account plays its current floor until the attempts are used.
 function AscentTab({ state, x, toast }) {
+  const grp = useGroupedRows('dp-ascent');
   const e = state.eliteAscent || {};
   const accounts = state.accounts || [];
   const running = Boolean(e.running);
@@ -308,7 +323,7 @@ function AscentTab({ state, x, toast }) {
         : <button className="btn primary" disabled={!ids.length} onClick={start}>{fill(x.pg.start, { n: ids.length })}</button>}
     </div>
     <div className="panel table-panel dp-table"><SortTable><thead><tr><th className="select-col"><input type="checkbox" disabled={running} checked={allOn} onChange={() => setIds(allOn ? [] : accounts.map(a => a.id))} aria-label={x.selectAll} /></th><th>{x.account}</th><th>{x.pg.floor}</th><th>{x.pg.enemy}</th><th>{x.pg.attempts}</th><th>{x.status}</th><th>{x.pg.result}</th></tr></thead>
-      <tbody>{accounts.map(a => {
+      <tbody>{grp(accounts, a => {
         const r = e.run?.accounts?.[a.id];
         const info = e.info?.[a.id];
         const left = r?.left ?? info?.left;
@@ -321,13 +336,14 @@ function AscentTab({ state, x, toast }) {
           <td className={r?.status === 'error' ? 'bad-text' : ''}>{r ? (x.pg.st[r.status] || r.status) + (r.status === 'error' && r.reason ? `: ${r.reason}` : '') : ''}</td>
           <td>{r?.played ? fill(x.pg.wl, { w: r.won, l: r.lost }) : '—'}</td>
         </tr>;
-      })}</tbody></SortTable></div>
+      }, (g, o) => groupHeadRow(g, o, { ids, setIds, disabled: running, select: true, rest: 5 }))}</tbody></SortTable></div>
     <details className="panel pvp-how"><summary>{x.howTitle}</summary><ul>{x.pg.ascentHow.map(l => <li key={l}>{l}</li>)}</ul></details>
   </>;
 }
 
 // Props: one button per account; the bag counts update while props are used.
 function PropsTab({ state, x, toast }) {
+  const grp = useGroupedRows('dp-props');
   const p = state.props || {};
   const accounts = state.accounts || [];
   const [checking, setChecking] = useState(false);
@@ -345,7 +361,7 @@ function PropsTab({ state, x, toast }) {
   return <>
     <div className="panel pg-bar"><span className="pg-hint">{x.pr.how[0]}</span><span className="sp" /><button className="btn ghost" disabled={checking} onClick={read}>{checking ? x.checking : x.pr.refresh}</button></div>
     <div className="panel table-panel dp-table"><SortTable><thead><tr><th>{x.account}</th><th>{x.pr.small}</th><th>{x.pr.medium}</th><th>{x.pr.used}</th><th>{x.status}</th><th>{x.pr.players}</th><th></th></tr></thead>
-      <tbody>{accounts.map(a => {
+      <tbody>{grp(accounts, a => {
         const r = p.runs?.[a.id];
         const bag = p.bags?.[a.id];
         const live = r && ['using', 'waitingHalftime', 'finding'].includes(r.status);
@@ -360,7 +376,7 @@ function PropsTab({ state, x, toast }) {
           <td className="pr-players">{(r?.players || []).map(pl => <span key={pl.id} className={pl.stamina >= 95 ? 'ok' : 'low'} title={`${pl.name}: ${pl.start} → ${pl.stamina}`}>{pl.name.split(' ').slice(-1)[0]} {pl.stamina}</span>)}</td>
           <td className="actions">{busy.has(a.id) ? <button className="btn danger-soft small" onClick={() => api.props.stop(a.id).catch(e => toast(e.message, 'error'))}>{x.pr.stop}</button> : <button className="btn primary small" onClick={() => api.props.run(a.id).catch(e => toast(e.message, 'error'))}>{x.pr.button}</button>}</td>
         </tr>;
-      })}</tbody></SortTable></div>
+      }, (g, o) => groupHeadRow(g, o, { select: false, rest: 6 }))}</tbody></SortTable></div>
     <details className="panel pvp-how"><summary>{x.howTitle}</summary><ul>{x.pr.how.map(l => <li key={l}>{l}</li>)}</ul></details>
   </>;
 }

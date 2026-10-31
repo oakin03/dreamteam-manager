@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import SortTable from './SortTable';
 import { filOf } from '../i18n-fil';
+import { GroupedPicks } from './AccountGroups';
 
 const api = window.dreamteam;
 // Orders as the game shows them: rarity low → high in Craft / Convert / materials,
@@ -27,7 +28,7 @@ function Dot({ rarity }) { return rarity ? <i className={`eq-dot d-${rarity.toLo
 
 const TEXT = {
   tr: {
-    title: 'Ekipman', subtitle: 'Çanta, materyaller, güçlendirme ve koleksiyonlar',
+    batchAccounts: 'Hesaplar ({n})', batchAll: 'Tümünü seç', batchNone: 'Seçimi temizle', batchHint: '{n} set seçili · seçilen hesapların hepsinde aynı anda yapılır', batchRegister: 'Seçilenleri kaydet ({n})', batchPrepare: 'Seçilenleri hazırla ve kaydet ({n})', batchProgress: '{done}/{total} · {account}', batchResult: 'Toplu işlem sonucu', batchRes: { registered: 'kaydedildi', completed: 'set tamamlandı', already: 'zaten tamam', skipped: 'atlandı', short: 'malzeme eksik', error: 'hata', stopped: 'durduruldu' }, title: 'Ekipman', subtitle: 'Çanta, materyaller, güçlendirme ve koleksiyonlar',
     pickAccount: 'Hesap seç', scan: 'Tara', close: 'Kapat', stop: 'Durdur', noAccount: 'Başlamak için sağ üstten bir hesap seç.',
     tabGear: 'Ekipmanlar', tabMaterials: 'Materyaller', tabConvert: 'Convert', tabCraft: 'Craft', tabEnchant: 'Enchant', tabEnhance: 'Enhance', tabRefine: 'Refine', tabCollections: 'Koleksiyonlar',
     name: 'Ad', rarity: 'Nadirlik', type: 'Tür', level: '+', refine: 'Refine', enchant: 'Enchant', equippedBy: 'Kuşanan', inBag: 'Çantada', all: 'Hepsi', equipped: 'Kuşanılı', notEquipped: 'Kuşanılmamış',
@@ -45,7 +46,7 @@ const TEXT = {
     scannedAt: 'Son tarama {time}', jobs: { scan: 'Taranıyor', convert: 'Dönüştürülüyor', craft: 'Üretiliyor', enchant: 'Enchant', enhance: 'Basılıyor', refine: 'Refine', register: 'Teslim ediliyor', prepare: 'Set hazırlanıyor' }
   },
   en: {
-    title: 'Equipment', subtitle: 'Bag, materials, strengthening and collections',
+    batchAccounts: 'Accounts ({n})', batchAll: 'Select all', batchNone: 'Clear selection', batchHint: '{n} set(s) selected · done on every chosen account at the same time', batchRegister: 'Register selected ({n})', batchPrepare: 'Prepare and register selected ({n})', batchProgress: '{done}/{total} · {account}', batchResult: 'Batch result', batchRes: { registered: 'registered', completed: 'set completed', already: 'already complete', skipped: 'skipped', short: 'materials short', error: 'error', stopped: 'stopped' }, title: 'Equipment', subtitle: 'Bag, materials, strengthening and collections',
     pickAccount: 'Select account', scan: 'Scan', close: 'Close', stop: 'Stop', noAccount: 'Pick an account at the top right to start.',
     tabGear: 'Equipment', tabMaterials: 'Materials', tabConvert: 'Convert', tabCraft: 'Craft', tabEnchant: 'Enchant', tabEnhance: 'Enhance', tabRefine: 'Refine', tabCollections: 'Collections',
     name: 'Name', rarity: 'Rarity', type: 'Type', level: '+', refine: 'Refine', enchant: 'Enchant', equippedBy: 'Equipped by', inBag: 'In bag', all: 'All', equipped: 'Equipped', notEquipped: 'Not equipped',
@@ -143,7 +144,7 @@ export default function EquipmentPage({ state, t, toast, msgText }) {
         {tab === 'enchant' && <EnchantTab gear={gear} m={m} x={x} busy={busy} run={run} selected={selected} setSelected={setSelected} last={eq.lastResult} />}
         {tab === 'enhance' && <EnhanceTab gear={gear} m={m} x={x} busy={busy} run={run} selected={selected} setSelected={setSelected} eventRewards={eq.eventRewards} last={eq.lastResult} />}
         {tab === 'refine' && <RefineTab gear={gear} m={m} x={x} busy={busy} run={run} selected={selected} setSelected={setSelected} />}
-        {tab === 'collections' && <CollectionsTab sets={eq.collections || []} x={x} busy={busy} run={run} />}
+        {tab === 'collections' && <CollectionsTab sets={eq.collections || []} x={x} busy={busy} run={run} accounts={state.accounts || []} accountId={eq.accountId} batch={eq.batch} />}
       </>}
     </>}
   </div>;
@@ -177,10 +178,13 @@ function MaterialsTab({ m, x }) {
   </>;
 }
 
+// The game takes at most 100 at once for a convert or a craft.
+const MAX_PER_ACTION = 100;
+
 function ConvertTab({ m, x, busy, run }) {
   const [rarity, setRarity] = useState('COMMON');
   const [n, setN] = useState(1);
-  const max = Math.floor((m.fabric[rarity] || 0) / 5);
+  const max = Math.min(MAX_PER_ACTION, Math.floor((m.fabric[rarity] || 0) / 5));
   const count = Math.max(1, Math.min(max, Math.floor(Number(n) || 1)));
   return <div className="panel eq-form">
     <p className="eq-hint">{x.convertHint}</p>
@@ -226,11 +230,11 @@ function CraftTab({ recipes, m, gear, x, busy, run }) {
       {!list.length && <tr><td className="muted-text">{x.noRecipes}</td></tr>}
       {list.map(r => {
         const c = Math.max(1, Math.floor(Number(counts[r.id]) || 1));
-        const max = Math.min(500, ...r.ingredients.map(i => Math.floor(haveOf(i, m, gear) / i.quantity)));
+        const max = Math.min(MAX_PER_ACTION, ...r.ingredients.map(i => Math.floor(haveOf(i, m, gear) / i.quantity)));
         return <tr key={r.id}>
           <td><span className="eq-name"><Dot rarity={r.rarity} /><b>{r.name}</b></span>{r.exclusive && <span className="muted-text"> · {x.exclusive}</span>}</td>
           <td><Ingredients recipe={r} count={c} m={m} gear={gear} x={x} /></td>
-          <td className="actions"><input className="eq-small" type="number" min="1" value={counts[r.id] ?? 1} onChange={e => setCounts({ ...counts, [r.id]: e.target.value })} /> <button className="btn ghost" disabled={max < 1} onClick={() => setCounts({ ...counts, [r.id]: Math.max(1, max) })}>{x.max}</button> <button className="btn primary" disabled={busy || c > max} onClick={() => run(() => window.dreamteam.equipment.craft(r.id, c))}>{x.craft}</button></td>
+          <td className="actions"><input className="eq-small" type="number" min="1" max={MAX_PER_ACTION} value={counts[r.id] ?? 1} onChange={e => setCounts({ ...counts, [r.id]: e.target.value })} /> <button className="btn ghost" disabled={max < 1} onClick={() => setCounts({ ...counts, [r.id]: Math.max(1, max) })}>{x.max}</button> <button className="btn primary" disabled={busy || c > max} onClick={() => run(() => window.dreamteam.equipment.craft(r.id, c))}>{x.craft}</button></td>
         </tr>;
       })}
     </tbody></SortTable></div>
@@ -286,22 +290,48 @@ function RefineTab({ gear, m, x, busy, run, selected, setSelected }) {
   </div>;
 }
 
-function CollectionsTab({ sets, x, busy, run }) {
+function CollectionsTab({ sets, x, busy, run, accounts, accountId, batch }) {
   const [filter, setFilter] = useState('');
   const [search, setSearch] = useState('');
   const [plan, setPlan] = useState(null);
+  // several sets, several accounts (the open account is chosen by default)
+  const [picked, setPicked] = useState(() => new Set());
+  const [accIds, setAccIds] = useState(() => (accountId ? [accountId] : []));
+  const [accOpen, setAccOpen] = useState(false);
+  const togglePick = id => setPicked(p => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const runBatch = mode => { const chosen = sets.filter(s => picked.has(s.id)).map(s => ({ id: s.id, name: s.name })); run(() => window.dreamteam.equipment.batch({ accountIds: accIds, sets: chosen, mode })); };
+  const batchRunning = Boolean(batch?.running);
   const rows = sets.filter(s => (!search || s.name.toLowerCase().includes(search.toLowerCase()) || s.items.some(i => i.name.toLowerCase().includes(search.toLowerCase())))
     && (!filter || (filter === 'done' ? s.completed : filter === 'ready' ? !s.completed && s.available.length > 0 : !s.completed)));
   const bonusText = b => Object.entries(b).filter(([, v]) => v).map(([k, v]) => `+${v}% ${k.toUpperCase()}`).join(' · ');
   const openPlan = (id, slot = null) => run(async () => setPlan({ id, ...(await window.dreamteam.equipment.plan(id, slot)) }));
+  const allOn = rows.length > 0 && rows.filter(s => !s.completed).every(s => picked.has(s.id));
+  const n = picked.size;
   return <>
+    <div className="panel eq-batch">
+      <div className="eq-batch-accounts">
+        <button className="btn ghost" disabled={batchRunning} onClick={() => setAccOpen(o => !o)}>{fill(x.batchAccounts, { n: accIds.length })} ▾</button>
+        {accOpen && <div className="eq-batch-menu">
+          <button className="btn ghost small" onClick={() => setAccIds(accIds.length === accounts.length ? [] : accounts.map(a => a.id))}>{accIds.length === accounts.length ? x.batchNone : x.batchAll}</button>
+          <GroupedPicks storeKey="equipment" accounts={accounts} selected={accIds} onSet={setAccIds} render={a => <label key={a.id}><input type="checkbox" checked={accIds.includes(a.id)} onChange={() => setAccIds(accIds.includes(a.id) ? accIds.filter(v => v !== a.id) : [...accIds, a.id])} />{a.name}</label>} />
+        </div>}
+      </div>
+      <span className="eq-batch-hint">{fill(x.batchHint, { n })}</span>
+      <span className="sp" />
+      {batchRunning ? <><span className="pill warn"><i />{fill(x.batchProgress, { done: batch.done, total: batch.total, account: batch.account || '' })}</span><button className="btn danger-soft" onClick={() => run(() => window.dreamteam.equipment.batchStop())}>{x.stop}</button></>
+        : <><button className="btn ghost" disabled={busy || !n || !accIds.length} onClick={() => runBatch('register')}>{fill(x.batchRegister, { n })}</button><button className="btn primary" disabled={busy || !n || !accIds.length} onClick={() => runBatch('prepare')}>{fill(x.batchPrepare, { n })}</button></>}
+    </div>
+    {batch && !batchRunning && batch.results?.length > 0 && <div className="panel eq-batch-result"><b>{x.batchResult}</b>
+      <div>{batch.results.map((r, i) => <span key={i} className={`eq-batch-row ${['registered', 'completed'].includes(r.result) ? 'ok' : ['short', 'error'].includes(r.result) ? 'bad' : ''}`}>{r.account} · {r.set}: {x.batchRes[r.result] || r.result}{r.detail ? ` (${r.detail})` : ''}</span>)}</div>
+    </div>}
     <div className="eq-filters">
       <select value={filter} onChange={e => setFilter(e.target.value)}><option value="">{x.all} ({sets.length})</option><option value="open">{x.setsOpen}</option><option value="done">{x.setsDone} ({sets.filter(s => s.completed).length})</option><option value="ready">{x.setsReady}</option></select>
       <input placeholder={x.search} value={search} onChange={e => setSearch(e.target.value)} />
       <span className="eq-count">{rows.length}</span>
     </div>
-    <div className="panel table-panel"><SortTable><thead><tr><th>{x.name}</th><th>{x.bonus}</th><th>{x.tabGear}</th><th>{x.status}</th><th></th></tr></thead>
+    <div className="panel table-panel"><SortTable><thead><tr><th className="select-col"><input type="checkbox" checked={allOn} onChange={() => setPicked(allOn ? new Set() : new Set(rows.filter(s => !s.completed).map(s => s.id)))} aria-label={x.batchAll} /></th><th>{x.name}</th><th>{x.bonus}</th><th>{x.tabGear}</th><th>{x.status}</th><th></th></tr></thead>
       <tbody>{rows.map(s => <tr key={s.id}>
+        <td><input type="checkbox" disabled={s.completed} checked={picked.has(s.id)} onChange={() => togglePick(s.id)} aria-label={s.name} /></td>
         <td><b>{s.name}</b></td><td className="eq-bonus">{bonusText(s.bonus)}</td>
         <td><div className="eq-set-items">{[...s.items].sort((a, b) => SLOT_ORDER.indexOf(a.slot) - SLOT_ORDER.indexOf(b.slot)).map(i => { const done = s.registered.includes(i.slot); return <button type="button" key={i.slot} disabled={done || busy} title={done ? '' : x.pieceHint} onClick={() => openPlan(s.id, i.slot)} className={`eq-chip ${done ? 'done' : s.available.includes(i.slot) ? 'ready' : ''}`}><Dot rarity={i.rarity} />{i.name}{i.minLevel ? ` +${i.minLevel}` : ''}</button>; })}</div></td>
         <td>{s.completed ? <span className="pill ok"><i />{x.complete}</span> : s.available.length ? <span className="pill warn"><i />{fill(x.ready, { count: s.available.length })}</span> : <span className="pill muted"><i />{fill(x.open, { done: s.registered.length, total: s.items.length })}</span>}</td>

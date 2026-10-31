@@ -18,7 +18,7 @@ test('watch alerts: a watched player that fell to Base or lost ≥10% is reporte
 test('account health issues: over the cap first, near cap, roster full, low TK, Auto Play error', () => {
   const kinds = r => AccountHealth.issues(r, { status: 'error' }).map(i => i.kind);
   assert.deepEqual(kinds({ cap: 7000, used: 7100, roster: 11, tk: 100 }), ['overCap', 'rosterFull', 'lowTk', 'autoPlayError']);
-  assert.deepEqual(AccountHealth.issues({ cap: 7000, used: 6900, roster: 8, tk: 90000 }, null).map(i => i.kind), ['nearCap']);
+  assert.deepEqual(AccountHealth.issues({ cap: 7000, used: 6900, roster: 8, tk: 90000 }, null).map(i => i.kind), [], 'close to the cap is not a problem');
   assert.deepEqual(AccountHealth.issues({ cap: 7000, used: 5000, roster: 8, tk: 90000 }, { status: 'running' }), []);
 });
 
@@ -26,7 +26,7 @@ test('account health limits: saved values replace the defaults, bad values fall 
   const { healthLimits } = require('../src/main/services/account-health.cjs');
   const limits = healthLimits({ lowTk: 10000, nearCapPct: 90, rosterWarn: 10 });
   const kinds = r => AccountHealth.issues(r, null, limits).map(i => i.kind);
-  assert.deepEqual(kinds({ cap: 7000, used: 6400, roster: 10, tk: 8000 }), ['nearCap', 'rosterFull', 'lowTk']);
+  assert.deepEqual(kinds({ cap: 7000, used: 6400, roster: 10, tk: 8000 }), ['rosterFull', 'lowTk']);
   assert.deepEqual(healthLimits({ lowTk: 'x', nearCapPct: 300, rosterWarn: 0 }), { lowTk: 5000, nearCapPct: 97, rosterWarn: 11 });
   assert.deepEqual(healthLimits(null), { lowTk: 5000, nearCapPct: 97, rosterWarn: 11 });
 });
