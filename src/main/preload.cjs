@@ -77,6 +77,32 @@ contextBridge.exposeInMainWorld('dreamteam', {
     status: (accountIds) => ipcRenderer.invoke('pro:status', accountIds),
     createHof: (accountId) => ipcRenderer.invoke('pro:createHof', accountId)
   },
+  magic: {
+    start: (plan) => ipcRenderer.invoke('magic:start', plan),
+    stop: () => ipcRenderer.invoke('magic:stop'),
+    status: (accountIds) => ipcRenderer.invoke('magic:status', accountIds)
+  },
+  office: {
+    status: (accountIds, teamIds) => ipcRenderer.invoke('office:status', { accountIds, teamIds }),
+    selectCoach: (accountId, coachId) => ipcRenderer.invoke('office:select-coach', { accountId, coachId }),
+    coachTick: (accountId) => ipcRenderer.invoke('office:coach-tick', { accountId }),
+    big3Tick: (accountId, teamId) => ipcRenderer.invoke('office:big3-tick', { accountId, teamId }),
+    bonus: (accountId, teamId, type) => ipcRenderer.invoke('office:bonus', { accountId, teamId, type }),
+    setActive: (accountId, on) => ipcRenderer.invoke('office:active', { accountId, on }),
+    readTeam: (accountId, teamId) => ipcRenderer.invoke('office:read-team', { accountId, teamId }),
+    superPlayers: (accountId) => ipcRenderer.invoke('office:super-players', { accountId }),
+    superSet: (accountId, playerIds) => ipcRenderer.invoke('office:super-set', { accountId, playerIds }),
+    superBonus: (accountId, type) => ipcRenderer.invoke('office:super-bonus', { accountId, type }),
+    superActive: (accountId, on) => ipcRenderer.invoke('office:super-active', { accountId, on }),
+    superTick: (accountId) => ipcRenderer.invoke('office:super-tick', { accountId })
+  },
+  skills: {
+    view: (accountId) => ipcRenderer.invoke('skills:view', { accountId }),
+    learn: (accountId) => ipcRenderer.invoke('skills:learn', { accountId }),
+    shuffle: (accountId, containerId) => ipcRenderer.invoke('skills:shuffle', { accountId, containerId }),
+    lock: (accountId, containerId, slot, locked) => ipcRenderer.invoke('skills:lock', { accountId, containerId, slot, locked }),
+    assign: (accountId, containerId, playerId) => ipcRenderer.invoke('skills:assign', { accountId, containerId, playerId })
+  },
   ascent: {
     start: (plan) => ipcRenderer.invoke('ascent:start', plan),
     stop: () => ipcRenderer.invoke('ascent:stop'),
@@ -98,6 +124,8 @@ contextBridge.exposeInMainWorld('dreamteam', {
     send: (accountId, friendId, text) => ipcRenderer.invoke('social:send', { accountId, friendId, text }),
     act: (accountId, action, targetId) => ipcRenderer.invoke('social:act', { accountId, action, targetId }),
     search: (accountId, text) => ipcRenderer.invoke('social:search', { accountId, text }),
+    friendScout: (accountId, friendId) => ipcRenderer.invoke('social:friend-scout', { accountId, friendId }),
+    friendSign: (accountId, friendId, playerId) => ipcRenderer.invoke('social:friend-sign', { accountId, friendId, playerId }),
     claimMail: (accountId, mailId) => ipcRenderer.invoke('social:claimMail', { accountId, mailId }),
     poll: () => ipcRenderer.invoke('social:poll')
   },
@@ -211,7 +239,7 @@ contextBridge.exposeInMainWorld('dreamteam', {
     deleteRole: (id) => ipcRenderer.invoke('cards:delete-role', id),
     setPlayerRoles: (playerKey, roleIds) => ipcRenderer.invoke('cards:set-player-roles', { playerKey, roleIds }),
     setTrackedTeams: (teams) => ipcRenderer.invoke('cards:set-tracked-teams', teams),
-    setCustomTeam: (playerKey, team) => ipcRenderer.invoke('cards:set-custom-team', { playerKey, team })
+    setCustomTeam: async () => false // removed 2026-11-05
   },
   tasks: {
     refresh: () => ipcRenderer.invoke('tasks:refresh'),

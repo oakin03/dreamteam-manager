@@ -15,6 +15,19 @@ const { GameSocket } = require('./game-socket.cjs');
 const ERROR_RETRY_MS = 60 * 1000;
 const SAFETY_MS = 1500; // claim a moment after the timer, the server clock may lag
 const IDLE_STAGGER_MS = 4000; // accounts without Auto Play start one after another, not all at once
+const KICKED_RETRY_MS = 10 * 60 * 1000; // the claim connection was taken back: try again later, quietly
+const IN_MATCH_RETRY_MS = 60 * 1000;    // Auto Play account in a match: claim after the match
+const KICK_LOG_MS = 60 * 60 * 1000;     // one log line per account per hour for those
+
+// The claim lost its connection because the account signed in elsewhere (Auto Play, the game).
+// Not a game outage (2026-11-05: reporting it as one paused every Auto Play in a loop).
+function isKickError(error) {
+  return error?.code === 'KICK_LOOP' || /disconnected|signed in elsewhere|duplicate|logged out/i.test(String(error?.message || ''));
+}
+// A real connection failure (the game is unreachable).
+function isOutageError(error) {
+  return /could not connect|websocket error|ECONN|ENOTFOUND|EAI_AGAIN|connection timed out/i.test(String(error?.message || ''));
+}
 
 function abortError() {
   const error = new Error('Aborted');
@@ -109,6 +122,7 @@ class DailyRewardService {
     this.states = new Map();
     this.workers = new Map();
     this.monitor = null;
+    this.kickLogAt = new Map();
     for (const [id, hold] of Object.entries(this.store.getDailyRewards()?.accounts || {})) {
       if (Date.parse(hold?.nextAt) > this.now()) this.showDailyHold(id, hold);
     }
@@ -256,11 +270,21 @@ class DailyRewardService {
         result = await this.checkOrClaim(account, signal);
       } catch (error) {
         if (error?.name === 'AbortError') throw error;
-        if (/auth|session|login|unauthor/i.test(error.message)) this.sessions.invalidate?.(account.id);
-        else if (/connect|timeout|socket|ECONN|network/i.test(error.message)) this.gameHealth?.reportDown?.('Daily Reward', error);
-        this.setState(accountId, { status: 'error', error: error.message, nextAt: new Date(this.now() + ERROR_RETRY_MS).toISOString() });
-        this.log(account, 'error', 'dw.failed', { error: error.message }, `Daily Reward: ${error.message}`);
-        result = { delayMs: ERROR_RETRY_MS };
+        if (isKickError(error)) {
+          // another connection of this account (Auto Play) took it back: later, without noise
+          this.setState(accountId, { status: 'waiting', error: null, timerText: null, nextAt: new Date(this.now() + KICKED_RETRY_MS).toISOString() });
+          if (this.now() - (this.kickLogAt.get(accountId) || 0) > KICK_LOG_MS) {
+            this.kickLogAt.set(accountId, this.now());
+            this.log(account, 'info', 'dw.busy', {}, 'Daily Reward: the account is busy in another connection · trying again in 10 minutes');
+          }
+          result = { delayMs: KICKED_RETRY_MS };
+        } else {
+          if (/auth|session|login|unauthor/i.test(error.message)) this.sessions.invalidate?.(account.id);
+          else if (isOutageError(error)) this.gameHealth?.reportDown?.('Daily Reward', error);
+          this.setState(accountId, { status: 'error', error: error.message, nextAt: new Date(this.now() + ERROR_RETRY_MS).toISOString() });
+          this.log(account, 'error', 'dw.failed', { error: error.message }, `Daily Reward: ${error.message}`);
+          result = { delayMs: ERROR_RETRY_MS };
+        }
       }
       await sleep(Math.max(1000, Number(result?.delayMs) || 30000), signal);
     }
@@ -295,6 +319,13 @@ class DailyRewardService {
           return { delayMs };
         }
 
+        // An account playing Auto Play: claim between its matches, never during one (our own
+        // register would take the account from the match connection).
+        const borrowedFirst = GameSocket.borrow?.(userId);
+        if (!borrowedFirst && this.isPlaying(account.id) && await this.inMatch(userId, cookie, signal)) {
+          this.setState(account.id, { status: 'waiting', tier, timerText: '00:00', nextAt: new Date(this.now() + IN_MATCH_RETRY_MS).toISOString(), error: null });
+          return { delayMs: IN_MATCH_RETRY_MS };
+        }
         this.setState(account.id, { status: 'claiming', tier, timerText: '00:00', error: null });
         // Another service of this account (Auto Play, Auto Trade…) already holds its one
         // registered connection: claim on that one. Our own `register` would sign it out.
@@ -328,6 +359,23 @@ class DailyRewardService {
     }
   }
 
+  isPlaying(accountId) {
+    return this.engine.states?.()?.[accountId]?.status === 'running';
+  }
+
+  // Is the account in a match right now (Quick Play, PVP…)? Unknown counts as no.
+  async inMatch(userId, cookie, signal) {
+    let sim = null;
+    try {
+      sim = await GameSocket.open({ createSocket: this.createSocket, path: '/simulation-socket/', cookie, signal, timeoutMs: 10000 });
+      const r = await sim.ack('getUserActiveMatch', { userId }, { signal, timeoutMs: 8000 });
+      return Boolean(r?.match);
+    } catch (error) {
+      if (error?.name === 'AbortError') throw error;
+      return false;
+    } finally { try { sim?.close(); } catch {} }
+  }
+
   async stop() {
     if (this.monitor) clearInterval(this.monitor);
     this.monitor = null;
@@ -336,4 +384,4 @@ class DailyRewardService {
   }
 }
 
-module.exports = { DailyRewardService, parseCountdown, formatCountdown, nextDailyResetAt, waitMsOf, rewardText, retryAfterMs };
+module.exports = { isKickError, isOutageError, DailyRewardService, parseCountdown, formatCountdown, nextDailyResetAt, waitMsOf, rewardText, retryAfterMs };

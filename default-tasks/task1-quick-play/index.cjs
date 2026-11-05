@@ -214,6 +214,10 @@ async function doSocketAction(ctx, prepared) {
 
   const reason = String(response?.error || 'server rejected the request');
   if (/over the salary cap/i.test(reason)) throwSalaryCap(ctx, reason);
+  // the game's daily PK limit (2026-11-05): no more Quick Play until midnight Manila
+  if (response?.code === 'PK_DAILY_LIMIT' || /PK limit/i.test(reason)) return 'limit';
+  // a match of this account is still running (often our own previous one): wait for its end
+  if (/already in a match/i.test(reason)) return 'inMatch';
 
   ctx.log('warning', `Quick Play was not started: ${reason}`);
   return false;
@@ -288,6 +292,24 @@ async function doBrowserAction(ctx, prepared) {
   }
 }
 
+// Midnight Manila (UTC+8) = the game's daily reset, plus a few seconds.
+function nextManilaMidnight(now = Date.now()) {
+  const H8 = 8 * 3600 * 1000;
+  const d = new Date(now + H8);
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1, 0, 0, 30) - H8;
+}
+
+// Waits (polling every 20 s, at most 20 min) until the account has no running match.
+async function waitMatchEnd(ctx, prepared) {
+  const until = Date.now() + 20 * 60 * 1000;
+  while (Date.now() < until) {
+    aborted(ctx.signal);
+    const m = await activeMatch(prepared.socket, prepared.userId).catch(() => null);
+    if (!m) return;
+    await ctx.sleep(20000);
+  }
+}
+
 async function run(ctx, prepared) {
   const intervalMs = Math.max(60, Number(ctx.config?.intervalSeconds || 270)) * 1000;
   const retryMs = Math.max(10, Number(ctx.config?.retrySeconds || 30)) * 1000;
@@ -341,6 +363,18 @@ async function run(ctx, prepared) {
           ctx.log('warning', `Socket mode still unavailable: ${e.message}`);
         }
       }
+    }
+    if (success === 'inMatch') {
+      ctx.setState({ message: 'Waiting for the running match to end' });
+      await waitMatchEnd(ctx, prepared);
+      continue;
+    }
+    if (success === 'limit') {
+      const at = nextManilaMidnight();
+      ctx.setState({ message: 'Daily PK limit reached', nextActionAt: new Date(at).toISOString() });
+      ctx.log('warning', 'Daily PK limit reached · Quick Play continues after the daily reset (19:00 TR).');
+      await ctx.sleep(Math.max(60000, at - Date.now()));
+      continue;
     }
     if (success) browserFailures = 0;
 

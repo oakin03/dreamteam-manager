@@ -105,7 +105,7 @@ function Room({ room, x, players, roles, busy, run, now }) {
           <td><b>{p.visualName || p.name}</b><InjuryMark name={p.name} /></td><td>{p.position}</td><td><RatingBadge grade={p.rating} /></td><td><b>{num(p.baseSalary)}</b></td><td title={x.salaryHint}>{num(p.baseSalary)}</td><td>{num(p.newBaseSalary)}{isAtBase(p.baseSalary, p.newBaseSalary) && <span className="base-badge">BASE</span>}</td>
           <td>{info?.change ? <span className={info.change > 0 ? 'pl-up' : 'pl-down'}>{info.change > 0 ? '▲' : '▼'} {Math.abs(info.change)}</span> : '—'}</td>
           <td><div className="pl-roles">{isBase && <span className="role-badge pl-base-badge">{x.baseBadge}</span>}{rl.map(r => <span key={r.id} className="role-badge" style={roleColors(r.color)}>{r.name}</span>)}</div></td>
-          <td>{info?.card ? (info.card.noTeam && !info.card.customTeam ? x.noTeam : fill(x.stars, { s: info.card.stars ?? 0 })) + ' · ' + fill(x.cards, { n: info.card.cardCount }) : '—'}</td>
+          <td>{info?.card ? (info.card.noTeam ? x.noTeam : fill(x.stars, { s: info.card.stars ?? 0 })) + ' · ' + fill(x.cards, { n: info.card.cardCount }) : '—'}</td>
           <td className="actions">{p.signed ? <span className="pill muted"><i />{x.picked}</span> : room.ours.map(o => { const key = `pick:${o.id}:${p.id}`; const mine = room.turn?.userId === o.userId && !room.ended;
             return <button key={o.id} className="btn success small" disabled={!mine || busy[key] || o.picking} title={mine ? '' : x.waitingTurn} onClick={() => run(key, () => api.draft.pick(o.id, p.id))}>{busy[key] ? x.picking : fill(x.pick, { name: o.name })}</button>; })}</td>
         </tr>; })}</tbody></SortTable></div>

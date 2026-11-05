@@ -40,6 +40,8 @@ const { DailyRoutineService } = require('./services/daily-routine-service.cjs');
 const { PvpService } = require('./services/pvp-service.cjs');
 const { GoUpService } = require('./services/goup-service.cjs');
 const { DailyBossService, EliteAscentService, ProfessionalService } = require('./services/proving-service.cjs');
+const { OfficeService, MagicTeamService } = require('./services/office-service.cjs');
+const { SkillsService } = require('./services/skills-service.cjs');
 const { TkTransferService } = require('./services/tk-transfer-service.cjs');
 const { ValuePredictService } = require('./services/value-predict-service.cjs');
 const { InjuryService } = require('./services/injury-service.cjs');
@@ -88,6 +90,10 @@ let dailyBoss;
 let activate;
 let props;
 let eliteAscent;
+let office;
+let magicTeam;
+let magicDone = null;
+let skills;
 let bossDone = null;
 let ascentDone = null;
 let professional;
@@ -155,6 +161,9 @@ function snapshot({ incremental = false } = {}) {
     pvp: pvp?.snapshot() || { running: false, run: null, lastReport: null },
     dailyBoss: dailyBoss?.snapshot() || { running: false, run: null, info: {}, bosses: [] },
     eliteAscent: eliteAscent?.snapshot() || { running: false, run: null, info: {} },
+    office: office?.snapshot() || { info: {}, busy: [], auto: { coach: [], big3: {} } },
+    magicTeam: magicTeam?.snapshot() || { running: false, run: null, info: {} },
+    skills: skills?.snapshot() || { busy: [] },
     professional: professional?.snapshot() || { running: false, run: null, info: {} },
     tkTransfer: tkTransfer?.snapshot() || { running: false, run: null, config: null, lastReport: null },
     goup: goup?.snapshot() || { running: false, run: null, points: {}, event: null, lastReport: null },
@@ -612,6 +621,7 @@ function initServices() {
   accountProfile.setBasicInfoSource(page => browserService.basicInfoFor(page));
   gameSessions = new GameSessions({ browserService, credentials, accountProfile });
   cards = new CardsService({ store, activity, accountProfile, sessions: gameSessions, onChanged: emitState });
+  if (cards.clearedCustomTeams) activity.add({ level: 'info', accountId: null, accountName: '', taskName: 'Cards', code: 'cd.customCleared', params: { count: cards.clearedCustomTeams }, message: `User-given teams were removed · ${cards.clearedCustomTeams} player(s) back on the game's own team · roles kept` });
   dailyRoutine = new DailyRoutineService({ store, activity, sessions: gameSessions, onChanged: emitState });
   engine = new TaskEngine({
     gameHealth,
@@ -648,6 +658,9 @@ function initServices() {
   goup = new GoUpService({ store, activity, gameHealth, sessions: gameSessions, onChanged: emitState });
   dailyBoss = new DailyBossService({ store, activity, gameHealth, sessions: gameSessions, onChanged: emitState });
   eliteAscent = new EliteAscentService({ store, activity, gameHealth, sessions: gameSessions, onChanged: emitState });
+  office = new OfficeService({ store, activity, gameHealth, sessions: gameSessions, onChanged: emitState });
+  magicTeam = new MagicTeamService({ store, activity, gameHealth, sessions: gameSessions, onChanged: emitState });
+  skills = new SkillsService({ store, activity, sessions: gameSessions, onChanged: emitState });
   professional = new ProfessionalService({ store, activity, gameHealth, sessions: gameSessions, onChanged: emitState });
   valuePredict = new ValuePredictService({ store, activity, onChanged: emitState, injuries: () => injuries?.snapshot() });
   injuries = new InjuryService({ store, activity, onChanged: emitState });
@@ -696,6 +709,7 @@ function initServices() {
   valuePredict.start();
   injuries.start();
   dailyRewards.start();
+  office.start();
   gameEvents = new GameEvents({ store, activity, onChat: emitState, onSalaryUpdate: async () => { await players.refresh({ automatic: true, pushed: true }); await accountHealth.refresh(); } });
   gameEvents.start();
   social = new SocialService({ store, activity, sessions: gameSessions, onChanged: emitState });
@@ -925,7 +939,6 @@ function registerIpc() {
   ipcMain.handle('cards:delete-role', async (_event, id) => cards.deleteRole(id));
   ipcMain.handle('cards:set-player-roles', async (_event, { playerKey, roleIds }) => cards.setPlayerRoles(playerKey, roleIds));
   ipcMain.handle('cards:set-tracked-teams', async (_event, teams) => cards.setTrackedTeams(teams));
-  ipcMain.handle('cards:set-custom-team', async (_event, { playerKey, team }) => cards.setCustomTeam(playerKey, team));
   ipcMain.handle('cards:refresh', async () => cards.refresh());
   ipcMain.handle('cards:reset', async () => cards.resetData());
 
@@ -1060,6 +1073,26 @@ function registerIpc() {
   ipcMain.handle('pro:createHof', async (_event, accountId) => professional.createHof(accountId));
   ipcMain.handle('ascent:stop', async () => { eliteAscent.stop(); return eliteAscent.snapshot(); });
   ipcMain.handle('ascent:status', async (_event, accountIds) => eliteAscent.status(Array.isArray(accountIds) ? accountIds : null));
+  ipcMain.handle('magic:start', async (_event, plan) => startProvingManual(magicTeam, plan, 'Magic Team', 'mt', p => { magicDone = p; }));
+  ipcMain.handle('magic:stop', async () => { magicTeam.stop(); return magicTeam.snapshot(); });
+  ipcMain.handle('magic:status', async (_event, accountIds) => magicTeam.status(Array.isArray(accountIds) ? accountIds : null));
+  ipcMain.handle('office:status', async (_event, { accountIds, teamIds } = {}) => office.status(accountIds, { teamIds: teamIds || {} }));
+  ipcMain.handle('office:select-coach', async (_event, { accountId, coachId }) => { await office.selectCoach(accountId, coachId); return office.snapshot(); });
+  ipcMain.handle('office:coach-tick', async (_event, { accountId }) => ({ result: await office.coachTick(accountId, { manual: true }), snapshot: office.snapshot() }));
+  ipcMain.handle('office:big3-tick', async (_event, { accountId, teamId }) => ({ result: await office.big3Tick(accountId, teamId, { manual: true }), snapshot: office.snapshot() }));
+  ipcMain.handle('office:bonus', async (_event, { accountId, teamId, type }) => { await office.upgradeBonus(accountId, teamId, type); return office.snapshot(); });
+  ipcMain.handle('office:active', async (_event, { accountId, on }) => { await office.setActive(accountId, Boolean(on)); return office.snapshot(); });
+  ipcMain.handle('office:read-team', async (_event, { accountId, teamId }) => office.status([accountId], { teamIds: { [accountId]: teamId } }));
+  ipcMain.handle('office:super-players', async (_event, { accountId }) => office.superPlayers(accountId));
+  ipcMain.handle('office:super-set', async (_event, { accountId, playerIds }) => { await office.superSetPlayers(accountId, playerIds); return office.snapshot(); });
+  ipcMain.handle('office:super-bonus', async (_event, { accountId, type }) => { await office.superBonus(accountId, type); return office.snapshot(); });
+  ipcMain.handle('office:super-active', async (_event, { accountId, on }) => { await office.superActive(accountId, Boolean(on)); return office.snapshot(); });
+  ipcMain.handle('office:super-tick', async (_event, { accountId }) => ({ result: await office.superTick(accountId, { manual: true }), snapshot: office.snapshot() }));
+  ipcMain.handle('skills:view', async (_event, { accountId }) => skills.view(accountId));
+  ipcMain.handle('skills:learn', async (_event, { accountId }) => skills.learn(accountId));
+  ipcMain.handle('skills:shuffle', async (_event, { accountId, containerId }) => skills.shuffle(accountId, containerId));
+  ipcMain.handle('skills:lock', async (_event, { accountId, containerId, slot, locked }) => skills.toggleLock(accountId, containerId, slot, locked));
+  ipcMain.handle('skills:assign', async (_event, { accountId, containerId, playerId }) => skills.assign(accountId, containerId, playerId || null));
   ipcMain.handle('goup:start', async (_event, { accountIds, mode, gapSec } = {}) => startGoUpManual(Array.isArray(accountIds) ? accountIds : [], { mode, gapSec }));
   ipcMain.handle('goup:stop', async () => { goup.stop(); return goup.snapshot(); });
   ipcMain.handle('goup:status', async (_event, accountIds) => goup.status(Array.isArray(accountIds) ? accountIds : null));
@@ -1070,6 +1103,8 @@ function registerIpc() {
   ipcMain.handle('social:conversation', async (_event, { accountId, friendId } = {}) => social.conversation(accountId, friendId));
   ipcMain.handle('social:send', async (_event, { accountId, friendId, text } = {}) => social.send(accountId, friendId, text));
   ipcMain.handle('social:search', async (_event, { accountId, text } = {}) => social.search(accountId, text));
+  ipcMain.handle('social:friend-scout', async (_event, { accountId, friendId } = {}) => social.friendScout(accountId, friendId));
+  ipcMain.handle('social:friend-sign', async (_event, { accountId, friendId, playerId } = {}) => social.friendSign(accountId, friendId, playerId));
   ipcMain.handle('social:act', async (_event, { accountId, action, targetId } = {}) => social.act(accountId, action, targetId));
   ipcMain.handle('social:claimMail', async (_event, { accountId, mailId } = {}) => social.claimMail(accountId, mailId || null));
   ipcMain.handle('social:poll', async () => { await social.poll(); return social.snapshot(); });
@@ -1110,6 +1145,8 @@ async function shutdownServices() {
     () => activate?.stop(),
     () => dailyBoss?.stop(),
     () => eliteAscent?.stop(),
+    () => magicTeam?.stop(),
+    () => office?.stop(),
     () => professional?.stop(),
     () => tkTransfer?.stop(),
     () => valuePredict?.stop(),

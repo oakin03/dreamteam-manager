@@ -1,3 +1,4 @@
+import SkillsTab from './SkillsTab';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import SortTable from './SortTable';
 import { filOf } from '../i18n-fil';
@@ -30,7 +31,7 @@ const TEXT = {
   tr: {
     batchAccounts: 'Hesaplar ({n})', batchAll: 'Tümünü seç', batchNone: 'Seçimi temizle', batchHint: '{n} set seçili · seçilen hesapların hepsinde aynı anda yapılır', batchRegister: 'Seçilenleri kaydet ({n})', batchPrepare: 'Seçilenleri hazırla ve kaydet ({n})', batchProgress: '{done}/{total} · {account}', batchResult: 'Toplu işlem sonucu', batchRes: { registered: 'kaydedildi', completed: 'set tamamlandı', already: 'zaten tamam', skipped: 'atlandı', short: 'malzeme eksik', error: 'hata', stopped: 'durduruldu' }, title: 'Ekipman', subtitle: 'Çanta, materyaller, güçlendirme ve koleksiyonlar',
     pickAccount: 'Hesap seç', scan: 'Tara', close: 'Kapat', stop: 'Durdur', noAccount: 'Başlamak için sağ üstten bir hesap seç.',
-    tabGear: 'Ekipmanlar', tabMaterials: 'Materyaller', tabConvert: 'Convert', tabCraft: 'Craft', tabEnchant: 'Enchant', tabEnhance: 'Enhance', tabRefine: 'Refine', tabCollections: 'Koleksiyonlar',
+    tabGear: 'Ekipmanlar', tabMaterials: 'Materyaller', tabConvert: 'Convert', tabCraft: 'Craft', tabEnchant: 'Enchant', tabEnhance: 'Enhance', tabRefine: 'Refine', tabSkills: 'Yetenekler', tabCollections: 'Koleksiyonlar',
     name: 'Ad', rarity: 'Nadirlik', type: 'Tür', level: '+', refine: 'Refine', enchant: 'Enchant', equippedBy: 'Kuşanan', inBag: 'Çantada', all: 'Hepsi', equipped: 'Kuşanılı', notEquipped: 'Kuşanılmamış',
     fabric: 'Fabric', stone: 'Refine Stone', ore: 'Refine Ore', scroll: 'Scroll of Enhancement', other: 'Diğer materyaller',
     convertHint: '5 Fabric → 1 Refine Stone (aynı nadirlik)', conversions: 'Dönüşüm adedi', willUse: '{fabric} Fabric harcanır, {stone} Refine Stone gelir', convert: 'Dönüştür', max: 'En fazla',
@@ -48,7 +49,7 @@ const TEXT = {
   en: {
     batchAccounts: 'Accounts ({n})', batchAll: 'Select all', batchNone: 'Clear selection', batchHint: '{n} set(s) selected · done on every chosen account at the same time', batchRegister: 'Register selected ({n})', batchPrepare: 'Prepare and register selected ({n})', batchProgress: '{done}/{total} · {account}', batchResult: 'Batch result', batchRes: { registered: 'registered', completed: 'set completed', already: 'already complete', skipped: 'skipped', short: 'materials short', error: 'error', stopped: 'stopped' }, title: 'Equipment', subtitle: 'Bag, materials, strengthening and collections',
     pickAccount: 'Select account', scan: 'Scan', close: 'Close', stop: 'Stop', noAccount: 'Pick an account at the top right to start.',
-    tabGear: 'Equipment', tabMaterials: 'Materials', tabConvert: 'Convert', tabCraft: 'Craft', tabEnchant: 'Enchant', tabEnhance: 'Enhance', tabRefine: 'Refine', tabCollections: 'Collections',
+    tabGear: 'Equipment', tabMaterials: 'Materials', tabConvert: 'Convert', tabCraft: 'Craft', tabEnchant: 'Enchant', tabEnhance: 'Enhance', tabRefine: 'Refine', tabSkills: 'Skills', tabCollections: 'Collections',
     name: 'Name', rarity: 'Rarity', type: 'Type', level: '+', refine: 'Refine', enchant: 'Enchant', equippedBy: 'Equipped by', inBag: 'In bag', all: 'All', equipped: 'Equipped', notEquipped: 'Not equipped',
     fabric: 'Fabric', stone: 'Refine Stone', ore: 'Refine Ore', scroll: 'Scroll of Enhancement', other: 'Other materials',
     convertHint: '5 Fabric → 1 Refine Stone (same rarity)', conversions: 'Conversions', willUse: 'Uses {fabric} Fabric, gives {stone} Refine Stone', convert: 'Convert', max: 'Max',
@@ -123,7 +124,7 @@ export default function EquipmentPage({ state, t, toast, msgText }) {
   const pick = id => run(() => api.equipment.open(id));
   const statusText = eq.job ? `${x.jobs[eq.job] || eq.job}${eq.step ? ` · ${msgText(t, `eqstep.${eq.step}`, eq.stepParams || {}, '')}` : ''}` : eq.error ? eq.error : eq.scannedAt ? fill(x.scannedAt, { time: new Date(eq.scannedAt).toLocaleTimeString() }) : '';
 
-  const tabs = [['gear', x.tabGear], ['materials', x.tabMaterials], ['convert', x.tabConvert], ['craft', x.tabCraft], ['enchant', x.tabEnchant], ['enhance', x.tabEnhance], ['refine', x.tabRefine], ['collections', x.tabCollections]];
+  const tabs = [['gear', x.tabGear], ['materials', x.tabMaterials], ['convert', x.tabConvert], ['craft', x.tabCraft], ['enchant', x.tabEnchant], ['enhance', x.tabEnhance], ['refine', x.tabRefine], ['collections', x.tabCollections], ['skills', x.tabSkills]];
   return <div className="page equipment-page">
     <div className="page-title"><div><h1>{x.title}</h1><span className="subtitle">{x.subtitle}</span></div>
       <div className="toolbar">
@@ -136,7 +137,8 @@ export default function EquipmentPage({ state, t, toast, msgText }) {
     {!eq.accountId ? <div className="panel empty-state">{x.noAccount}</div> : <>
       {statusText && <div className="trade-status"><span className={`pill ${busy ? 'warn' : eq.error ? 'bad' : 'ok'}`}><i />{statusText}</span></div>}
       <div className="market-tabs">{tabs.map(([id, label]) => <button key={id} className={tab === id ? 'active' : ''} onClick={() => setTab(id)}>{label}</button>)}</div>
-      {!m ? null : <>
+      {tab === 'skills' && <SkillsTab accountId={eq.accountId} accounts={state.accounts || []} t={t} toast={toast} />}
+      {!m || tab === 'skills' ? null : <>
         {tab === 'gear' && <GearTab gear={gear} x={x} onSelect={id => { setSelected(id); }} selected={selected} />}
         {tab === 'materials' && <MaterialsTab m={m} x={x} />}
         {tab === 'convert' && <ConvertTab m={m} x={x} busy={busy} run={run} />}

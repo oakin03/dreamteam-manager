@@ -73,25 +73,28 @@ test('teams: X is its own team at the end, No Team is not a team, blockers carry
   assert.deepEqual(pick(x.blockers[0].progress), { targetStars: 2, current: 3, required: 4, ready: false, guaranteed: true });
 });
 
-test('a team given on the Cards page: listed under Modified, never under that team; NONE takes a player out; undo restores', () => {
-  const { mem, store } = memoryStore({ players: {} }, { players: {}, trackedTeams: [] });
+test('user-given teams are gone: saved ones are dropped once, roles stay, and a scan follows the game', () => {
+  const { mem, store } = memoryStore({ players: {} }, { players: { 'id:adou': { customTeam: 'ATL', roleIds: ['sellable'] }, 'id:lebron': { customTeam: 'NONE' } }, trackedTeams: [] });
   const cards = new CardsService({ store, activity: { add() {} }, onChanged() {} });
+  assert.equal(cards.clearedCustomTeams, 2);
+  assert.ok(!('customTeam' in mem.metadata.players['id:adou']));
+  assert.deepEqual(mem.metadata.players['id:adou'].roleIds, ['sellable'], 'roles kept');
   cards.syncPlayers(buildCardPlayers(teams, inventory, rosters));
-  cards.setCustomTeam('id:adou', 'ATL');      // No Team → ATL
-  cards.setCustomTeam('id:lebron', 'NONE');   // ATL → out of its team
-  let snap = cards.snapshot();
-  const mod = snap.teams.find(t => t.modified);
-  assert.ok(mod, 'Modified group exists');
-  assert.equal(snap.teams.at(-1).modified, true, 'listed last');
-  assert.ok(!snap.teams.some(t => t.team === 'ATL'), 'ATL only had LeBron, who was taken out');
-  const adou = snap.players.find(p => p.key === 'id:adou');
-  const lebron = snap.players.find(p => p.key === 'id:lebron');
-  assert.deepEqual([adou.customTeam, adou.effectiveTeam, lebron.customTeam, lebron.effectiveTeam], ['ATL', 'ATL', 'NONE', null]);
-  assert.equal(mem.metadata.players['id:adou'].customTeam, 'ATL');
-  cards.setCustomTeam('id:lebron', null);
-  snap = cards.snapshot();
+  const snap = cards.snapshot();
+  assert.ok(!snap.teams.some(t => t.modified), 'no Modified group');
   assert.equal(snap.players.find(p => p.key === 'id:lebron').effectiveTeam, 'ATL');
-  assert.ok(snap.teams.some(t => t.team === 'ATL'));
+  assert.equal(typeof cards.setCustomTeam, 'undefined');
+});
+
+test('a scan replaces the team: a No Team player who joined a team is not No Team any more', () => {
+  const { store } = memoryStore({ players: {} }, { players: {}, trackedTeams: [] });
+  const cards = new CardsService({ store, activity: { add() {} }, onChanged() {} });
+  cards.syncPlayers([{ key: 'id:p1', playerId: 'p1', name: 'Mover', noTeam: true, team: 'No Team', teamName: 'No Team', teamId: null, stars: null }]);
+  cards.syncPlayers([{ key: 'id:p1', playerId: 'p1', name: 'Mover', team: 'BOS', teamName: 'Boston Celtics', teamId: 2, stars: 1 }]);
+  const p1 = cards.snapshot().players.find(p => p.key === 'id:p1');
+  assert.equal(p1.noTeam, false);
+  assert.equal(p1.team, 'BOS');
+  assert.equal(p1.effectiveTeam, 'BOS');
 });
 
 // Moved from the old Auto Trade tests: the Star Card inventory page reader.

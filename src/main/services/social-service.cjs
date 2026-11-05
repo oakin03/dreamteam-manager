@@ -3,7 +3,9 @@ const { GameSocket } = require('./game-socket.cjs');
 // Friends, private chat, blocked players and the mail box (read from the game client
 // and tried live 2026-10-25). Everything goes over /socket/:
 //   reads need only the user id, no sign-in (one shared plain socket for every account):
-//     getFriendsList {userId}            -> friendsListUpdate {friends:[{id, teamName, avatarUrl, online, friendshipId}]}
+//     getFriendsBootstrap {userId} (ack) -> {success, friends, requests, sent, blocked, unreadCounts, totalUnread} (2026-11-05;
+//       the old getFriendsList / searchUsers are gone, there is no user search any more)
+//     getFriendsList {userId}            -> friendsListUpdate {friends:[{id, teamName, avatarUrl, online, friendshipId}]} (before)
 //     getFriendRequests {userId}         -> friendRequestsUpdate {requests}
 //     getUnreadMessageCounts {userId}    -> unreadMessageCounts {success, totalUnread, unreadCounts:[{senderId, unreadCount}]}
 //     getPrivateMessages {userId, friendId, limit} -> privateMessageHistory {success, messages}
@@ -121,6 +123,12 @@ class SocialService {
     const r = await gs.call('getFriendsList', { userId }, 'friendsListUpdate', { timeoutMs: TIMEOUT_MS });
     return Array.isArray(r?.friends) ? r.friends : [];
   }
+  // Friends, requests, sent, blocked in one answer (the game's friends panel since 2026-11-05).
+  async _bootstrap(gs, userId) {
+    const r = await gs.ack('getFriendsBootstrap', { userId }, { timeoutMs: TIMEOUT_MS });
+    if (!r?.success) throw new Error(r?.error || r?.message || 'friends could not be read');
+    return r;
+  }
   async _requests(gs, userId) {
     const r = await gs.call('getFriendRequests', { userId }, 'friendRequestsUpdate', { timeoutMs: TIMEOUT_MS });
     return Array.isArray(r?.requests) ? r.requests : [];
@@ -145,7 +153,12 @@ class SocialService {
   async view(id) {
     const userId = await this._uid(id);
     const gs = await this._read();
-    const [friends, requests, unread, mails, sent, blocked] = [
+    let boot = await this._bootstrap(gs, userId).catch(() => null);
+    if (!boot) boot = await this._writer(id).then(w => this._bootstrap(w.gs, w.userId)).catch(() => null);
+    const [friends, requests, unread, mails, sent, blocked] = boot ? [
+      boot.friends || [], boot.requests || [], await this._unread(gs, userId), await this._mails(gs, userId),
+      boot.sent || [], (boot.blocked || []).map(x => x?.blocked || x).filter(Boolean)
+    ] : [
       await this._friends(gs, userId), await this._requests(gs, userId), await this._unread(gs, userId), await this._mails(gs, userId),
       await this._rest(userId, 'sent').then(b => b.sentRequests || []).catch(() => null),
       await this._rest(userId, 'blocked').then(b => (b.blockedUsers || []).map(x => x?.blocked || x).filter(Boolean)).catch(() => null)
@@ -211,14 +224,42 @@ class SocialService {
     return this.view(id);
   }
 
-  // Teams whose name contains `text`, as seen by this account (friendship status included).
+  // The game has no user search any more (2026-11-05): own accounts whose name contains
+  // `text`, with the friendship status this account sees (accounts befriend each other
+  // to sign from each other's Scout).
   async search(id, text) {
-    const q = String(text || '').trim();
-    if (q.length < 2) return [];
+    const q = String(text || '').trim().toLowerCase();
+    if (!q) return [];
     const userId = await this._uid(id);
-    const r = await (await this._read()).call('searchUsers', { userId, teamName: q }, 'searchResults', { timeoutMs: TIMEOUT_MS });
-    this.searched = { ...(this.searched || {}), ...Object.fromEntries((r?.users || []).map(u => [u.id, u.teamName])) };
-    return (r?.users || []).filter(u => u.id !== userId);
+    const v = this.views[id] || {};
+    const friendIds = new Set((v.friends || []).map(f => f.id));
+    const pendingIds = new Set([...(v.sent || []), ...(v.requests || [])].map(x => x?.receiver?.id || x?.receiverId || x?.sender?.id || x?.senderId || x?.id).filter(Boolean));
+    const out = [];
+    for (const a of this._accounts()) {
+      if (a.id === id || !String(a.name || '').toLowerCase().includes(q)) continue;
+      const uid = this._userId(a.id);
+      if (!uid || uid === userId) continue;
+      out.push({ id: uid, teamName: a.name, level: this.store.getAccountProfile?.()?.accounts?.[a.id]?.level ?? null, own: true, friendshipStatus: friendIds.has(uid) ? 'ACCEPTED' : pendingIds.has(uid) ? 'PENDING' : 'NONE' });
+    }
+    this.searched = { ...(this.searched || {}), ...Object.fromEntries(out.map(u => [u.id, u.teamName])) };
+    return out;
+  }
+
+  // A friend's Scout board (6 free agents, refreshed every 30 min) and signing from it.
+  async friendScout(id, friendId) {
+    const w = await this._writer(id);
+    const r = await w.gs.ack('getFriendFreeAgents', { userId: w.userId, friendId }, { timeoutMs: TIMEOUT_MS });
+    if (!r?.success) throw new Error(r?.error || r?.message || 'The board could not be read.');
+    return { friend: r.friend || null, freeAgents: r.freeAgents || [], refreshesIn: Number(r.refreshesIn) || 0, at: new Date(this.now()).toISOString() };
+  }
+  async friendSign(id, friendId, playerId) {
+    const w = await this._writer(id);
+    const r = await w.gs.ack('signFriendFreeAgent', { userId: w.userId, friendId, playerId }, { timeoutMs: TIMEOUT_MS });
+    if (!r?.success) throw new Error(r?.message || r?.error || 'The player could not be signed.');
+    const p = r.revealedPlayer || (r.freeAgents || []).find(x => x.id === playerId) || {};
+    const friendName = this.views[id]?.friends?.find(f => f.id === friendId)?.teamName || '?';
+    this._log(id, 'success', 'so.friendSigned', { name: p.name || '?', friend: friendName }, `Signed ${p.name || '?'} from ${friendName}'s Scout`);
+    return { freeAgents: r.freeAgents || [], player: p };
   }
 
   _targetName(id, action, targetId) {
@@ -234,10 +275,13 @@ class SocialService {
     const w = await this._writer(id);
     const before = this.views[id]?.mails || [];
     const targets = mailId ? before.filter(m => m.id === mailId) : unclaimedMails(before);
-    const r = mailId
-      ? await w.gs.ack('claimMailItems', { mailId }, { timeoutMs: TIMEOUT_MS })
-      : await w.gs.ack('claimAllMailItems', { userId: w.userId }, { timeoutMs: TIMEOUT_MS });
-    if (!r?.success) throw new Error(r?.message || r?.error || 'The rewards could not be claimed.');
+    // one by one: the game removed claimAllMailItems (2026-11-05)
+    let ok = 0, r = null;
+    for (const m of (mailId ? [{ id: mailId }] : targets)) {
+      r = await w.gs.ack('claimMailItems', { mailId: m.id }, { timeoutMs: TIMEOUT_MS });
+      if (r?.success) ok++;
+    }
+    if (!ok) throw new Error(r?.message || r?.error || 'The rewards could not be claimed.');
     const totals = new Map();
     for (const m of targets) for (const it of m.items || []) totals.set(itemName(it), (totals.get(itemName(it)) || 0) + (Number(it.quantity ?? it.amount) || 1));
     const items = [...totals].map(([n, q]) => `${q} ${n}`).join(', ');

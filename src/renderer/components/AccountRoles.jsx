@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { filOf } from '../i18n-fil';
+import { GroupedPicks } from './AccountGroups';
 
 // Account roles (user 2026-10-31). Main, "2. Main" and Side are fixed (never renamed or
 // deleted, only recoloured); Turnuva comes ready and the user adds more as needed. Every
@@ -125,4 +126,36 @@ export function RoleStart({ state, lang, busy, onStart }) {
     {open && <div className="role-start-menu" onMouseLeave={() => setOpen(false)}>{defs.map(d => <label key={d.id}><input type="checkbox" checked={valid.includes(d.id)} onChange={() => toggle(d.id)} /><RolePill def={d} /></label>)}</div>}
     <button type="button" className="btn" disabled={busy || !ids.length} onClick={() => onStart(ids)}>▶ {fill(x.startBtn, { n: ids.length })}</button>
   </span>;
+}
+
+const BULK_TEXT = {
+  tr: { open: 'Toplu rol ver', title: 'Seçili hesaplara rol ver', role: 'Verilecek rol', apply: '{n} hesaba uygula', all: 'Tümünü seç', clear: 'Seçimi temizle', done: '{n} hesabın rolü değişti', hint: 'Main ve 2. Main tek hesaplık rollerdir; onları hesabın kendi satırından ver.' },
+  en: { open: 'Bulk role', title: 'Give a role to the selected accounts', role: 'Role to give', apply: 'Apply to {n} account(s)', all: 'Select all', clear: 'Clear', done: 'Role changed on {n} account(s)', hint: 'Main and 2. Main belong to one account each; give them from the account\'s own row.' },
+  get fil() { return filOf(this.en); }
+};
+export const bulkRoleText = lang => BULK_TEXT[lang] || BULK_TEXT.en;
+
+// Many accounts at once (user 2026-11-05): pick accounts by group, pick a role, apply.
+export function BulkRole({ accounts, settings, profile, lang, Modal, onClose, toast, refresh }) {
+  const x = bulkRoleText(lang);
+  const defs = roleDefs(settings).filter(d => d.id !== 'main' && d.id !== 'main2');
+  const [ids, setIds] = useState([]);
+  const [role, setRole] = useState(defs[0]?.id || 'side');
+  const [busy, setBusy] = useState(false);
+  const all = ids.length === accounts.length;
+  const apply = async () => {
+    setBusy(true);
+    let n = 0;
+    try { for (const id of ids) { await api.accounts.setRole(id, role); n++; } toast?.(x.done.replace('{n}', n), 'success'); await refresh?.(); onClose(); }
+    catch (e) { toast?.(e.message, 'error'); } finally { setBusy(false); }
+  };
+  return <Modal title={x.title} onClose={onClose} width={760}>
+    <div className="bulk-role">
+      <label className="bulk-role-pick"><span>{x.role}</span><select value={role} onChange={e => setRole(e.target.value)}>{defs.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}</select></label>
+      <small className="muted-text">{x.hint}</small>
+      <div className="dp-picks-wrap"><button className="chip" disabled={busy} onClick={() => setIds(all ? [] : accounts.map(a => a.id))}>{all ? x.clear : x.all}</button>
+        <div className="pvp-picks"><GroupedPicks storeKey="bulk-role" accounts={accounts} selected={ids} disabled={busy} onSet={setIds} render={a => <button key={a.id} type="button" disabled={busy} className={ids.includes(a.id) ? 'selected' : ''} onClick={() => setIds(ids.includes(a.id) ? ids.filter(i => i !== a.id) : [...ids, a.id])}><span>{a.name}</span><RolePill small def={roleDefs(settings).find(d => d.id === roleOf(a, profile, roleDefs(settings)))} /></button>} /></div></div>
+      <div className="modal-actions"><button className="btn ghost" onClick={onClose}>{ROLE_TEXT[lang]?.cancel || 'Cancel'}</button><button className="btn primary" disabled={busy || !ids.length} onClick={apply}>{x.apply.replace('{n}', ids.length)}</button></div>
+    </div>
+  </Modal>;
 }

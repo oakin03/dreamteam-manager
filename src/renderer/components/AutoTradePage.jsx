@@ -36,7 +36,7 @@ const TEXT = {
     preTitle: 'Başlamadan önce', checking: 'Hesaplar kontrol ediliyor…', conflictsTitle: 'Bu hesaplar başka bir sistemde kullanılıyor',
     conflict: { autoplay: 'Auto Play çalışıyor', scout: 'Scout açık', equipment: 'Ekipman açık', market: 'Pazar işlemi sürüyor', tournament: 'Turnuva kaydı sürüyor', schedule: 'Zamanlayıcıda bekleyen görev' },
     stopAndStart: 'Durdur ve başlat', benchTitle: 'Bench\'te önceden oyuncu olan hesaplar', benchHint: 'Her oyuncu için seç: sadece "Trade\'e dahil et" seçilenler (ve rolü/fiyatı uyanlar) kullanılır.',
-    actList: 'Pazarda listele', actTrade: 'Trade\'e dahil et', actCard: 'Karta çevir', actFire: 'Kov', actNone: 'Hiçbir şey yapma', fireTitle: 'Oyuncular kovulacak', fireAsk: 'Bu oyuncular takımdan kovulacak (oyundaki FIRE). Bu işlem geri alınamaz. Emin misin?', fireYes: 'Evet, kov ve başlat', cardHint: 'Rolüne bakılmadan Main\'e aktarılır ve karta çevrilir', blocked: { equipped: 'Ekipmanlı · taşınamaz', x: 'X oyuncu · taşınamaz', temporary: 'Süreli · taşınamaz', starter: 'Başlangıç beşi' },
+    starting: 'Başlatılıyor · önce seçili hesaplardaki Auto Play durduruluyor…', actList: 'Pazarda listele', actTrade: 'Trade\'e dahil et', actCard: 'Karta çevir', actFire: 'Kov', actNone: 'Hiçbir şey yapma', fireTitle: 'Oyuncular kovulacak', fireAsk: 'Bu oyuncular takımdan kovulacak (oyundaki FIRE). Bu işlem geri alınamaz. Emin misin?', fireYes: 'Evet, kov ve başlat', cardHint: 'Rolüne bakılmadan Main\'e aktarılır ve karta çevrilir', blocked: { equipped: 'Ekipmanlı · taşınamaz', x: 'X oyuncu · taşınamaz', temporary: 'Süreli · taşınamaz', starter: 'Başlangıç beşi' },
     fitsMain: 'Main\'e gider', fitsSide: 'Side\'da kalır', fitsNone: 'Rol/fiyat uymuyor',
     noBench: 'Hiçbir hesabın bench\'inde oyuncu yok.', startNow: 'Başlat',
     live: 'Canlı durum', openTime: 'açık', visits: 'giriş', tk: 'TK', noPlayers: 'Henüz oyuncu yok',
@@ -81,7 +81,7 @@ const TEXT = {
     preTitle: 'Before starting', checking: 'Checking accounts…', conflictsTitle: 'These accounts are used by another system',
     conflict: { autoplay: 'Auto Play running', scout: 'Scout open', equipment: 'Equipment open', market: 'Market job running', tournament: 'Tournament registration running', schedule: 'Scheduled task waiting' },
     stopAndStart: 'Stop and start', benchTitle: 'Accounts with players already on the bench', benchHint: 'Choose per player: only "Include in trade" players (that fit a role/price) are used.',
-    actList: 'List on market', actTrade: 'Include in trade', actCard: 'Turn into a card', actFire: 'Fire', actNone: 'Do nothing', fireTitle: 'Players will be fired', fireAsk: 'These players will be fired from the team (the game\'s FIRE). This cannot be undone. Are you sure?', fireYes: 'Yes, fire and start', cardHint: 'Moved to Main and turned into a card whatever its roles', blocked: { equipped: 'Equipped · cannot move', x: 'X player · cannot move', temporary: 'Temporary · cannot move', starter: 'Starter' },
+    starting: 'Starting · Auto Play on the selected accounts is being stopped first…', actList: 'List on market', actTrade: 'Include in trade', actCard: 'Turn into a card', actFire: 'Fire', actNone: 'Do nothing', fireTitle: 'Players will be fired', fireAsk: 'These players will be fired from the team (the game\'s FIRE). This cannot be undone. Are you sure?', fireYes: 'Yes, fire and start', cardHint: 'Moved to Main and turned into a card whatever its roles', blocked: { equipped: 'Equipped · cannot move', x: 'X player · cannot move', temporary: 'Temporary · cannot move', starter: 'Starter' },
     fitsMain: 'goes to main', fitsSide: 'stays on side', fitsNone: 'role/price does not fit',
     noBench: 'No account has players on the bench.', startNow: 'Start',
     live: 'Live', openTime: 'open', visits: 'visits', tk: 'TK', noPlayers: 'No players yet',
@@ -146,6 +146,7 @@ export default function AutoTradePage({ state, t, toast, msgText, Modal, refresh
     return () => clearTimeout(h);
   }, [form, running]);
   const [pre, setPre] = useState(null);       // preflight result
+  const [starting, setStarting] = useState(false); // stopping Auto Play on the accounts, then the run starts
   const [decisions, setDecisions] = useState({});
   const [confirmReset, setConfirmReset] = useState(false);
   const [showHow, setShowHow] = useState(false);
@@ -179,9 +180,12 @@ export default function AutoTradePage({ state, t, toast, msgText, Modal, refresh
   const firing = () => (pre?.accounts || []).flatMap(a => a.bench.filter(p => decisions[a.id]?.[p.id]?.action === 'fire').map(p => ({ ...p, account: a.name })));
   const startChecked = stopConflicts => { const list = firing(); if (list.length) setFireAsk({ list, stopConflicts }); else startNow(stopConflicts); };
   const startNow = stopConflicts => run_(async () => {
+    setStarting(true);
+    try {
     await api.autoTrade.start({ ...form, maxPrice: priceNum, loopCount: Number(form.loopCount) || 1, accountIds: selected, actingMainId: mainSelected ? undefined : form.actingMainId, roomPassword: form.roomPassword || undefined, benchDecisions: decisions, stopConflicts });
     setPre(null);
     await refresh();
+    } finally { setStarting(false); }
   });
 
   const statusKey = run?.status || 'idle';
@@ -228,7 +232,7 @@ export default function AutoTradePage({ state, t, toast, msgText, Modal, refresh
     </>}
 
     {pre && <Modal title={x.preTitle} onClose={() => setPre(null)} width={1040}>
-      {pre.loading ? <p>{x.checking}</p> : <Preflight pre={pre} x={x} decisions={decisions} setDecisions={setDecisions} onCancel={() => setPre(null)} onStart={startChecked} playerIndex={playerIndex} />}
+      {pre.loading ? <p>{x.checking}</p> : <Preflight pre={pre} x={x} decisions={decisions} setDecisions={setDecisions} onCancel={() => setPre(null)} onStart={startChecked} playerIndex={playerIndex} starting={starting} />}
       {fireAsk && <Modal title={x.fireTitle} onClose={() => setFireAsk(null)} width={520}>
         <p className="bad-text">{x.fireAsk}</p>
         <ul className="fire-list">{fireAsk.list.map(p => <li key={p.account + p.id}><b>{p.name}</b><InjuryMark name={p.name} /> <span className="muted-text">{p.position} · {p.account}</span></li>)}</ul>
@@ -301,7 +305,7 @@ function RoleRules({ state, x, form, set, selected, roles }) {
   </section>;
 }
 
-function Preflight({ pre, x, decisions, setDecisions, onCancel, onStart, playerIndex }) {
+function Preflight({ pre, x, decisions, setDecisions, onCancel, onStart, playerIndex, starting = false }) {
   const withBench = pre.accounts.filter(a => a.bench.length);
   const setD = (aid, pid, patch) => setDecisions(d => ({ ...d, [aid]: { ...d[aid], [pid]: { ...d[aid][pid], ...patch } } }));
   return <div className="at2-pre">
@@ -319,7 +323,7 @@ function Preflight({ pre, x, decisions, setDecisions, onCancel, onStart, playerI
         })}</tbody></SortTable></div>)}</> : <p className="muted-text">{x.noBench}</p>}
     <div className="modal-actions">
       <button className="btn ghost" onClick={onCancel}>{x.cancel}</button>
-      {pre.conflicts.length ? <button className="btn danger-soft" onClick={() => onStart(true)}>{x.stopAndStart}</button> : <button className="btn primary" onClick={() => onStart(false)}>{x.startNow}</button>}
+      {starting ? <span className="pill warn"><i />{x.starting}</span> : pre.conflicts.length ? <button className="btn danger-soft" onClick={() => onStart(true)}>{x.stopAndStart}</button> : <button className="btn primary" onClick={() => onStart(false)}>{x.startNow}</button>}
     </div>
   </div>;
 }

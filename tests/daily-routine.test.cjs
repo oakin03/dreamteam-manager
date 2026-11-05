@@ -65,7 +65,7 @@ function fakeGame(opts = {}) {
       state.donations.push(p.amount); return { success: true, message: 'Donation successful!' };
     }
     if (event === 'getUserMails') return { success: true, mails: state.mails };
-    if (event === 'claimAllMailItems') { for (const m of state.mails) m.isClaimed = true; return { success: true, message: 'Claimed' }; }
+    if (event === 'claimMailItems') { const m = state.mails.find(x => x.id === p.mailId); if (m) m.isClaimed = true; return { success: !!m, message: 'Claimed' }; }
     if (event === 'getDailyTasks') return state.tasksStarted ? { tasks: tasks() } : { needsStart: true };
     if (event === 'startDailyTasks') { state.tasksStarted = true; return { tasks: tasks(), success: true }; }
     if (event === 'claimAllDailyTaskRewards' || event === 'claimDailyTaskReward') {
@@ -364,11 +364,12 @@ test('Mail rewards are claimed with the task rewards and summed up by item', asy
   ] });
   const { s, logs } = routine(game);
   await s.claimRewards(['a1']);
-  assert.equal(game.calls.filter(c => c.event === 'claimAllMailItems').length, 1);
+  // one call per mail with rewards (the game removed claimAllMailItems 2026-11-05)
+  assert.deepEqual(game.calls.filter(c => c.event === 'claimMailItems').map(c => c.payload.mailId), ['m1', 'm2']);
   const log = logs.find(l => l.code === 'ml.claimed');
   assert.deepEqual(log.params, { count: 2, items: '3 Gift Box, 3 Energy Drink' });
   await s.claimRewards(['a1']);
-  assert.equal(game.calls.filter(c => c.event === 'claimAllMailItems').length, 1, 'nothing left to claim, no second claim');
+  assert.equal(game.calls.filter(c => c.event === 'claimMailItems').length, 2, 'nothing left to claim, no second claim');
 });
 
 test('Auto Play: what the plugin reports while running (opponent, message) reaches the page state', async () => {

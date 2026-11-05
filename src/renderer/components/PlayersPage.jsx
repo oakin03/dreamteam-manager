@@ -142,7 +142,7 @@ export default function PlayersPage({ state, t, toast }) {
           </div>
             {editing === p.id && <div className="role-chips pl-role-edit">{roles.map(r => { const on = p.roleIds.includes(r.id); return <button key={r.id} className={on ? 'on' : ''} style={on ? { background: r.color, borderColor: r.color, color: '#fff' } : undefined} onClick={() => toggleRole(p, r.id)}>{r.name}</button>; })}</div>}
           </td>
-          <td>{p.card ? <span className="pl-card">{p.card.customTeam ? <em className="modified-badge">{x.modified}</em> : null}{p.card.noTeam && !p.card.customTeam ? x.noTeam : fill(x.stars, { s: p.card.stars ?? 0 })} · {fill(x.cards, { n: p.card.cardCount })}</span> : <span className="muted-text">—</span>}</td>
+          <td>{p.card ? <span className="pl-card">{p.card.noTeam ? x.noTeam : fill(x.stars, { s: p.card.stars ?? 0 })} · {fill(x.cards, { n: p.card.cardCount })}</span> : <span className="muted-text">—</span>}</td>
           <td className="actions">{inBuy.has(p.id) ? <span className="pill ok" title={x.inBuy}><i />Auto Buy</span> : <button className="btn ghost small" title={x.addBuy} onClick={() => addToBuy([p])}>+ Auto Buy</button>}</td>
         </tr>)}</tbody>
       </SortTable></div>

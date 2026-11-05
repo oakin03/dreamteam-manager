@@ -22,14 +22,13 @@ function normalizeConfig(raw = {}) {
   };
 }
 
-// Players on a team in the Cards system (No Team / unknown players excluded). A team
-// the user gave a player on the Cards page counts; "NONE" takes it out of its team.
-function teamPlayersFrom(cards, cardMetadata = null) {
+// Players on a team in the Cards system (No Team / unknown players excluded), as the
+// game assigns them (user-given teams were removed 2026-11-05).
+function teamPlayersFrom(cards) {
   const set = new Set();
   for (const p of Object.values(cards?.players || {})) {
     if (!p?.playerId) continue;
-    const custom = cardMetadata?.players?.['id:' + p.playerId]?.customTeam;
-    const team = custom === 'NONE' ? null : custom || (!p.noTeam && !p.x && p.team && p.team !== 'No Team' ? p.team : null);
+    const team = !p.noTeam && !p.x && p.team && p.team !== 'No Team' ? p.team : null;
     if (team) set.add(p.playerId);
   }
   return set;

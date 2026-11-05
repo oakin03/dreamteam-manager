@@ -52,7 +52,9 @@ class GameSocket {
       const timer = setTimeout(() => finish(new Error(`No reply to ${event}.`)), timeoutMs);
       const onReply = data => finish(null, data);
       const onErrors = errorEvents.map(name => [name, data => finish(null, { success: false, ...(data && typeof data === 'object' ? data : { error: String(data) }), errorEvent: name })]);
-      const onDisconnect = () => finish(new Error('Game socket disconnected.'));
+      // after a duplicateLogin the game also drops the connection: that is a sign-in elsewhere,
+      // not an outage (gameHealth must not pause every account for it)
+      const onDisconnect = () => { const e = new Error(this.kicked ? 'Signed in elsewhere; the game closed this connection.' : 'Game socket disconnected.'); if (this.kicked) e.code = 'KICKED'; finish(e); };
       const onAbort = () => finish(abortError());
       const socket = this.socket;
       function finish(error, data) {

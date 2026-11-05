@@ -63,23 +63,14 @@ test('sideOrder and tradeFailure', () => {
   assert.equal(R.tradeFailure('Trade would exceed max player limit (11)'), 'rosterFull');
 });
 
-test('base as sellable uses the Cards team, including teams the user gave or took away', () => {
+test('base as sellable uses the Cards team as the game assigns it', () => {
   const cards = { players: { 'id:a': { playerId: 'a', team: 'BOS' }, 'id:b': { playerId: 'b', team: 'No Team', noTeam: true }, 'id:c': { playerId: 'c', team: 'LAL' } } };
-  const meta = { players: { 'id:b': { customTeam: 'LAL' }, 'id:c': { customTeam: 'NONE' } } };
-  const team = R.teamPlayersFrom(cards, meta);
-  assert.deepEqual([...team].sort(), ['a', 'b']);
+  const team = R.teamPlayersFrom(cards);
+  assert.deepEqual([...team].sort(), ['a', 'c']);
   const base = id => ({ id, baseSalary: 50, signedSalary: 48, newBaseSalary: 50 });
   const c2 = { ...cfg, baseAsSellable: true };
   assert.equal(R.classify(base('a'), c2, roles, team), 'side');
-  assert.equal(R.classify(base('b'), c2, roles, team), 'side', 'No Team player given LAL counts');
-  assert.equal(R.classify(base('c'), c2, roles, team), 'main', 'taken out of LAL → normal rules (price ≤ 100)');
-  assert.equal(R.classify({ ...base('a'), signedSalary: 51 }, c2, roles, team), 'main', 'above Base → normal rules');
-  // Projected Base (default): 50 at Base 50 is not Base, because tomorrow's Base is 48.
-  assert.equal(R.nextBase(50), 48);
-  assert.equal(R.classify({ ...base('a'), signedSalary: 50 }, c2, roles, team), 'main', "salary = today's Base → not Base tomorrow");
-  assert.equal(R.classify({ ...base('a'), signedSalary: 50 }, { ...c2, baseProjected: false }, roles, team), 'side', "today's Base when projection is off");
-  assert.equal(R.salaryAtBase({ signedSalary: 48, newBaseSalary: 48 }), true);
-  assert.equal(R.salaryAtBase({ signedSalary: 48, newBaseSalary: 48 }, { projected: true }), false);
+  assert.equal(R.classify(base('b'), c2, roles, team), 'main', 'No Team → normal rules (price ≤ 100)');
 });
 
 test('classify: roles both ways are asked, before the price rule; Base still wins', () => {

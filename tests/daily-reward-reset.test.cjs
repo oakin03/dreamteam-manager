@@ -152,3 +152,36 @@ test('The claim uses the registered connection another service already holds', a
   assert.deepEqual(borrowedCalls, ['dailyRewards:claim']);
   assert.equal(game.emits.filter(e => e.event === 'register').length, 0, 'no own register');
 });
+
+test('A claim connection taken back by another sign-in is not a game outage and stays quiet', async t => {
+  const { isKickError, isOutageError } = require('../src/main/services/daily-reward-service.cjs');
+  const kicked = Object.assign(new Error('Signed in elsewhere; the game closed this connection.'), { code: 'KICKED' });
+  assert.equal(isKickError(kicked), true);
+  assert.equal(isOutageError(kicked), false);
+  assert.equal(isKickError(new Error('Game socket disconnected.')), true);
+  assert.equal(isOutageError(new Error('Game socket could not connect: websocket error')), true);
+  const { isNetError } = require('../src/main/services/game-health.cjs');
+  assert.equal(isNetError(kicked), false, 'gameHealth ignores kicks');
+
+  const { store } = fixture(t, fakeGame({ tier: 7 }));
+  const logs = [];
+  let down = 0;
+  const svc = new DailyRewardService({ store, activity: { add: e => logs.push(e) }, engine: { states: () => ({}) }, sessions: { get: async () => { throw kicked; }, invalidate() {} }, gameHealth: { isDown: () => false, reportDown: () => { down++; } }, onChanged() {} });
+  const controller = new AbortController();
+  const p = svc.runWorker('main', controller.signal).catch(() => {});
+  await new Promise(r => setTimeout(r, 50));
+  controller.abort();
+  await p;
+  assert.equal(down, 0, 'no game-down report');
+  assert.ok(logs.some(l => l.code === 'dw.busy') && !logs.some(l => l.code === 'dw.failed'));
+});
+
+test('An account in an Auto Play match is not claimed on its own connection', async t => {
+  const game = fakeGame({ tier: 2, ready: true });
+  const { store } = fixture(t, game);
+  const svc = new DailyRewardService({ store, activity: { add() {} }, engine: { states: () => ({ main: { status: 'running' } }) }, sessions: { get: async () => ({ userId: 'u1', cookieHeader: 'c=1' }) }, createSocket: game.createSocket, onChanged() {} });
+  svc.inMatch = async () => true;
+  const r = await svc.checkOrClaim(store.getAccounts()[0], new AbortController().signal);
+  assert.equal(game.claims, 0);
+  assert.equal(r.delayMs, 60000);
+});

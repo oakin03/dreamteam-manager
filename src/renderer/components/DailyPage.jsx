@@ -11,9 +11,9 @@ const LETTERS = ['A', 'B', 'C', 'D'];
 
 const TEXT = {
   tr: {
-    title: 'Günlük İşler', howTitle: 'Nasıl çalışır?', subtitle: 'Go-up, Professional, Daily Boss, Elite Ascent, Prop, Daily Quiz, Cheer ve Chat · hepsi tarayıcı açmadan',
+    title: 'Günlük İşler', howTitle: 'Nasıl çalışır?', subtitle: 'Go-up, Professional, Daily Boss, Elite Ascent, Big 3, Prop, Daily Quiz, Cheer ve Chat · hepsi tarayıcı açmadan',
     pf: {"title":"Professional","start":"Başlat ({n})","refresh":"Durumları oku","stage":"Aşama","next":"Sıradaki rakip","left":"Kalan maç","cards":"Maç kartı","status":"Durum","result":"Sonuç","hint":"Sezon ve playoff otomatik oynanır. Hall of Fame'de rakibi sen seçersin.","createHof":"Hall of Fame'i başlat","pickHof":"Rakip seç","hofTeam":"{name} (Ofans {off} · Defans {def})","props":"Props {n}/2","stg":{"noSeason":"Sezon yok · başlatılacak","season":"Sezon {p}/{t} · {w}-{l}","noPlayoffs":"Sezon bitti · playoff kurulacak","playoffs":"Playoff · {round} · seri {w}-{l}","champion":"Şampiyon · Hall of Fame hazır","eliminated":"Playoff'ta elendi","hof":"Hall of Fame · {d}/{t} yenildi","hofDone":"Hall of Fame tamam · Honor Way açılacak","seasonOver":"Sezon bitti · yeni sezon kurulacak","honor":"Honor Way · {d}/{t} yenildi","honorDone":"Honor Way tamam · Legacy Way açılacak","legacy":"Legacy Way · {d}/{t} yenildi","legacyDone":"Legacy Way tamam","error":"Okunamadı"},"rounds":{"FIRST_ROUND":"1. tur","CONFERENCE_SEMIFINALS":"Konferans yarı finali","CONFERENCE_FINALS":"Konferans finali","NBA_FINALS":"Final"},"st":{"eliminated":"Elendi","champion":"Şampiyon","needPick":"Rakip seçilmeli","hofDone":"HOF tamam","legacyDone":"Legacy Way tamam"},"how":["Her hesabın aşaması otomatik bulunur: sezon yoksa konferans rastgele seçilip 82 maçlık sezon kurulur; sezon bitince playoff kurulur ve sıradaki playoff maçı oynanır.","Günlük maç hakkı bitene kadar oynar. Hak bitince, varsa oyundan kazanılan Prof Match Card ile \"Props\" yenilemesi yapılır (günde en fazla 2). TIX ile yenileme asla yapılmaz.","Hall of Fame'deki hesaplarda rakipler hücum/savunma toplamlarıyla listelenir; hangi rakiple oynanacağını sen seçersin. O rakip yenilince durur ve yeni seçim bekler.","Playoff'ta elenen hesapta playoff otomatik sıfırlanır ve normal sezona dönülür. Hall of Fame bitince Honor Way, o da bitince Legacy Way açılır; bunlarda rakip sırası oyunda sabittir, sırayla oynanır. Auto Play bu hesaplarda durdurulur, bitince yeniden başlatılır."]},
-    tabs: { goup: 'Go-up', pro: 'Professional', boss: 'Daily Boss', ascent: 'Elite Ascent', props: 'Prop', quiz: 'Daily Quiz', cheer: 'Cheer', chat: 'Chat' },
+    tabs: { goup: 'Go-up', pro: 'Professional', boss: 'Daily Boss', ascent: 'Elite Ascent', magic: 'Big 3 (Magic Team)', props: 'Prop', quiz: 'Daily Quiz', cheer: 'Cheer', chat: 'Chat' },
     pr: {
       button: 'Prop bas', stop: 'Durdur', refresh: 'Çantaları oku', small: 'Su şişesi küçük (+10)', medium: 'Su şişesi orta (+30)', used: 'Kullanılan', players: 'İlk 5',
       st: { finding: 'Maç aranıyor', noMatch: 'Takım maçta değil', late: '3./4. periyotta · devre arası geçti', waitingHalftime: 'Devre arası bekleniyor', using: 'Prop basılıyor', done: 'Bitti', error: 'Hata', stopped: 'Durduruldu' },
@@ -26,7 +26,11 @@ const TEXT = {
       refreshAscent: 'Katları oku', ascentHint: 'Katları okumak için hesaplara kısa süreliğine giriş yapılır; o hesap oyunda açıksa oradan çıkış yapılır.',
       st: { queued: 'Sırada', login: 'Bağlanıyor', starting: 'Maç başlatılıyor', playing: 'Maçta', otherMatch: 'Başka maçta · bekliyor', waitingGame: 'Oyun bekleniyor', done: 'Bitti', noAttempts: 'Hak yok', locked: 'Seviye yetmiyor', error: 'Hata', stopped: 'Durduruldu' },
       bossHow: ['Her hesap seçtiğin boss ile günlük 2 hakkını bitirene kadar oynar; rakip bot olduğu için sıra beklenmez.', 'Her boss bir seviye ister; seviyesi yetmeyen hesapta o boss seçilemez.', 'Başlarken bu hesaplardaki Auto Play durdurulur, bitince yeniden başlatılır. Hak 19:10\'da yenilenir.'],
-      ascentHow: ['Her hesap bulunduğu kattaki botla oynar; kazanırsa bir üst kata çıkar. Günlük 2 bedava hak bitene kadar devam eder.', 'Ücretli haklar asla satın alınmaz ve kullanılmaz.', 'Elite Ascent hesaba giriş ister: o hesap oyunda açıksa oradan çıkış yapılır. Auto Play durdurulur, bitince yeniden başlatılır.']
+      ascentHow: ['Her hesap bulunduğu kattaki botla oynar; kazanırsa bir üst kata çıkar. Günlük 2 bedava hak bitene kadar devam eder.', 'Ücretli haklar asla satın alınmaz ve kullanılmaz.', 'Elite Ascent hesaba giriş ister: o hesap oyunda açıksa oradan çıkış yapılır. Auto Play durdurulur, bitince yeniden başlatılır.'],
+      refreshMagic: 'Üçlüleri oku', magicHint: 'Lv 15 bir Big3 üçlüsü MIAMI ve PHILADELPHIA botlarını yener, ödül alınır; sonra üçlü Ofis\'te 20. seviyeye kadar çalışabilir.', trio: 'Üçlü', beaten: 'Yenilen bot', auto: 'Otomatik (hazır üçlü)',
+      magicState: { LOCKED: 'Kilitli', FIGHTING: 'Maça hazır', REWARD: 'Ödül hazır', TRAINING: 'Antrenmanda' },
+      magicSt: { claimed: 'Ödül alındı', locked: 'Lv 15 üçlü yok', inactive: 'Üçlü aktif değil (Ofis → Big Three)', pkLimit: 'Günlük PK sınırı' },
+      magicHow: ['Her hesap hazır üçlüsüyle (Lv 15, Ofis\'te aktif) sıradaki botla oynar; iki bot yenilince ödül kendiliğinden alınır.', 'Maçlar PK maçı gibi ödül verir ve günlük PK sınırından düşer; bir çalıştırmada hesap başına en fazla 6 maç oynanır.', 'Başlarken bu hesaplardaki Auto Play durdurulur, bitince yeniden başlatılır.']
     },
     selectAll: 'Tümünü seç', clear: 'Seçimi temizle', stop: 'Durdur', refresh: 'Durumu yenile', checking: 'Kontrol ediliyor…', account: 'Hesap', status: 'Durum',
     notReady: 'Bu özellik uygulama yeniden başlatılınca çalışır.',
@@ -58,9 +62,9 @@ const TEXT = {
     }
   },
   en: {
-    title: 'Daily', howTitle: 'How does it work?', subtitle: 'Go-up, Professional, Daily Boss, Elite Ascent, Props, Daily Quiz, Cheer and Chat · all without a browser',
+    title: 'Daily', howTitle: 'How does it work?', subtitle: 'Go-up, Professional, Daily Boss, Elite Ascent, Big 3, Props, Daily Quiz, Cheer and Chat · all without a browser',
     pf: {"title":"Professional","start":"Start ({n})","refresh":"Read status","stage":"Stage","next":"Next opponent","left":"Matches left","cards":"Match cards","status":"Status","result":"Result","hint":"Season and playoffs are played automatically. In the Hall of Fame you pick the opponent.","createHof":"Start the Hall of Fame","pickHof":"Pick an opponent","hofTeam":"{name} (Offense {off} · Defense {def})","props":"Props {n}/2","stg":{"noSeason":"No season · will be started","season":"Season {p}/{t} · {w}-{l}","noPlayoffs":"Season over · playoffs will be created","playoffs":"Playoffs · {round} · series {w}-{l}","champion":"Champion · Hall of Fame ready","eliminated":"Eliminated in the playoffs","hof":"Hall of Fame · {d}/{t} beaten","hofDone":"Hall of Fame done · Honor Way will open","seasonOver":"Season over · a new season will be created","honor":"Honor Way · {d}/{t} beaten","honorDone":"Honor Way done · Legacy Way will open","legacy":"Legacy Way · {d}/{t} beaten","legacyDone":"Legacy Way done","error":"Could not be read"},"rounds":{"FIRST_ROUND":"Round 1","CONFERENCE_SEMIFINALS":"Conference semifinals","CONFERENCE_FINALS":"Conference finals","NBA_FINALS":"Finals"},"st":{"eliminated":"Eliminated","champion":"Champion","needPick":"Pick an opponent","hofDone":"HOF done","legacyDone":"Legacy Way done"},"how":["Every account's stage is found automatically: with no season a random conference is chosen and the 82-game season is created; after the season the playoffs are created and the next playoff game is played.","It plays until the daily matches are used. Then, if there is a Prof Match Card won in the game, a \"Props\" refill is used (at most 2 a day). TIX refills are never used.","Accounts in the Hall of Fame list the opponents with their offense/defense totals; you pick who to play. When that opponent is beaten it stops and waits for a new pick.","An account eliminated in the playoffs gets its playoffs reset automatically and goes back to the regular season. After the Hall of Fame the Honor Way opens, after that the Legacy Way; their opponents come in a fixed order and are played in turn. Auto Play is stopped on these accounts and started again afterwards."]},
-    tabs: { goup: 'Go-up', pro: 'Professional', boss: 'Daily Boss', ascent: 'Elite Ascent', props: 'Props', quiz: 'Daily Quiz', cheer: 'Cheer', chat: 'Chat' },
+    tabs: { goup: 'Go-up', pro: 'Professional', boss: 'Daily Boss', ascent: 'Elite Ascent', magic: 'Big 3 (Magic Team)', props: 'Props', quiz: 'Daily Quiz', cheer: 'Cheer', chat: 'Chat' },
     pr: {
       button: 'Use props', stop: 'Stop', refresh: 'Read bags', small: 'Water Bottle Small (+10)', medium: 'Water Bottle Medium (+30)', used: 'Used', players: 'Starters',
       st: { finding: 'Finding the match', noMatch: 'The team is not in a match', late: 'Quarter 3/4 · halftime is over', waitingHalftime: 'Waiting for halftime', using: 'Using props', done: 'Done', error: 'Error', stopped: 'Stopped' },
@@ -73,7 +77,11 @@ const TEXT = {
       refreshAscent: 'Read floors', ascentHint: 'Reading the floors signs in to each account briefly; if the account is open in the game it is signed out there.',
       st: { queued: 'Queued', login: 'Connecting', starting: 'Starting the match', playing: 'In a match', otherMatch: 'In another match · waiting', waitingGame: 'Waiting for the game', done: 'Done', noAttempts: 'No attempts', locked: 'Level too low', error: 'Error', stopped: 'Stopped' },
       bossHow: ['Every account plays the chosen boss until its 2 daily attempts are used; the opponent is a bot, so there is no queue.', 'Each boss needs a level; an account below it cannot choose that boss.', 'On start Auto Play on these accounts is stopped and started again afterwards. Attempts reset at 19:10.'],
-      ascentHow: ['Every account plays the bot of its current floor; a win moves it one floor up. It goes on until the 2 free daily attempts are used.', 'Paid attempts are never bought or used.', 'Elite Ascent needs the account signed in: if it is open in the game it is signed out there. Auto Play is stopped and started again afterwards.']
+      ascentHow: ['Every account plays the bot of its current floor; a win moves it one floor up. It goes on until the 2 free daily attempts are used.', 'Paid attempts are never bought or used.', 'Elite Ascent needs the account signed in: if it is open in the game it is signed out there. Auto Play is stopped and started again afterwards.'],
+      refreshMagic: 'Read trios', magicHint: 'A level 15 Big3 trio beats the MIAMI and PHILADELPHIA bots and claims a prize; then the trio can train to level 20 in the Office.', trio: 'Trio', beaten: 'Bots beaten', auto: 'Automatic (ready trio)',
+      magicState: { LOCKED: 'Locked', FIGHTING: 'Ready to fight', REWARD: 'Prize ready', TRAINING: 'Training' },
+      magicSt: { claimed: 'Prize claimed', locked: 'No level 15 trio', inactive: 'Trio not active (Office → Big Three)', pkLimit: 'Daily PK limit' },
+      magicHow: ['Every account plays the next bot with its ready trio (level 15, active in the Office); after both bots the prize is claimed by itself.', 'The matches pay like PK matches and count against the daily PK limit; at most 6 matches per account in one run.', 'Auto Play on these accounts is stopped at the start and started again when it is over.']
     },
     selectAll: 'Select all', clear: 'Clear selection', stop: 'Stop', refresh: 'Refresh status', checking: 'Checking…', account: 'Account', status: 'Status',
     notReady: 'This works after the app is restarted.',
@@ -299,6 +307,46 @@ function ProTab({ state, x, toast }) {
         </tr>;
       }, (g, o) => groupHeadRow(g, o, { ids, setIds, disabled: running, select: true, rest: 6 }))}</tbody></SortTable></div>
     <details className="panel pvp-how"><summary>{x.howTitle}</summary><ul>{x.pf.how.map(l => <li key={l}>{l}</li>)}</ul></details>
+  </>;
+}
+
+// Big 3 · Magic Team (Proving Grounds): the ready trio of each account beats two bots, then the prize.
+function MagicTab({ state, x, toast }) {
+  const grp = useGroupedRows('dp-magic');
+  const m = state.magicTeam || {};
+  const accounts = state.accounts || [];
+  const running = Boolean(m.running);
+  const [ids, setIds] = useSavedIds(state, 'magicAccountIds', accounts);
+  const [checking, setChecking] = useState(false);
+  const check = async () => { if (!api.magic) return toast(x.notReady, 'error'); setChecking(true); try { await api.magic.status(ids.length ? ids : accounts.map(a => a.id)); } catch (er) { toast(er.message, 'error'); } finally { setChecking(false); } };
+  const allOn = accounts.length > 0 && accounts.every(a => ids.includes(a.id));
+  const start = async () => { if (!api.magic) return toast(x.notReady, 'error'); try { await api.magic.start(Object.fromEntries(ids.map(id => [id, 'auto']))); } catch (er) { toast(er.message, 'error'); } };
+  const st = s => x.pg.magicSt[s] || x.pg.st[s] || s;
+  return <>
+    <div className="panel pg-bar">
+      <button className="btn ghost" disabled={running} onClick={() => setIds(allOn ? [] : accounts.map(a => a.id))}>{allOn ? x.clear : x.selectAll}</button>
+      <span className="pg-hint">{x.pg.magicHint}</span>
+      <span className="sp" />
+      <button className="btn ghost" disabled={checking || running} onClick={check}>{checking ? x.checking : x.pg.refreshMagic}</button>
+      {running ? <button className="btn danger-soft" onClick={() => api.magic.stop().catch(er => toast(er.message, 'error'))}>{x.stop}</button>
+        : <button className="btn primary" disabled={!ids.length} onClick={start}>{fill(x.pg.start, { n: ids.length })}</button>}
+    </div>
+    <div className="panel table-panel dp-table"><SortTable><thead><tr><th className="select-col"><input type="checkbox" disabled={running} checked={allOn} onChange={() => setIds(allOn ? [] : accounts.map(a => a.id))} aria-label={x.selectAll} /></th><th>{x.account}</th><th>{x.pg.trio}</th><th>{x.pg.beaten}</th><th>{x.pg.enemy}</th><th>{x.status}</th><th>{x.pg.result}</th></tr></thead>
+      <tbody>{grp(accounts, a => {
+        const r = m.run?.accounts?.[a.id];
+        const teams = m.info?.[a.id]?.teams || [];
+        const ready = teams.find(tm => tm.status === 'REWARD') || teams.find(tm => tm.status === 'FIGHTING') || teams.slice().sort((p, q) => q.level - p.level)[0];
+        return <tr key={a.id} className={r?.status === 'playing' ? 'dp-live' : ''}>
+          <td><input type="checkbox" disabled={running} checked={ids.includes(a.id)} onChange={() => setIds(ids.includes(a.id) ? ids.filter(i => i !== a.id) : [...ids, a.id])} aria-label={a.name} /></td>
+          <td><b>{a.name}</b></td>
+          <td>{ready ? `${ready.team} · Lv ${ready.level}` : '—'}</td>
+          <td>{r?.beaten ?? ready?.botsDefeated ?? '—'}{(r?.beaten ?? ready?.botsDefeated) != null ? '/2' : ''}</td>
+          <td>{r?.enemy || '—'}</td>
+          <td className={r?.status === 'error' ? 'bad-text' : ''}>{r ? st(r.status) + (r.status === 'error' && r.reason ? `: ${r.reason}` : '') : (ready ? (x.pg.magicState[ready.status] || ready.status) : '')}</td>
+          <td>{r?.played ? fill(x.pg.wl, { w: r.won, l: r.lost }) : '—'}</td>
+        </tr>;
+      }, (g, o) => groupHeadRow(g, o, { ids, setIds, disabled: running, select: true, rest: 5 }))}</tbody></SortTable></div>
+    <details className="panel pvp-how"><summary>{x.howTitle}</summary><ul>{x.pg.magicHow.map(l => <li key={l}>{l}</li>)}</ul></details>
   </>;
 }
 
@@ -566,7 +614,7 @@ export default function DailyPage({ state, t, toast }) {
   const x = TEXT[t.lang] || TEXT.en;
   const [tab, setTab] = useState(() => state.settings?.dailyTab || 'goup');
   const choose = id => { setTab(id); api.settings.update({ dailyTab: id }).catch(() => {}); };
-  const live = { pro: state.professional?.running, props: (state.props?.busy || []).length > 0, boss: state.dailyBoss?.running, ascent: state.eliteAscent?.running, goup: state.goup?.running, quiz: state.quiz?.running, cheer: state.cheer?.busy, chat: state.chat?.running };
+  const live = { pro: state.professional?.running, props: (state.props?.busy || []).length > 0, boss: state.dailyBoss?.running, ascent: state.eliteAscent?.running, magic: state.magicTeam?.running, goup: state.goup?.running, quiz: state.quiz?.running, cheer: state.cheer?.busy, chat: state.chat?.running };
   const asking = Object.values(state.quiz?.run?.accounts || {}).some(r => r.status === 'askUser');
   return <div className="page daily-page">
     <div className="page-title"><div><h1>{x.title}</h1><span className="subtitle">{x.subtitle}</span></div></div>
@@ -575,6 +623,7 @@ export default function DailyPage({ state, t, toast }) {
     {tab === 'pro' && <ProTab state={state} x={x} toast={toast} />}
     {tab === 'boss' && <BossTab state={state} x={x} toast={toast} />}
     {tab === 'ascent' && <AscentTab state={state} x={x} toast={toast} />}
+    {tab === 'magic' && <MagicTab state={state} x={x} toast={toast} />}
     {tab === 'props' && <PropsTab state={state} x={x} toast={toast} />}
     {tab === 'quiz' && <QuizTab state={state} x={x} toast={toast} />}
     {tab === 'cheer' && <CheerTab state={state} x={x} toast={toast} />}

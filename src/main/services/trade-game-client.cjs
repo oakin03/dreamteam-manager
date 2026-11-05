@@ -17,7 +17,8 @@ function sleep(ms, signal) {
 const waitOf = r => r?.retryAfter ?? Number(String(r?.message || r?.error || '').match(/please wait (\d+)/i)?.[1]);
 
 class TradeGameAccount {
-  constructor({ account, userId, conn, signal }) {
+  constructor({ account, userId, conn, signal, createSocket = undefined }) {
+    this.createSocket = createSocket;
     this.account = account;
     this.userId = userId;
     this.conn = conn;
@@ -30,10 +31,27 @@ class TradeGameAccount {
     try {
       await conn.register(session.userId, { signal, owner: 'Auto Trade' });
     } catch (error) { conn.close(); throw error; }
-    return new TradeGameAccount({ account, userId: session.userId, conn, signal });
+    return new TradeGameAccount({ account, userId: session.userId, conn, signal, createSocket });
   }
 
   get socket() { return this.conn.socket; }
+
+  // Waits for the account's running match to end (the friend-list trade invite is refused
+  // in a match; trade rooms are not). Unknown counts as no match.
+  async waitNoMatch({ maxMs = 15 * 60 * 1000, pollMs = 5000 } = {}) {
+    let sim = null;
+    const until = Date.now() + maxMs;
+    try {
+      sim = await GameSocket.open({ createSocket: this.createSocket, path: '/simulation-socket/', signal: this.signal, timeoutMs: 10000 });
+      for (;;) {
+        const r = await sim.ack('getUserActiveMatch', { userId: this.userId }, { signal: this.signal, timeoutMs: 8000 }).catch(e => { if (e?.name === 'AbortError') throw e; return null; });
+        if (!r?.match || Date.now() > until) return;
+        await sleep(pollMs, this.signal);
+      }
+    } catch (error) {
+      if (error?.name === 'AbortError') throw error;
+    } finally { try { sim?.close(); } catch {} }
+  }
   close() { try { this.conn.close(); } catch {} }
 
   async _ack(event, payload, { retries = 4 } = {}) {

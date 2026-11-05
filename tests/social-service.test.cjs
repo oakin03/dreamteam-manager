@@ -47,7 +47,9 @@ function fakeGame() {
     };
     s.timeout = () => ({ emit: (event, p, cb) => setImmediate(() => {
       if (event === 'getUserMails') cb(null, { success: true, mails: state.mails });
-      else if (event === 'claimAllMailItems' || event === 'claimMailItems') { for (const m of state.mails) m.isClaimed = true; cb(null, { success: true, message: 'ok' }); }
+      // the game's friends panel since 2026-11-05: everything in one answer
+      else if (event === 'getFriendsBootstrap') cb(null, { success: true, friends: state.friends, requests: state.requests, sent: [{ id: 'fs9', friend: { id: 'x', teamName: 'Waiting' } }], blocked: [{ blocked: { id: 'b1', teamName: 'Spammer' } }] });
+      else if (event === 'claimMailItems') { const m = state.mails.find(x => x.id === p.mailId); if (m) m.isClaimed = true; cb(null, { success: !!m, message: 'ok' }); }
       else cb(null, { success: false });
     }) });
     setImmediate(() => local('connect'));

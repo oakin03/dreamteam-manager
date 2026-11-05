@@ -373,6 +373,9 @@ class AccountProfileService {
         if (!info?.success || String(info.id || userId) !== String(userId)) continue;
         const before = this._state().accounts[accountId] || {};
         const expCurrent = Number(info.experience), expMax = Number(info.nextLvl);
+        // the game's daily PK limit (2026-11-05): rewarded PK matches left today
+        const pk = typeof socket.ack === 'function' ? await socket.ack('getPKDailyStatus', { userId }, { signal, timeoutMs: 5000 }).catch(() => null) : null;
+        const pkStatus = pk?.success && pk.status ? pk.status : null;
         const saved = this.merge(accountId, {
           teamName: info.teamName || null,
           level: info.level,
@@ -384,7 +387,9 @@ class AccountProfileService {
           apk: normalizeNumber(info.autoPKTickets),
           salary: normalizeNumber(info.totalSalaryUsed),
           salaryCap: normalizeNumber(info.salaryCap),
-          teamValue: normalizeNumber(info.totalValue)
+          teamValue: normalizeNumber(info.totalValue),
+          pkLeft: pkStatus ? (pkStatus.limitReached ? 0 : normalizeNumber(pkStatus.remaining)) : undefined,
+          pkLimit: pkStatus ? normalizeNumber(pkStatus.limit) : undefined
         });
         if (saved) updated++;
         if (saved?.level != null && before.level != null && saved.level !== before.level) {

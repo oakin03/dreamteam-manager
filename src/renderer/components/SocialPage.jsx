@@ -16,9 +16,10 @@ const TEXT = {
     tabs: { mail: 'Gelen Kutusu', friends: 'Arkadaşlar', chat: 'Sohbet', requests: 'İstekler', blocked: 'Engellenenler' },
     overview: 'Hesaplar', badgeHint: '{r} istek · {u} okunmamış mesaj · {m} ödüllü posta',
     mail: { claimAll: 'Hepsini topla ({n})', claim: 'Topla', claimed: 'Toplandı', noRewards: 'Ödül yok', empty: 'Gelen kutusu boş.', system: 'Sistem', expires: '{t} tarihinde silinir', rewards: 'Ödüller', subject: 'Konu', date: 'Tarih', status: 'Durum' },
+    scout: { open: 'Scout', title: '{name} · Scout', refresh: '{m} dk sonra yenilenir', sign: 'İmzala', signed: 'İmzalandı', empty: 'Panoda oyuncu yok.', close: 'Kapat', price: 'Fiyat', done: '{name} imzalandı' },
     friends: { empty: 'Bu hesabın arkadaşı yok.', online: 'Çevrimiçi', offline: 'Çevrimdışı', chat: 'Sohbet', remove: 'Çıkar', sure: 'Emin misin?', yes: 'Evet, çıkar', no: 'Vazgeç', count: '{n}/50 arkadaş', unread: '{n} yeni' },
     chat: { pick: 'Soldan bir arkadaş seç.', empty: 'Bu sohbette mesaj yok.', placeholder: '{name} kullanıcısına yaz…', send: 'Gönder', sending: 'Gönderiliyor…', archived: 'Oyun sohbetleri her gün 19:00 civarında siler; uygulama bir gün daha saklar.', you: 'Sen', noFriends: 'Sohbet için önce arkadaş gerekir.' },
-    requests: { incoming: 'Gelen istekler', outgoing: 'Gönderilen istekler', accept: 'Kabul et', decline: 'Reddet', cancel: 'İptal et', noneIn: 'Bekleyen gelen istek yok.', noneOut: 'Bekleyen gönderilmiş istek yok.', send: 'Arkadaşlık isteği gönder', search: 'Takım adı ara (en az 2 harf)…', find: 'Ara', noResults: 'Bu adla takım bulunamadı.', add: 'İstek gönder', status: { PENDING: 'İstek bekliyor', ACCEPTED: 'Zaten arkadaş', BLOCKED: 'Engelli' }, level: 'Lv {n}', sent: 'Arkadaşlık isteği gönderildi' },
+    requests: { incoming: 'Gelen istekler', outgoing: 'Gönderilen istekler', accept: 'Kabul et', decline: 'Reddet', cancel: 'İptal et', noneIn: 'Bekleyen gelen istek yok.', noneOut: 'Bekleyen gönderilmiş istek yok.', send: 'Arkadaşlık isteği gönder', search: 'Kendi hesaplarında ara (oyunda kullanıcı arama kalktı)…', find: 'Ara', noResults: 'Bu adla takım bulunamadı.', add: 'İstek gönder', status: { PENDING: 'İstek bekliyor', ACCEPTED: 'Zaten arkadaş', BLOCKED: 'Engelli' }, level: 'Lv {n}', sent: 'Arkadaşlık isteği gönderildi' },
     blocked: { unblock: 'Engeli kaldır', empty: 'Engellenen oyuncu yok.' },
     done: { accept: 'İstek kabul edildi', decline: 'İstek reddedildi', cancel: 'İstek iptal edildi', remove: 'Arkadaş çıkarıldı', unblock: 'Engel kaldırıldı', claim: 'Ödüller toplandı', sent: 'Mesaj gönderildi' }
   },
@@ -28,9 +29,10 @@ const TEXT = {
     tabs: { mail: 'Inbox', friends: 'Friends', chat: 'Chat', requests: 'Requests', blocked: 'Blocked' },
     overview: 'Accounts', badgeHint: '{r} request(s) · {u} unread message(s) · {m} mail(s) with rewards',
     mail: { claimAll: 'Claim all ({n})', claim: 'Claim', claimed: 'Claimed', noRewards: 'No rewards', empty: 'The inbox is empty.', system: 'System', expires: 'deleted on {t}', rewards: 'Rewards', subject: 'Subject', date: 'Date', status: 'Status' },
+    scout: { open: 'Scout', title: '{name} · Scout', refresh: 'refreshes in {m} min', sign: 'Sign', signed: 'Signed', empty: 'No players on the board.', close: 'Close', price: 'Price', done: '{name} signed' },
     friends: { empty: 'This account has no friends.', online: 'Online', offline: 'Offline', chat: 'Chat', remove: 'Remove', sure: 'Sure?', yes: 'Yes, remove', no: 'Cancel', count: '{n}/50 friends', unread: '{n} new' },
     chat: { pick: 'Pick a friend on the left.', empty: 'No messages in this chat.', placeholder: 'Write to {name}…', send: 'Send', sending: 'Sending…', archived: 'The game wipes chats every day around 19:00; the app keeps them one more day.', you: 'You', noFriends: 'A chat needs a friend first.' },
-    requests: { incoming: 'Incoming requests', outgoing: 'Sent requests', accept: 'Accept', decline: 'Decline', cancel: 'Cancel', noneIn: 'No incoming requests.', noneOut: 'No sent requests waiting.', send: 'Send a friend request', search: 'Search a team name (2+ letters)…', find: 'Search', noResults: 'No team with this name.', add: 'Send request', status: { PENDING: 'Request pending', ACCEPTED: 'Already friends', BLOCKED: 'Blocked' }, level: 'Lv {n}', sent: 'Friend request sent' },
+    requests: { incoming: 'Incoming requests', outgoing: 'Sent requests', accept: 'Accept', decline: 'Decline', cancel: 'Cancel', noneIn: 'No incoming requests.', noneOut: 'No sent requests waiting.', send: 'Send a friend request', search: 'Search your own accounts (the game removed user search)…', find: 'Search', noResults: 'No team with this name.', add: 'Send request', status: { PENDING: 'Request pending', ACCEPTED: 'Already friends', BLOCKED: 'Blocked' }, level: 'Lv {n}', sent: 'Friend request sent' },
     blocked: { unblock: 'Unblock', empty: 'No blocked players.' },
     done: { accept: 'Request accepted', decline: 'Request declined', cancel: 'Request cancelled', remove: 'Friend removed', unblock: 'Unblocked', claim: 'Rewards claimed', sent: 'Message sent' }
   },
@@ -66,6 +68,7 @@ export default function SocialPage({ state, t, toast }) {
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
   const [confirm, setConfirm] = useState(null);
+  const [scout, setScout] = useState(null); // { friend, data, loading }
   const listRef = useRef(null);
   const badges = state.social?.badges || {};
   const ready = Boolean(api?.social);
@@ -95,7 +98,7 @@ export default function SocialPage({ state, t, toast }) {
   };
   const [q, setQ] = useState('');
   const [found, setFound] = useState(null);
-  const find = async () => { if (q.trim().length < 2) return; setBusy(true); try { setFound(await api.social.search(accountId, q)); } catch (e) { toast(e.message, 'error'); } finally { setBusy(false); } };
+  const find = async () => { if (!q.trim()) return; setBusy(true); try { setFound(await api.social.search(accountId, q)); } catch (e) { toast(e.message, 'error'); } finally { setBusy(false); } };
   const request = async u => { await act('request', u.id, x.requests.sent); setFound(f => (f || []).map(v => v.id === u.id ? { ...v, friendshipStatus: 'PENDING' } : v)); };
   const claim = async mailId => {
     setBusy(true);
@@ -111,6 +114,20 @@ export default function SocialPage({ state, t, toast }) {
     } catch (e) { toast(e.message, 'error'); } finally { setSending(false); }
   };
 
+  const openScout = async f => {
+    setScout({ friend: f, data: null, loading: true });
+    try { const data = await api.social.friendScout(accountId, f.id); setScout({ friend: f, data, loading: false }); }
+    catch (e) { setScout(null); toast(e.message, 'error'); }
+  };
+  const signFrom = async p => {
+    if (!scout) return;
+    setScout(s => ({ ...s, loading: true }));
+    try {
+      const r = await api.social.friendSign(accountId, scout.friend.id, p.id);
+      setScout(s => ({ ...s, loading: false, data: { ...s.data, freeAgents: r.freeAgents?.length ? r.freeAgents : s.data.freeAgents.map(a => a.id === p.id ? { ...a, isSigned: true } : a) } }));
+      toast(fill(x.scout.done, { name: p.visualName || p.name }), 'success');
+    } catch (e) { setScout(s => ({ ...s, loading: false })); toast(e.message, 'error'); }
+  };
   const friends = view?.friends || [];
   const friend = friends.find(f => f.id === friendId);
   const incoming = (view?.requests || []).map(r => ({ id: r.id, user: r.from || r.user || r.sender || {} }));
@@ -167,6 +184,14 @@ export default function SocialPage({ state, t, toast }) {
 
     {tab === 'friends' && <div className="panel so-panel">
       <div className="so-panel-head"><b>{fill(x.friends.count, { n: friends.length })}</b></div>
+      {scout && <div className="so-scout">
+        <div className="so-scout-head"><b>{fill(x.scout.title, { name: scout.friend.teamName })}</b>{scout.data && <small className="muted">{fill(x.scout.refresh, { m: Math.ceil((scout.data.refreshesIn || 0) / 60) })}</small>}<span className="sp"/><button className="btn ghost small" onClick={() => setScout(null)}>{x.scout.close}</button></div>
+        {!scout.data ? <div className="empty">{x.loading}</div> : !scout.data.freeAgents.length ? <div className="empty">{x.scout.empty}</div> : <div className="so-scout-grid">{scout.data.freeAgents.map(p => <div key={p.id} className={`so-scout-card ${p.isSigned ? 'signed' : ''}`}>
+          <b>{p.visualName || p.name}</b><small>{[p.position, p.rating, p.team].filter(Boolean).join(' · ')}</small>
+          <span className="num">{x.scout.price}: {Number(p.baseSalary || 0).toLocaleString()}</span>
+          {p.isSigned ? <span className="muted">{x.scout.signed}</span> : <button className="btn primary small" disabled={scout.loading} onClick={() => signFrom(p)}>{x.scout.sign}</button>}
+        </div>)}</div>}
+      </div>}
       {!friends.length ? <div className="empty">{busy ? x.loading : x.friends.empty}</div> : <div className="so-list">
         {sortedFriends.map(f => <div key={f.id} className="so-row">
           <Avatar url={f.avatarUrl} name={f.teamName}/>
@@ -174,6 +199,7 @@ export default function SocialPage({ state, t, toast }) {
           {f.unread > 0 && <i className="so-dot">{fill(x.friends.unread, { n: f.unread })}</i>}
           <span className="sp"/>
           <button className="btn ghost small" onClick={() => openChat(f.id)}>{x.friends.chat}</button>
+          <button className="btn ghost small" onClick={() => openScout(f)}>{x.scout.open}</button>
           {confirm === f.id
             ? <><span className="so-sure">{x.friends.sure}</span><button className="btn danger-soft small" disabled={busy} onClick={() => act('remove', f.id, x.done.remove)}>{x.friends.yes}</button><button className="btn ghost small" onClick={() => setConfirm(null)}>{x.friends.no}</button></>
             : <button className="btn danger-soft small" onClick={() => setConfirm(f.id)}>{x.friends.remove}</button>}
@@ -205,7 +231,7 @@ export default function SocialPage({ state, t, toast }) {
     </div>}
 
     {tab === 'requests' && <div className="panel so-panel so-search"><div className="so-panel-head"><b>{x.requests.send}</b></div>
-      <div className="so-search-bar"><input value={q} placeholder={x.requests.search} onChange={e => setQ(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') find(); }} /><button className="btn primary small" disabled={busy || q.trim().length < 2} onClick={find}>{x.requests.find}</button></div>
+      <div className="so-search-bar"><input value={q} placeholder={x.requests.search} onChange={e => setQ(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') find(); }} /><button className="btn primary small" disabled={busy || !q.trim()} onClick={find}>{x.requests.find}</button></div>
       {found && (!found.length ? <div className="empty">{x.requests.noResults}</div> : <div className="so-list">{found.map(u => <div key={u.id} className="so-row">
         <Avatar url={u.avatarUrl} name={u.teamName}/><div className="so-who"><b>{u.teamName}</b><small>{(x.requests.level || '').replace('{n}', u.level ?? '?')}</small></div><span className="sp"/>
         {u.friendshipStatus && u.friendshipStatus !== 'NONE' ? <span className="muted">{x.requests.status[u.friendshipStatus] || u.friendshipStatus}</span> : <button className="btn primary small" disabled={busy} onClick={() => request(u)}>{x.requests.add}</button>}

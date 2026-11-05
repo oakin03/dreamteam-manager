@@ -8,7 +8,7 @@ const { GameSocket } = require('./game-socket.cjs');
 const PROBE_MS = 2 * 60 * 1000;
 
 const NET_ERROR = /could not connect|websocket error|socket disconnected|disconnected|connection timed out|xhr poll|transport (close|error)|ECONN|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|network/i;
-function isNetError(error) { return NET_ERROR.test(String(error?.message || error || '')); }
+function isNetError(error) { if (error?.code === 'KICKED' || error?.code === 'KICK_LOOP') return false; return NET_ERROR.test(String(error?.message || error || '')); }
 
 function abortError() { const e = new Error('Aborted'); e.name = 'AbortError'; return e; }
 

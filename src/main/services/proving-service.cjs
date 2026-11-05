@@ -649,4 +649,4 @@ class ProfessionalService extends ProvingBase {
   }
 }
 
-module.exports = { DailyBossService, EliteAscentService, ProfessionalService };
+module.exports = { ProvingBase, DailyBossService, EliteAscentService, ProfessionalService };

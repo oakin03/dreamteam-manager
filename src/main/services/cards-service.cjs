@@ -6,12 +6,11 @@ const DEFAULT_ROLES = [
   { id: 'card', name: 'Kart', builtIn: true, color: '#c0392b' }
 ];
 
-const MODIFIED_TEAM = 'MOD'; // the Cards page group of players with a user-given team
+const MODIFIED_TEAM = 'MOD'; // (old) the Cards page group of players with a user-given team
 
-// The team a player counts for: the user's choice first, then the game's.
-function effectiveTeamOf(player, customTeam) {
-  if (customTeam === 'NONE') return null;
-  if (customTeam) return customTeam;
+// The team a player counts for: the game's own (user-given teams were removed
+// 2026-11-05; the game moves players between teams itself).
+function effectiveTeamOf(player) {
   return player?.noTeam || player?.x ? null : (player?.team && player.team !== 'No Team' ? player.team : null);
 }
 
@@ -259,7 +258,13 @@ class CardsService {
   _ensureDefaults() {
     this.store.saveCardRoles(normalizeRoles(this.store.getCardRoles()));
     this.store.saveCards(normalizeData(this.store.getCards()));
-    this.store.saveCardMetadata(normalizeMetadata(this.store.getCardMetadata()));
+    const metadata = normalizeMetadata(this.store.getCardMetadata());
+    // User-given teams are gone (2026-11-05): their saved teams are dropped once, roles stay.
+    this.clearedCustomTeams = 0;
+    for (const entry of Object.values(metadata.players || {})) {
+      if (entry && 'customTeam' in entry) { delete entry.customTeam; this.clearedCustomTeams++; }
+    }
+    this.store.saveCardMetadata(metadata);
   }
 
   _roles() { return normalizeRoles(this.store.getCardRoles()); }
@@ -271,11 +276,7 @@ class CardsService {
     const roleIds = Array.isArray(meta.roleIds) ? meta.roleIds : [];
     return {
       ...player,
-      // A team the user gave this player (e.g. a No Team player → LAL). Auto Trade
-      // treats the player as on that team; this page lists it under "Değiştirilmiş".
-      customTeam: meta.customTeam || null,
-      // The team that counts (Auto Trade): "NONE" = removed from its team.
-      effectiveTeam: effectiveTeamOf(player, meta.customTeam),
+      effectiveTeam: effectiveTeamOf(player),
       progress: player.noTeam ? null : cardProgress(player.stars, player.cards || player.cardCount),
       roleIds,
       roles: roleIds.map(id => roles.find(r => r.id === id)).filter(Boolean)
@@ -293,9 +294,9 @@ class CardsService {
     const players = Object.values(data.players).filter(p => p.active !== false).map(p => this._playerView(p, metadata, roles));
     const teamMap = new Map();
     for (const player of players) {
-      if (player.noTeam && !player.customTeam) continue;
-      const team = player.customTeam ? MODIFIED_TEAM : (String(player.team || '—').trim() || '—');
-      if (!teamMap.has(team)) teamMap.set(team, { players: [], teamName: player.customTeam ? 'Değiştirilmiş' : (player.teamName || team), teamId: player.customTeam ? null : (player.teamId ?? null) });
+      if (player.noTeam) continue;
+      const team = String(player.team || '—').trim() || '—';
+      if (!teamMap.has(team)) teamMap.set(team, { players: [], teamName: player.teamName || team, teamId: player.teamId ?? null });
       teamMap.get(team).players.push(player);
     }
     const teams = [...teamMap.entries()].map(([team, entry]) => {
@@ -409,21 +410,6 @@ class CardsService {
     return true;
   }
 
-  // team: an abbreviation like "LAL" (give a team), "NONE" (take it out of its
-  // team = No Team), or null (undo: back to the game's own team).
-  setCustomTeam(playerKey, team) {
-    const metadata = this._metadata();
-    const value = team ? String(team).trim().toUpperCase() : null;
-    if (value && (value === MODIFIED_TEAM || value === 'X')) throw new Error('Bu takım atanamaz.');
-    const entry = { ...(metadata.players[playerKey] || {}) };
-    if (value) entry.customTeam = value; else delete entry.customTeam;
-    entry.updatedAt = new Date().toISOString();
-    metadata.players[playerKey] = entry;
-    this.store.saveCardMetadata(metadata);
-    this.onChanged?.();
-    return true;
-  }
-
   setTrackedTeams(teams) {
     const metadata = this._metadata();
     metadata.trackedTeams = [...new Set((teams || []).map(x => String(x).trim()).filter(Boolean))];
@@ -467,7 +453,9 @@ class CardsService {
       const key = incoming.key || playerKeyOf(incoming);
       const previous = data.players[key] || {};
       const { legacyKeys = [], ...clean } = incoming;
-      next[key] = { ...previous, ...clean, key, active: true, firstSeenAt: previous.firstSeenAt || now, lastSeenAt: now };
+      // the game's own data replaces the old entry: a player moved from No Team to a team (or to
+      // another team) must not keep the old team fields
+      next[key] = { ...clean, noTeam: Boolean(clean.noTeam), key, active: true, firstSeenAt: previous.firstSeenAt || now, lastSeenAt: now };
       if (!metadata.players[key]?.roleIds?.length) {
         const legacy = legacyKeys.find(old => claims.get(old) === 1 && metadata.players[old]?.roleIds?.length);
         if (legacy) {

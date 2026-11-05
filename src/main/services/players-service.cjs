@@ -91,7 +91,7 @@ class PlayersService {
         ratingBefore: old && old.rating !== p.rating ? old.rating : null,
         atBase: Boolean(bs), baseSince: bs?.since || null, baseSinceUnknown: Boolean(bs?.beforeHistory),
         roleIds: Array.isArray(m.roleIds) ? m.roleIds : [],
-        card: card ? { stars: card.noTeam ? null : Number(card.stars || 0), cardCount: Number(card.cardCount || 0), noTeam: Boolean(card.noTeam), team: card.team || null, customTeam: m.customTeam || null } : null
+        card: card ? { stars: card.noTeam ? null : Number(card.stars || 0), cardCount: Number(card.cardCount || 0), noTeam: Boolean(card.noTeam), team: card.team || null } : null
       };
     });
     return { fetchedAt: data.fetchedAt, day: data.day, busy: this.busy, error: this.error, players, nextAt: new Date(this.nextFetchAt()).toISOString(), comparedDay: prevDay || null };

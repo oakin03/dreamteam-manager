@@ -319,17 +319,22 @@ class DailyRoutineService {
 
   // Mail box (captured from the game client 2026-10-25, /socket/, acks, cookie only):
   //   getUserMails {userId} -> {success, mails:[{id, title, isRead, isClaimed, items:[...]}]}
-  //   claimAllMailItems {userId} -> {success, message}
+  //   claimMailItems {mailId} -> {success, message}  (one by one: the game removed claimAllMailItems 2026-11-05)
   async _claimMail(account, main, userId, signal) {
     const box = await main.ack('getUserMails', { userId }, { signal });
     if (!box?.success) throw new Error(reasonOf(box));
     const open = (box.mails || []).filter(m => !m.isClaimed && Array.isArray(m.items) && m.items.length);
     if (!open.length) return { count: 0 };
-    const reply = await this._claimAck(main, 'claimAllMailItems', { userId }, signal);
-    if (!reply?.success) throw new Error(reasonOf(reply));
-    const items = mailItems(open);
-    this._log(account, 'success', 'ml.claimed', { count: open.length, items: items || '—' }, `Mail rewards claimed · ${open.length} mail(s)${items ? ` · ${items}` : ''}`);
-    return { count: open.length, items };
+    const done = [];
+    let lastError = null;
+    for (const m of open) {
+      const reply = await this._claimAck(main, 'claimMailItems', { mailId: m.id }, signal);
+      if (reply?.success) done.push(m); else lastError = reasonOf(reply);
+    }
+    if (!done.length) throw new Error(lastError || 'mail rewards refused');
+    const items = mailItems(done);
+    this._log(account, 'success', 'ml.claimed', { count: done.length, items: items || '—' }, `Mail rewards claimed · ${done.length} mail(s)${items ? ` · ${items}` : ''}`);
+    return { count: done.length, items };
   }
 
   async _claimTasks(account, main, userId, signal) {
