@@ -11,14 +11,15 @@ const LETTERS = ['A', 'B', 'C', 'D'];
 
 const TEXT = {
   tr: {
-    title: 'Günlük İşler', howTitle: 'Nasıl çalışır?', subtitle: 'Go-up, Professional, Daily Boss, Elite Ascent, Big 3, Prop, Daily Quiz, Cheer ve Chat · hepsi tarayıcı açmadan',
+    title: 'Günlük İşler', howTitle: 'Nasıl çalışır?', subtitle: 'Go-up, Professional, Daily Boss, Elite Ascent, Big 3, Prop, Daily Quiz, Cheer, Chat ve Daily Slot · hepsi tarayıcı açmadan',
     pf: {"title":"Professional","start":"Başlat ({n})","refresh":"Durumları oku","stage":"Aşama","next":"Sıradaki rakip","left":"Kalan maç","cards":"Maç kartı","status":"Durum","result":"Sonuç","hint":"Sezon ve playoff otomatik oynanır. Hall of Fame'de rakibi sen seçersin.","createHof":"Hall of Fame'i başlat","pickHof":"Rakip seç","hofTeam":"{name} (Ofans {off} · Defans {def})","props":"Props {n}/2","stg":{"noSeason":"Sezon yok · başlatılacak","season":"Sezon {p}/{t} · {w}-{l}","noPlayoffs":"Sezon bitti · playoff kurulacak","playoffs":"Playoff · {round} · seri {w}-{l}","champion":"Şampiyon · Hall of Fame hazır","eliminated":"Playoff'ta elendi","hof":"Hall of Fame · {d}/{t} yenildi","hofDone":"Hall of Fame tamam · Honor Way açılacak","seasonOver":"Sezon bitti · yeni sezon kurulacak","honor":"Honor Way · {d}/{t} yenildi","honorDone":"Honor Way tamam · Legacy Way açılacak","legacy":"Legacy Way · {d}/{t} yenildi","legacyDone":"Legacy Way tamam","error":"Okunamadı"},"rounds":{"FIRST_ROUND":"1. tur","CONFERENCE_SEMIFINALS":"Konferans yarı finali","CONFERENCE_FINALS":"Konferans finali","NBA_FINALS":"Final"},"st":{"eliminated":"Elendi","champion":"Şampiyon","needPick":"Rakip seçilmeli","hofDone":"HOF tamam","legacyDone":"Legacy Way tamam"},"how":["Her hesabın aşaması otomatik bulunur: sezon yoksa konferans rastgele seçilip 82 maçlık sezon kurulur; sezon bitince playoff kurulur ve sıradaki playoff maçı oynanır.","Günlük maç hakkı bitene kadar oynar. Hak bitince, varsa oyundan kazanılan Prof Match Card ile \"Props\" yenilemesi yapılır (günde en fazla 2). TIX ile yenileme asla yapılmaz.","Hall of Fame'deki hesaplarda rakipler hücum/savunma toplamlarıyla listelenir; hangi rakiple oynanacağını sen seçersin. O rakip yenilince durur ve yeni seçim bekler.","Playoff'ta elenen hesapta playoff otomatik sıfırlanır ve normal sezona dönülür. Hall of Fame bitince Honor Way, o da bitince Legacy Way açılır; bunlarda rakip sırası oyunda sabittir, sırayla oynanır. Auto Play bu hesaplarda durdurulur, bitince yeniden başlatılır."]},
-    tabs: { goup: 'Go-up', pro: 'Professional', boss: 'Daily Boss', ascent: 'Elite Ascent', magic: 'Big 3 (Magic Team)', props: 'Prop', quiz: 'Daily Quiz', cheer: 'Cheer', chat: 'Chat' },
+    tabs: { goup: 'Go-up', pro: 'Professional', boss: 'Daily Boss', ascent: 'Elite Ascent', magic: 'Big 3 (Magic Team)', props: 'Prop', quiz: 'Daily Quiz', cheer: 'Cheer', chat: 'Chat', slot: 'Daily Slot' },
+    ds: { scan: 'Durumu tara', spin: 'Hepsini çevir ({n})', spinning: 'Çevriliyor…', stop: 'Durdur', accounts: 'Hesaplar', hint: 'Daily Sign-in penceresindeki günlük slot: günde 1 çevirme, 3 ödül. Tarama hiçbir hesaba giriş yapmaz; çevirme, hesabın uygulamada açık bağlantısını kullanır (Auto Play maç oynuyorsa maç bitince çevrilir), yoksa giriş yapar. Zaten çevrilmiş hesapların bugünkü ödülleri de görünür.', account: 'Hesap', status: 'Durum', prizes: 'Kazanılan 3 ödül', when: 'Saat', summary: '{spun} çevrildi · {already} zaten çevrilmişti · {failed} hata', none: 'Henüz tarama yok · “Durumu tara”ya bas.', tally: 'Bugün: {spun}/{total} hesap çevrildi', st: { queued: 'Sırada', reading: 'Okunuyor', ready: 'Çevrilebilir', spinning: 'Çevriliyor', waitMatch: 'Maç bitince', spun: 'Çevrildi', error: 'Hata', stopped: 'Durduruldu' }, inMatch: 'maç bitmedi', totals: 'Bugünün ödülleri (toplam) · kimin kazandığını görmek için ödüle tıkla', whoCount: '{n} hesap', close: 'Kapat', pool: 'Ödül havuzu (şans)' },
     pr: {
       button: 'Prop bas', stop: 'Durdur', refresh: 'Çantaları oku', small: 'Su şişesi küçük (+10)', medium: 'Su şişesi orta (+30)', used: 'Kullanılan', players: 'İlk 5',
       st: { finding: 'Maç aranıyor', noMatch: 'Takım maçta değil', late: '3./4. periyotta · devre arası geçti', waitingHalftime: 'Devre arası bekleniyor', using: 'Prop basılıyor', done: 'Bitti', error: 'Hata', stopped: 'Durduruldu' },
       quarter: '{n}. periyot', countdown: 'devre arası {s} sn',
-      how: ['Her hesabın kendi "Prop bas" düğmesi var. Takım maçta değilse "takım maçta değil" der; maç 3. ya da 4. periyottaysa devre arası geçtiği için basmaz.', '1. ya da 2. periyottaysa devre arasını bekler. Devre arasında (20 sn) ilk 5\'teki her oyuncuyu staminası 95 ve üstü olana kadar doldurur: önce +10\'luk, +10 bitince staminası 85 ve altındaysa +30\'luk.', 'Sadece tek oyunculuk su şişeleri kullanılır; takım prop\'ları ve büyük şişe kullanılmaz. Bitince sonuç Aktivite\'ye yazılır ve maç ekranından çıkılır.']
+      how: ['Her hesabın kendi "Prop bas" düğmesi var. Takım maçta değilse "takım maçta değil" der; maç 3. ya da 4. periyottaysa devre arası geçtiği için basmaz.', '1. ya da 2. periyottaysa devre arasını bekler. Devre arasında (20 sn) ilk 5\'teki her oyuncuyu staminası 95 ve üstü olana kadar doldurur: staminası 75 ve altındaysa (25 ya da daha fazla eksik) +30\'luk, 76–94 arasındaysa +10\'luk basılır. Örnek: 15 staminalı oyuncuya 3 × +30, 55 staminalıya +30 sonra +10. Gereken şişe bittiyse diğeri kullanılır (85\'in üstünde +30 basılmaz).', 'Sadece tek oyunculuk su şişeleri kullanılır; takım prop\'ları ve büyük şişe kullanılmaz. Bitince sonuç Aktivite\'ye yazılır ve maç ekranından çıkılır.']
     },
     pg: {
       start: 'Başlat ({n})', include: 'Oynasın', level: 'Lv', boss: 'Boss', attempts: 'Kalan hak', result: 'Sonuç', floor: 'Kat', enemy: 'Rakip',
@@ -62,14 +63,15 @@ const TEXT = {
     }
   },
   en: {
-    title: 'Daily', howTitle: 'How does it work?', subtitle: 'Go-up, Professional, Daily Boss, Elite Ascent, Big 3, Props, Daily Quiz, Cheer and Chat · all without a browser',
+    title: 'Daily', howTitle: 'How does it work?', subtitle: 'Go-up, Professional, Daily Boss, Elite Ascent, Big 3, Props, Daily Quiz, Cheer, Chat and Daily Slot · all without a browser',
     pf: {"title":"Professional","start":"Start ({n})","refresh":"Read status","stage":"Stage","next":"Next opponent","left":"Matches left","cards":"Match cards","status":"Status","result":"Result","hint":"Season and playoffs are played automatically. In the Hall of Fame you pick the opponent.","createHof":"Start the Hall of Fame","pickHof":"Pick an opponent","hofTeam":"{name} (Offense {off} · Defense {def})","props":"Props {n}/2","stg":{"noSeason":"No season · will be started","season":"Season {p}/{t} · {w}-{l}","noPlayoffs":"Season over · playoffs will be created","playoffs":"Playoffs · {round} · series {w}-{l}","champion":"Champion · Hall of Fame ready","eliminated":"Eliminated in the playoffs","hof":"Hall of Fame · {d}/{t} beaten","hofDone":"Hall of Fame done · Honor Way will open","seasonOver":"Season over · a new season will be created","honor":"Honor Way · {d}/{t} beaten","honorDone":"Honor Way done · Legacy Way will open","legacy":"Legacy Way · {d}/{t} beaten","legacyDone":"Legacy Way done","error":"Could not be read"},"rounds":{"FIRST_ROUND":"Round 1","CONFERENCE_SEMIFINALS":"Conference semifinals","CONFERENCE_FINALS":"Conference finals","NBA_FINALS":"Finals"},"st":{"eliminated":"Eliminated","champion":"Champion","needPick":"Pick an opponent","hofDone":"HOF done","legacyDone":"Legacy Way done"},"how":["Every account's stage is found automatically: with no season a random conference is chosen and the 82-game season is created; after the season the playoffs are created and the next playoff game is played.","It plays until the daily matches are used. Then, if there is a Prof Match Card won in the game, a \"Props\" refill is used (at most 2 a day). TIX refills are never used.","Accounts in the Hall of Fame list the opponents with their offense/defense totals; you pick who to play. When that opponent is beaten it stops and waits for a new pick.","An account eliminated in the playoffs gets its playoffs reset automatically and goes back to the regular season. After the Hall of Fame the Honor Way opens, after that the Legacy Way; their opponents come in a fixed order and are played in turn. Auto Play is stopped on these accounts and started again afterwards."]},
-    tabs: { goup: 'Go-up', pro: 'Professional', boss: 'Daily Boss', ascent: 'Elite Ascent', magic: 'Big 3 (Magic Team)', props: 'Props', quiz: 'Daily Quiz', cheer: 'Cheer', chat: 'Chat' },
+    tabs: { goup: 'Go-up', pro: 'Professional', boss: 'Daily Boss', ascent: 'Elite Ascent', magic: 'Big 3 (Magic Team)', props: 'Props', quiz: 'Daily Quiz', cheer: 'Cheer', chat: 'Chat', slot: 'Daily Slot' },
+    ds: { scan: 'Check status', spin: 'Spin all ({n})', spinning: 'Spinning…', stop: 'Stop', accounts: 'Accounts', hint: 'The daily slot of the Daily Sign-in window: 1 spin a day, 3 prizes. Checking signs in to no account; spinning uses the account\'s open connection in the app (when Auto Play is in a match it spins after the match), otherwise it signs in. The prizes of accounts that already spun today show too.', account: 'Account', status: 'Status', prizes: 'The 3 prizes won', when: 'Time', summary: '{spun} spun · {already} had already spun · {failed} failed', none: 'Nothing checked yet · press “Check status”.', tally: 'Today: {spun}/{total} accounts spun', st: { queued: 'Queued', reading: 'Reading', ready: 'Can spin', spinning: 'Spinning', waitMatch: 'After the match', spun: 'Spun', error: 'Error', stopped: 'Stopped' }, inMatch: 'the match did not end', totals: 'Today\'s prizes (total) · click a prize to see who won it', whoCount: '{n} account(s)', close: 'Close', pool: 'Prize pool (chance)' },
     pr: {
       button: 'Use props', stop: 'Stop', refresh: 'Read bags', small: 'Water Bottle Small (+10)', medium: 'Water Bottle Medium (+30)', used: 'Used', players: 'Starters',
       st: { finding: 'Finding the match', noMatch: 'The team is not in a match', late: 'Quarter 3/4 · halftime is over', waitingHalftime: 'Waiting for halftime', using: 'Using props', done: 'Done', error: 'Error', stopped: 'Stopped' },
       quarter: 'quarter {n}', countdown: 'halftime {s} s',
-      how: ['Every account has its own "Use props" button. If the team is not in a match it says so; in quarter 3 or 4 nothing is used because halftime is over.', 'In quarter 1 or 2 it waits for halftime. During the 20 s halftime every starter is filled to 95+ stamina: +10 bottles first, +30 ones only at 85 or below once the +10s run out.', 'Only single-player water bottles are used; team props and large bottles are not. The result goes to Activity and the match screen is left.']
+      how: ['Every account has its own "Use props" button. If the team is not in a match it says so; in quarter 3 or 4 nothing is used because halftime is over.', 'In quarter 1 or 2 it waits for halftime. During the 20 s halftime every starter is filled to 95+ stamina: a +30 bottle at 75 or below (25 or more missing), a +10 bottle from 76 to 94. Example: a player at 15 gets 3 × +30, one at 55 gets +30 then +10. When the needed bottle has run out the other is used (no +30 above 85).', 'Only single-player water bottles are used; team props and large bottles are not. The result goes to Activity and the match screen is left.']
     },
     pg: {
       start: 'Start ({n})', include: 'Plays', level: 'Lv', boss: 'Boss', attempts: 'Attempts left', result: 'Result', floor: 'Floor', enemy: 'Opponent',
@@ -590,6 +592,71 @@ function ChatTab({ state, x, toast }) {
 }
 
 // The game's global chat as it comes in (kept two days by the app); our accounts stand out.
+// A prize of today's total: click → which accounts won it (outside click / Esc / Kapat closes).
+function PrizePop({ p, x }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!open) return;
+    const away = e => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    const esc = e => { if (e.key === 'Escape') setOpen(false); };
+    document.addEventListener('mousedown', away);
+    document.addEventListener('keydown', esc);
+    return () => { document.removeEventListener('mousedown', away); document.removeEventListener('keydown', esc); };
+  }, [open]);
+  const who = [...p.who.entries()].sort((a, b) => b[1] - a[1] || String(a[0]).localeCompare(String(b[0]), 'tr'));
+  return <span className="tn-pop-wrap" ref={ref}>
+    <button type="button" className={`ds-prize ds-prize-btn ${RARITY_TONE[p.rarity] || ''}`} onClick={() => setOpen(v => !v)} aria-expanded={open}>{p.name} <b>×{p.n}</b></button>
+    {open && <div className="tn-pop" role="dialog" aria-label={p.name}>
+      <div className="tn-pop-head"><b>{p.name}</b><small>{fill(x.ds.whoCount, { n: who.length })}</small></div>
+      <ul>{who.map(([name, n]) => <li key={name}><b>{name}</b>{n > 1 && <small> ×{n}</small>}</li>)}</ul>
+      <button type="button" className="btn ghost small" onClick={() => setOpen(false)}>{x.ds.close}</button>
+    </div>}
+  </span>;
+}
+
+// Daily Slot: one spin a day on every account, the three prizes of each.
+const RARITY_TONE = { COMMON: 'r-common', UNCOMMON: 'r-uncommon', RARE: 'r-rare', EPIC: 'r-epic', LEGENDARY: 'r-legendary', MYTHIC: 'r-mythic' };
+function SlotTab({ state, x, toast }) {
+  const d = x.ds;
+  const accounts = state.accounts || [];
+  const ds = state.dailySlot || {};
+  const rows = ds.rows || {};
+  const [ids, setIds] = useSavedIds(state, 'dailySlotAccountIds', accounts, accounts.map(a => a.id));
+  const busy = Boolean(ds.running);
+  const go = fn => fn().catch(e => toast(e.message, 'error'));
+  const today = Object.values(rows).map(r => r.dayKey).filter(Boolean).sort().pop();
+  const shown = accounts.filter(a => rows[a.id]);
+  const spunToday = shown.filter(a => rows[a.id].status === 'spun' && (!today || rows[a.id].dayKey === today)).length;
+  const totals = new Map();
+  for (const a of shown) if (rows[a.id].status === 'spun') for (const p of rows[a.id].results || []) { const cur = totals.get(p.name) || { ...p, n: 0, who: new Map() }; cur.n++; cur.who.set(a.name, (cur.who.get(a.name) || 0) + 1); totals.set(p.name, cur); }
+  const last = ds.lastRun;
+  return <>
+    <div className="panel dp-controls dp-row">
+      <small className="muted-text dp-grow">{d.hint}</small>
+      <div className="dp-actions">
+        <button className="btn ghost" disabled={busy || !ids.length} onClick={() => go(() => api.dailySlot.scan(ids))}>{d.scan}</button>
+        {busy ? <button className="btn danger-soft" onClick={() => go(() => api.dailySlot.stop())}>{d.stop}</button>
+          : <button className="btn primary" disabled={!ids.length} onClick={() => go(() => api.dailySlot.spin(ids))}>{fill(d.spin, { n: ids.length })}</button>}
+      </div>
+    </div>
+    <div className="panel dp-section"><b className="dp-label">{d.accounts}</b><AccountPicks accounts={accounts} ids={ids} setIds={setIds} disabled={busy} x={x} extra={a => rows[a.id]?.status === 'spun' ? <em>✓</em> : null} /></div>
+    {totals.size > 0 && <div className="panel dp-section"><b className="dp-label">{d.totals}</b><div className="ds-totals">{[...totals.values()].sort((a, b) => b.n - a.n).map(p => <PrizePop key={p.name} p={p} x={x} />)}</div></div>}
+    <div className="panel table-panel dp-table">
+      <div className="dp-table-head"><b>{fill(d.tally, { spun: spunToday, total: shown.length })}</b>{last?.finishedAt && <span>{new Date(last.finishedAt).toLocaleTimeString()}{last.kind === 'spin' ? ` · ${fill(d.summary, last)}` : ''}</span>}</div>
+      {!shown.length ? <p className="muted-text dp-pad">{d.none}</p> :
+        <SortTable><thead><tr><th>{d.account}</th><th>{d.status}</th><th>{d.prizes}</th><th>{d.when}</th></tr></thead>
+          <tbody>{shown.map(a => { const r = rows[a.id]; return <tr key={a.id} className={['reading', 'spinning'].includes(r.status) ? 'dp-live' : ''}>
+            <td><b>{a.name}</b></td>
+            <td><span className={`pill ${r.status === 'spun' ? 'ok' : r.status === 'error' ? 'bad' : r.status === 'ready' ? 'warn' : 'muted'}`}><i />{d.st[r.status] || r.status}</span>{r.error && <small className="cell-sub bad-text">{r.error === 'inMatch' ? d.inMatch : r.error}</small>}</td>
+            <td>{(r.results || []).length ? <span className="ds-prizes">{r.results.map((p, i) => <span key={i} className={`ds-prize ${RARITY_TONE[p.rarity] || ''}`}>{p.name}</span>)}</span> : '—'}</td>
+            <td>{r.spunAt ? new Date(r.spunAt).toLocaleTimeString() : '—'}</td>
+          </tr>; })}</tbody></SortTable>}
+    </div>
+    {ds.pool?.length > 0 && <details className="panel dp-section"><summary>{d.pool}</summary><div className="ds-totals">{ds.pool.map(p => <span key={p.name} className={`ds-prize ${RARITY_TONE[p.rarity] || ''}`}>{p.name} <b>%{p.chancePct}</b></span>)}</div></details>}
+  </>;
+}
+
 function ChatFeed({ state, x }) {
   const feed = state.chatFeed || [];
   const mine = new Set((state.accounts || []).map(a => String(a.name).toLowerCase()));
@@ -614,7 +681,7 @@ export default function DailyPage({ state, t, toast }) {
   const x = TEXT[t.lang] || TEXT.en;
   const [tab, setTab] = useState(() => state.settings?.dailyTab || 'goup');
   const choose = id => { setTab(id); api.settings.update({ dailyTab: id }).catch(() => {}); };
-  const live = { pro: state.professional?.running, props: (state.props?.busy || []).length > 0, boss: state.dailyBoss?.running, ascent: state.eliteAscent?.running, magic: state.magicTeam?.running, goup: state.goup?.running, quiz: state.quiz?.running, cheer: state.cheer?.busy, chat: state.chat?.running };
+  const live = { pro: state.professional?.running, props: (state.props?.busy || []).length > 0, boss: state.dailyBoss?.running, ascent: state.eliteAscent?.running, magic: state.magicTeam?.running, goup: state.goup?.running, quiz: state.quiz?.running, cheer: state.cheer?.busy, chat: state.chat?.running, slot: state.dailySlot?.running };
   const asking = Object.values(state.quiz?.run?.accounts || {}).some(r => r.status === 'askUser');
   return <div className="page daily-page">
     <div className="page-title"><div><h1>{x.title}</h1><span className="subtitle">{x.subtitle}</span></div></div>
@@ -628,5 +695,6 @@ export default function DailyPage({ state, t, toast }) {
     {tab === 'quiz' && <QuizTab state={state} x={x} toast={toast} />}
     {tab === 'cheer' && <CheerTab state={state} x={x} toast={toast} />}
     {tab === 'chat' && <ChatTab state={state} x={x} toast={toast} />}
+    {tab === 'slot' && <SlotTab state={state} x={x} toast={toast} />}
   </div>;
 }

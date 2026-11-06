@@ -23,6 +23,7 @@ const DEFAULTS = {
 };
 const LIST_DEFAULTS = { sellable: { price: 20, currency: 'APK' }, stock: { price: 99999, currency: 'TIX' } };
 const MAX_TRADE_ROUNDS = 12;
+const SPENDER_PRICE = 999999; // a Harcayıcı lists its overflow at this price by default (TIX)
 
 const ACCEPT_WAIT_MS = 7000;
 const ACCEPT_TRIES = 3;
@@ -30,7 +31,13 @@ const ACCEPT_TRIES = 3;
 class UserFixError extends Error { constructor(message, code, params) { super(message); this.userFix = true; this.code = code; this.params = params || {}; } }
 
 class AutoTradeEngine {
-  constructor({ store, credentials, activity, sessions, accountProfile, onChanged, onAttention, onScout, onCycleEnd, createSocket, gameHealth = null, now = () => Date.now(), timing = {} }) {
+  constructor({ store, credentials, activity, sessions, accountProfile, onChanged, onAttention, onScout, onCycleEnd, createSocket, gameHealth = null, friendNet = null, pauseAccount = null, onSpenderListed = null, now = () => Date.now(), timing = {} }) {
+    this.pauseAccount = pauseAccount;       // (accountId, task) → resume(): Auto Play etc. step aside for a Harcayıcı
+    this.onSpenderListed = onSpenderListed; // ({accountId, player, price, currency}) → the editable price table
+    this.resumers = new Map();
+    this._spenderTodo = new Set(); // spenders that got players: they list them at the end of the turn
+    this._stokHolders = new Set(); // Lv30+ non-Harcayıcı accounts holding a Stok they signed: they trade it on
+    this.friendNet = friendNet; // friends of our accounts: boards, signing for another account, the spender network
     this.gameHealth = gameHealth; // shared "is the game reachable?"
     this.store = store;
     this.credentials = credentials;
@@ -55,6 +62,7 @@ class AutoTradeEngine {
     this.state = saved?.run || null;
     this.cardTotals = saved?.cardTotals || {};
     this.lastConfig = saved?.lastConfig || null;
+    this.pricing = this._normPricing(saved?.pricing, this.lastConfig);
     // An app restart in the middle of a run leaves it continuable, never "running".
     if (this.state && ['running', 'paused', 'awaitingListing', 'awaitingRole', 'stopping'].includes(this.state.status)) {
       this.state.status = 'stopped';
@@ -65,7 +73,7 @@ class AutoTradeEngine {
 
   // ---------- state ----------
   _save() {
-    this.store.saveAutoTrade2({ version: 2, run: this.state, cardTotals: this.cardTotals, lastConfig: this.lastConfig });
+    this.store.saveAutoTrade2({ version: 2, run: this.state, cardTotals: this.cardTotals, lastConfig: this.lastConfig, pricing: this.pricing });
     this.onChanged?.();
   }
 
@@ -87,7 +95,7 @@ class AutoTradeEngine {
       try { last.roomPassword = last.roomPasswordEncrypted ? this.credentials.decryptSecret(last.roomPasswordEncrypted) : null; } catch { last.roomPassword = null; }
       delete last.roomPasswordEncrypted;
     }
-    return { run, cardTotals: JSON.parse(JSON.stringify(this.cardTotals)), lastConfig: last, defaults: { ...DEFAULTS, roomPassword: undefined }, listDefaults: LIST_DEFAULTS };
+    return { run, friendSetup: this.friendNet?.snapshotSetup?.() || null, cardTotals: JSON.parse(JSON.stringify(this.cardTotals)), lastConfig: last, pricing: JSON.parse(JSON.stringify(this.pricing)), defaults: { ...DEFAULTS, roomPassword: undefined }, listDefaults: LIST_DEFAULTS };
   }
 
   _acc(id) { return this.state.accounts[id]; }
@@ -182,6 +190,55 @@ class AutoTradeEngine {
   // ---------- controls ----------
   isRunning() { return Boolean(this.controller); }
 
+  // ---------- Otomatik Fiyatlandırma (user 2026-11-06) ----------
+  // What a Harcayıcı lists each Satılabilir / Stok player at: a default per kind, and per player
+  // its own price, a price for when it was signed at the 5% discount, and "Lv30+ only".
+  // Saved apart from the run, so it can change while Auto Trade runs (used at listing time).
+  _normPricing(raw, last = null) {
+    const cur = c => (c === 'APK' ? 'APK' : 'TIX');
+    const pos = v => (Number(v) >= 1 ? Math.floor(Number(v)) : null);
+    const def = (d, fb) => ({ price: pos(d?.price) || fb.price, currency: d?.currency ? cur(d.currency) : fb.currency });
+    const players = {};
+    for (const [id, p] of Object.entries(raw?.players || {})) {
+      const row = {};
+      if (pos(p?.price)) { row.price = pos(p.price); row.currency = cur(p.currency); }
+      if (pos(p?.discPrice)) { row.discPrice = pos(p.discPrice); row.discCurrency = cur(p.discCurrency || p.currency); }
+      if (p?.lv30) row.lv30 = true;
+      if (p?.fireNoDisc) row.fireNoDisc = true; // not signed 5% off → fired instead of listed (user 2026-11-06)
+      if (Object.keys(row).length) players[id] = row;
+    }
+    return {
+      defaults: {
+        sellable: def(raw?.defaults?.sellable, { price: 20, currency: 'APK' }),
+        stok: def(raw?.defaults?.stok, { price: pos(last?.spenderStockPrice) || 99999, currency: last?.spenderStockCurrency ? cur(last.spenderStockCurrency) : 'TIX' })
+      },
+      players
+    };
+  }
+
+  savePricing(raw = {}) {
+    this.pricing = this._normPricing({ defaults: { ...this.pricing.defaults, ...(raw.defaults || {}) }, players: raw.players ?? this.pricing.players }, this.lastConfig);
+    this._save();
+    return JSON.parse(JSON.stringify(this.pricing));
+  }
+
+  // Price a Harcayıcı lists player p at. "Discounted": signed at the 5% discount (kept on the
+  // row when we signed it; otherwise its locked salary is clearly under its value).
+  _listPrice(p, accId) {
+    const kind = this._isStok(p) ? 'stok' : 'sellable';
+    const own = this.pricing.players[p.id] || {};
+    const row = this.state?.accounts?.[accId]?.players?.[p.id];
+    const salary = R.salaryOf(p), value = Number(p.baseSalary) || 0;
+    const discounted = row?.discounted ?? (salary > 0 && value > 0 && salary <= Math.floor(value * 0.96));
+    if (own.fireNoDisc && !discounted) return { fire: true, kind, discounted: false };
+    if (discounted && own.discPrice) return { price: own.discPrice, currency: own.discCurrency || own.currency || this.pricing.defaults[kind].currency, kind, discounted: true };
+    if (own.price) return { price: own.price, currency: own.currency, kind, discounted: Boolean(discounted) };
+    return { price: this.pricing.defaults[kind].price, currency: this.pricing.defaults[kind].currency, kind, discounted: Boolean(discounted), isDefault: true };
+  }
+
+  // Stok, and Satılabilir players marked "Lv30+ only": signed only by Lv30+ accounts.
+  _needsLv30(agent, roleMap = this._roleMap()) { return this._isStok(agent, roleMap) || Boolean(this.pricing.players[agent.id]?.lv30); }
+
   // The form's choices are saved as they change (user 2026-10-31: the page forgot the
   // role rules and account choices when the run was not started), not only on Start.
   saveDraft(raw = {}) {
@@ -199,6 +256,11 @@ class AutoTradeEngine {
     if (raw.loopCount != null && Number(raw.loopCount) >= 1) last.loopCount = Math.min(999, Math.floor(Number(raw.loopCount)));
     if (raw.baseAsSellable != null) last.baseAsSellable = Boolean(raw.baseAsSellable);
     if (raw.baseProjected != null) last.baseProjected = raw.baseProjected !== false;
+    if (raw.friendBoards != null) last.friendBoards = raw.friendBoards !== false;
+    for (const k of ['spenderSellPrice', 'spenderStockPrice']) if (Number(raw[k]) >= 1) last[k] = Math.floor(Number(raw[k]));
+    for (const k of ['spenderSellCurrency', 'spenderStockCurrency']) if (['TIX', 'APK'].includes(raw[k])) last[k] = raw[k];
+    if (Number(raw.spendersPerSide) >= 1) last.spendersPerSide = Math.min(20, Math.floor(Number(raw.spendersPerSide)));
+    if (raw.spenderMinTk != null) last.spenderMinTk = Math.max(0, Math.floor(Number(raw.spenderMinTk) || 0));
     this.lastConfig = last;
     this._save();
     return true;
@@ -229,6 +291,13 @@ class AutoTradeEngine {
       loopCount: Math.max(1, Math.min(999, Math.floor(Number(cfg.loopCount) || 1))),
       baseAsSellable: Boolean(cfg.baseAsSellable),
       baseProjected: cfg.baseProjected !== false,
+      friendBoards: cfg.friendBoards !== false,
+      // what a Harcayıcı lists to make room: Satılabilir and Stok each at their own default
+      spenderSellPrice: Math.max(1, Math.floor(Number(cfg.spenderSellPrice) || Number(cfg.spenderPrice) || SPENDER_PRICE)),
+      spenderSellCurrency: (cfg.spenderSellCurrency || cfg.spenderCurrency) === 'APK' ? 'APK' : 'TIX',
+      spenderStockPrice: Math.max(1, Math.floor(Number(cfg.spenderStockPrice) || Number(cfg.spenderPrice) || SPENDER_PRICE)),
+      spenderStockCurrency: (cfg.spenderStockCurrency || cfg.spenderCurrency) === 'APK' ? 'APK' : 'TIX',
+      spenderMinTk: Math.max(0, Math.floor(Number(cfg.spenderMinTk) || 0)),
       benchDecisions: options.benchDecisions || {}
     };
     // The form remembers these for next time (not the account selection's one-off main).
@@ -284,6 +353,8 @@ class AutoTradeEngine {
 
   async stop() {
     if (!this.controller) return this.snapshot();
+    // a second Stop while the spenders list their players: stop that too
+    if (this.state.status === 'stopping' && this._leftoverCtrl) this._leftoverCtrl.abort();
     this.state.status = 'stopping';
     this._save();
     this.controller.abort();
@@ -328,7 +399,11 @@ class AutoTradeEngine {
       this.state.step = 'done';
       this._log('success', 'at2.done', this._totals(), 'Auto Trade finished');
       this.onAttention?.('done');
-    }, error => {
+    }, async error => {
+      // Stopped (by hand or by another task such as a PVP schedule) or failed: the spenders
+      // that got players first put them on the market, or their salary cap stays full and
+      // they miss tournaments (user 2026-11-06). Not when the game itself is unreachable.
+      if (!(this.gameHealth && isNetError(error))) await this._listLeftovers();
       if (error?.name === 'AbortError') {
         this.state.status = 'stopped';
         this.state.step = 'stopped';
@@ -367,13 +442,21 @@ class AutoTradeEngine {
 
   // ---------- connections ----------
   async _open(id, signal) {
-    if (this.conns.has(id)) return this.conns.get(id);
+    if (this.conns.has(id)) { this._parked?.delete(id); return this.conns.get(id); }
+    while (this._held?.get(id)) await sleep(500, signal); // the user's hand work on it first
     const account = this.store.getAccounts().find(a => a.id === id);
     if (!account) throw new Error('Account not found.');
     this._step('opening', { name: account.name }, id);
-    const conn = await TradeGameAccount.open({ account, sessions: this.sessions, createSocket: this.createSocket, signal });
+    // an account outside the run (a Harcayıcı): its Auto Play steps aside while it is open
+    if (this.pauseAccount && !this.state.config.accountIds.includes(id) && !this.resumers.has(id)) {
+      const resume = await this.pauseAccount(id, 'Auto Trade').catch(() => null);
+      if (resume) this.resumers.set(id, resume);
+    }
+    let conn;
+    try { conn = await TradeGameAccount.open({ account, sessions: this.sessions, createSocket: this.createSocket, signal }); }
+    catch (error) { this._resume(id); throw error; }
     this.conns.set(id, conn);
-    const acc = this._acc(id);
+    const acc = this._acc(id) || this._ensureAcc(id);
     acc.openedAt = new Date(this.now()).toISOString();
     acc.visits += 1;
     acc.funds = await conn.funds().catch(() => acc.funds);
@@ -384,15 +467,40 @@ class AutoTradeEngine {
   }
 
   _close(id) {
+    this._parked?.delete(id);
     const conn = this.conns.get(id);
     if (!conn) return;
     conn.close();
     this.conns.delete(id);
+    this._resume(id);
     const acc = this.state?.accounts?.[id];
     if (acc?.openedAt) { acc.openMs = (acc.openMs || 0) + (this.now() - Date.parse(acc.openedAt)); acc.openedAt = null; }
   }
 
-  _closeAll() { for (const id of [...this.conns.keys()]) this._close(id); }
+  // A Harcayıcı connection is kept for a while instead of closed: the next listing or trade on
+  // it needs no sign-in (~10 s each). At most 4 are kept; one unused for 3 minutes is closed.
+  _park(id) {
+    if (this.state?.config?.accountIds?.includes(id) || id === this.state?.currentSideId) return this._close(id);
+    const parked = (this._parked ||= new Map());
+    parked.set(id, this.now());
+    for (const [pid, at] of [...parked]) {
+      if (pid !== id && this.now() - at > 3 * 60 * 1000) { parked.delete(pid); this._close(pid); }
+    }
+    while (parked.size > 4) { const [old] = parked.keys(); parked.delete(old); this._close(old); }
+  }
+
+  // An account the user works on by hand (a listing, a fire): Auto Trade does not open it until
+  // the hand work is done, and goes on with the others (no stop / continue of the whole run).
+  usesAccount(id) { return this.conns.has(id) || this.state?.currentSideId === id; }
+  holdAccounts(ids) {
+    const held = (this._held ||= new Map());
+    for (const id of ids) held.set(id, (held.get(id) || 0) + 1);
+    return () => { for (const id of ids) { const n = (held.get(id) || 1) - 1; if (n > 0) held.set(id, n); else held.delete(id); } };
+  }
+
+  _resume(id) { const r = this.resumers.get(id); if (!r) return; this.resumers.delete(id); Promise.resolve().then(r).catch(() => {}); }
+
+  _closeAll() { for (const id of [...this.conns.keys()]) this._close(id); this.friendNet?.closeAll?.(); }
 
   // ---------- the run ----------
   async _run(signal) {
@@ -401,6 +509,8 @@ class AutoTradeEngine {
     while (this.state.cycle <= maxCycles) {
       await this._gate(signal);
       if (this.state.stage === 'main') {
+        await this._friendSync(signal);
+        if (this.state.cycle === 1) await this._spenderSweep(signal);
         if (this.state.cycle > 1) await this._waitScout(cfg.mainId, signal);
         await this._mainTurn(signal);
         this.state.stage = 'sides';
@@ -423,7 +533,8 @@ class AutoTradeEngine {
         }
       }
       // Whatever came to main last is turned into cards before the cycle ends.
-      if (this.conns.has(cfg.mainId)) await this._convertMain(signal);
+      if (this.conns.has(cfg.mainId)) { await this._convertMain(signal); await this._mainToSpenders(signal); }
+      await this._flushSpenders(signal);
       await this._restoreParked(cfg.mainId, signal);
       this._acc(cfg.mainId).status = 'done';
       this._close(cfg.mainId);
@@ -491,7 +602,7 @@ class AutoTradeEngine {
       anon = await GameSocket.open({ createSocket: this.createSocket });
       for (const id of todo) {
         const info = await anon.call('getUserBasicInfo', { userId: this._userIdOf(id) }, 'userBasicInfo', { timeoutMs: 8000 }).catch(() => null);
-        if (Number.isFinite(Number(info?.funds))) this._acc(id).funds = Number(info.funds);
+        if (Number.isFinite(Number(info?.funds))) { const a = this._acc(id); a.funds = Number(info.funds); if (a.fundsStart == null) a.fundsStart = a.funds; }
       }
     } catch {} finally { try { anon?.close(); } catch {} }
   }
@@ -503,7 +614,9 @@ class AutoTradeEngine {
     await this._applyBench(id, signal);
     this._log('info', 'at2.mainTurn', { name: this._name(id) }, `${this._name(id)} (main) scouting`, id);
     await this._scout(id, 'main', signal);
+    await this._friendBoards(id, 'main', signal);
     await this._convertMain(signal);
+    await this._mainToSpenders(signal);
     await this._restoreParked(id, signal);
   }
 
@@ -516,9 +629,15 @@ class AutoTradeEngine {
     try {
       let r = await this._tradeWithMain(id, signal);
       if (r?.skipped) return r;
+      // the Satılabilir / Stok it holds (also what main unloaded here) leave before scouting,
+      // so the Scout has room and every card does not need a trade of its own
+      await this._sideToSpender(id, signal);
       const scout = await this._scout(id, 'side', signal);
+      if (!scout?.skipped) await this._friendBoards(id, 'side', signal);
       r = await this._tradeWithMain(id, signal);
       if (r?.skipped) return r;
+      await this._sideToSpender(id, signal);
+      if (this._friendsOn() && this._accountRoleId(id) === 'spender') this._spenderTodo.add(id);
       return scout?.skipped ? scout : {};
     } finally {
       if (!signal.aborted) {
@@ -606,6 +725,22 @@ class AutoTradeEngine {
     const cfg = R.configFor(this.state.config, rule);
     const roleMap = this._roleMap();
     const roleNames = this._roleNames();
+    // A side buys main-bound players only as far as main's TK pays for them in the trade
+    // (user 2026-11-06: the side bought, then main could not pay and the run stopped).
+    // What this side already holds for main counts against it.
+    let mainLeft = Infinity;
+    if (role === 'side') {
+      const mainId = this.state.config.mainId;
+      const mainConn = this.conns.get(mainId);
+      const mainFunds = mainConn ? await mainConn.funds().catch(() => this._acc(mainId).funds) : this._acc(mainId).funds;
+      if (Number.isFinite(mainFunds)) {
+        this._acc(mainId).funds = mainFunds;
+        const pending = Object.values(acc.players).filter(r => r.dir === 'main' && r.status === 'toTrade').reduce((n, r) => n + (Number(r.signedSalary) || Number(r.salary) || 0), 0);
+        mainLeft = mainFunds - pending;
+      }
+    }
+    const team = this._teamPlayers();
+    let budgetNoted = false;
     for (let round = 0; round < 50; round++) {
       await this._gate(signal);
       let fa = await conn.freeAgents();
@@ -614,7 +749,18 @@ class AutoTradeEngine {
       this.onScout?.(id, fa);
       let roster = R.rosterOf(await conn.roster());
       acc.funds = await conn.funds().catch(() => acc.funds);
-      const candidates = (fa?.freeAgents || []).filter(a => !a.isSigned && !(acc.parked || {})[a.id] && R.classify(a, cfg, roleMap) && R.accountAllows(rule, R.signReason(a, cfg, roleMap), a, roleMap, cfg));
+      if (this._friendsOn()) {
+        for (const agent of (fa?.freeAgents || []).filter(a => !a.isSigned && R.classify(a, this.state.config, roleMap) === 'side')) {
+          await this._gate(signal);
+          let handled = false;
+          if (this._needsLv30(agent, roleMap)) handled = await this._stokBuy(conn.userId, agent, signal, id) === 'done';
+          else { const sp = await this._spenderFor(conn.userId, agent, signal, id); handled = Boolean(sp && await this._spenderBuy(sp, conn.userId, agent, signal)); }
+          if (handled) fa = { ...fa, freeAgents: (fa.freeAgents || []).map(a => a.id === agent.id ? { ...a, isSigned: true } : a) };
+        }
+      }
+      // Stok is signed only by Lv30+ accounts (user 2026-11-06)
+      const lowLevel = this._level(id) < 30;
+      const candidates = (fa?.freeAgents || []).filter(a => !a.isSigned && !(acc.parked || {})[a.id] && !(lowLevel && this._needsLv30(a, roleMap)) && R.classify(a, cfg, roleMap) && R.accountAllows(rule, R.signReason(a, cfg, roleMap), a, roleMap, cfg));
       this._step('scouting', { name: this._name(id), candidates: candidates.length, attempts: acc.scout.attemptsLeft }, id);
       this._save();
       for (const agent of candidates) {
@@ -627,9 +773,19 @@ class AutoTradeEngine {
         }
         const price = Number(agent.baseSalary) || 0;
         if (Number.isFinite(acc.funds) && acc.funds < price) {
-          if (role === 'main') throw new UserFixError(`Main has ${acc.funds} TK, ${agent.name} costs ${price} TK.`, 'at2.mainFunds', { name: this._name(id), funds: acc.funds, need: price });
+          // main short of TK: this one is left, cheaper ones are still bought (no stop)
+          if (role === 'main') {
+            this._log('warning', 'at2.mainFundsSkip', { name: this._name(id), funds: acc.funds, need: price, player: agent.name }, `${this._name(id)}: ${acc.funds} TK, ${agent.name} costs ${price} TK · not bought`, id);
+            continue;
+          }
           this._log('warning', 'at2.sideFunds', { name: this._name(id), funds: acc.funds, need: price }, `${this._name(id)}: not enough TK, account skipped`, id);
           return { skipped: true };
+        }
+        // main-bound (or "ask") on a side: main must be able to pay it in the trade
+        if (role === 'side' && R.classify(agent, cfg, roleMap, team) !== 'side' && price > mainLeft) {
+          if (!budgetNoted) this._log('warning', 'at2.mainBudget', { main: this._name(this.state.config.mainId), left: Math.max(0, Math.floor(mainLeft)), need: price, player: agent.name }, `Main has TK for ${Math.max(0, Math.floor(mainLeft))} more · ${agent.name} (${price} TK) is not bought for it`, id);
+          budgetNoted = true;
+          continue;
         }
         // Already in the roster: park our copy (equipment, skill, lineup remembered) so the
         // Scout one can be signed; ours comes back once the new one has left the roster.
@@ -663,11 +819,12 @@ class AutoTradeEngine {
           this._log('info', 'at2.baseSellable', { player: agent.name, salary, base: signedAs?.newBaseSalary ?? agent.newBaseSalary }, `${agent.name} signed at ${salary} (Base) → treated as Satılabilir`, id);
         }
         acc.bought += 1;
-        acc.spent += price; // signing costs the price; the discount is on the salary
-        acc.funds = Number.isFinite(acc.funds) ? acc.funds - price : acc.funds;
+        acc.spent += salary; // a discount (Lv30+) lowers what is paid too: paid = salary (user 2026-11-05)
+        acc.funds = Number.isFinite(acc.funds) ? acc.funds - salary : acc.funds;
+        if (role === 'side' && row.dir === 'main') mainLeft -= salary;
         roster.total += 1;
         roster.ids.add(agent.id);
-        this._log('success', 'at2.signed', { player: agent.name, price, dir: row.dir }, `${agent.name} signed · ${price} TK`, id);
+        this._log('success', 'at2.signed', { player: agent.name, price: salary, dir: row.dir }, `${agent.name} signed · ${salary} TK`, id);
         this._save();
         await sleep(this.timing.stepMs, signal);
       }
@@ -684,15 +841,587 @@ class AutoTradeEngine {
     return { exhausted: true };
   }
 
+  // ---------- friends (game update 2026-11-05) ----------
+  _friendsOn() { return Boolean(this.friendNet && this.state.config.friendBoards); }
+  _dayKey() { return new Date(this.now() + 8 * 3600 * 1000).toISOString().slice(0, 10); } // the game's day (Manila)
+  // Every Harcayıcı account (the role decides, not the run's account list); never main.
+  _spenderIds() {
+    return this.store.getAccounts().filter(a => a.role === 'spender' && a.id !== this.state.config.mainId && this._userIdOf(a.id)).map(a => a.id);
+  }
+  _level(id) { return Number(this.store.getAccountProfile?.()?.accounts?.[id]?.level) || 0; }
+  _isStok(agent, roleMap = this._roleMap()) {
+    const stok = (this.store.getCardRoles?.() || []).filter(r => /^stok|^stock/i.test(String(r.name).trim())).map(r => r.id);
+    return (roleMap.get(agent.id) || []).some(r => stok.includes(r));
+  }
+  _blocked(id) { return this.state.friendBlocked?.[id] === this._dayKey(); }
+  _block(id, message) {
+    (this.state.friendBlocked ||= {})[id] = this._dayKey();
+    this._log('warning', 'at2.friendLimit', { name: this._name(id), error: message }, `${this._name(id)}: signing from friends refused for today · ${message}`, id);
+  }
+  _ensureAcc(id) {
+    this.state.accounts[id] ||= { id, name: this._name(id), role: 'side', status: 'waiting', players: {}, bought: 0, spent: 0, converted: 0, tradesIn: 0, tradesOut: 0, tkPaid: 0, tkReceived: 0, listed: 0, openMs: 0, openedAt: null, visits: 0, funds: null, fundsStart: null, scout: null, benchApplied: true };
+    return this.state.accounts[id];
+  }
+
+  // The network: every account gets a Harcayıcı friend, old friends leave the Harcayıcı lists.
+  async _friendSync(signal) {
+    if (!this._friendsOn()) return;
+    await this._gate(signal);
+    this._step('friendSync', {}, null);
+    try { await this.friendNet.sync({ signal }); }
+    catch (error) { if (error?.name === 'AbortError') throw error; this._log('warning', 'at2.friendSyncFailed', { error: error.message }, `Friend network could not be updated: ${error.message}`); }
+  }
+
+  // A spender that may take this Satılabilir / Stok player off the board of `ownerUserId`: its
+  // own role rules allow it, it is a friend of the board's owner and has the TK. null = none
+  // (then the side signs it the old way).
+  async _spenderFor(ownerUserId, agent, signal, viewerId = null) {
+    const roleMap = this._roleMap();
+    const price = Number(agent.baseSalary) || 0;
+    const floor = this.state.config.spenderMinTk || 0;
+    if (R.classify(agent, this.state.config, roleMap) !== 'side') return null;
+    // only spenders whose row in the role table allows this player (user 2026-11-05)
+    const spenders = this._spenderIds().filter(id => !this._blocked(id) && this._userIdOf(id) !== ownerUserId && this._mayTake(id, agent, roleMap));
+    spenders.forEach(id => this._ensureAcc(id));
+    await this._refreshFunds(spenders.filter(id => this.state.accounts[id].funds == null));
+    let order = R.sideOrder(spenders.map(id => ({ id, funds: this.state.accounts[id].funds }))).map(x => x.id);
+    // Stok: a Lv30+ account signs it (5% salary cut chance) — a Lv30+ Harcayıcı, else the
+    // Lv30+ viewer itself (it hands it to a Harcayıcı later), else any Harcayıcı.
+    if (this._needsLv30(agent, roleMap)) order = order.filter(id => this._level(id) >= 30);
+    return this._firstSpender(order, ownerUserId, price, floor, signal);
+  }
+  // Stok is signed only by a Lv30+ account (5% salary cut chance; user 2026-11-06). In order:
+  // a Lv30+ Harcayıcı that is a friend of the owner → a Lv30+ Harcayıcı made a friend of the
+  // owner for this one signing → the viewer itself when Lv30+ ('self') → another Lv30+ account
+  // of ours (friend, or a friend for the moment), which trades it on to a Harcayıcı → nobody
+  // ('skip'). A friendship for the moment is removed right after (from one side: it is mutual);
+  // only boards of our own accounts can get one, never Main's.
+  async _stokBuy(ownerUserId, agent, signal, viewerId = null) {
+    const roleMap = this._roleMap();
+    const price = Number(agent.baseSalary) || 0;
+    const floor = this.state.config.spenderMinTk || 0;
+    const mainId = this.state.config.mainId;
+    const ownerAcc = this.friendNet.accountOfUser?.(ownerUserId) || null;
+    const tempOk = Boolean(ownerAcc) && ownerAcc !== mainId;
+    const ok = id => id !== mainId && !this._blocked(id) && this._userIdOf(id) && this._userIdOf(id) !== ownerUserId && this._level(id) >= 30 && this._mayTake(id, agent, roleMap);
+    const spenders = this._spenderIds().filter(ok);
+    spenders.forEach(id => this._ensureAcc(id));
+    await this._refreshFunds(spenders.filter(id => this.state.accounts[id].funds == null));
+    const spOrder = R.sideOrder(spenders.map(id => ({ id, funds: this.state.accounts[id].funds }))).map(x => x.id)
+      .filter(id => !Number.isFinite(this.state.accounts[id].funds) || this.state.accounts[id].funds - price >= floor);
+    const friendSp = await this._firstSpender(spOrder, ownerUserId, price, floor, signal);
+    if (friendSp && await this._spenderBuy(friendSp, ownerUserId, agent, signal)) return 'done';
+    if (tempOk) {
+      for (const sp of spOrder.filter(id => id !== friendSp)) {
+        if (await this._tempFriend(sp, ownerAcc, () => this._spenderBuy(sp, ownerUserId, agent, signal), signal)) return 'done';
+      }
+    }
+    if (viewerId && viewerId !== ownerAcc && this._level(viewerId) >= 30 && this._mayTake(viewerId, agent, roleMap)) return 'self';
+    const spenderSet = new Set(this._spenderIds());
+    const helpers = (this.store.getAccounts?.() || []).map(a => a.id).filter(id => !spenderSet.has(id) && id !== viewerId && ok(id));
+    helpers.forEach(id => this._ensureAcc(id));
+    await this._refreshFunds(helpers);
+    const hOrder = R.sideOrder(helpers.map(id => ({ id, funds: this.state.accounts[id].funds }))).map(x => x.id)
+      .filter(id => !Number.isFinite(this.state.accounts[id].funds) || this.state.accounts[id].funds >= price);
+    const ownerFriends = ownerAcc ? await this.friendNet.friendsOf(ownerAcc, { signal }).catch(() => null) : null;
+    for (const h of hOrder) {
+      const reach = ownerFriends ? ownerFriends.ids.has(this._userIdOf(h)) : await this.friendNet.isFriend(h, ownerUserId, { signal }).catch(() => false);
+      if (reach && await this._helperSign(h, ownerUserId, agent, signal)) return 'done';
+    }
+    if (tempOk) {
+      for (const h of hOrder) {
+        if (ownerFriends?.ids?.has(this._userIdOf(h))) continue;
+        if (await this._tempFriend(h, ownerAcc, () => this._helperSign(h, ownerUserId, agent, signal), signal)) return 'done';
+      }
+    }
+    this._log('info', 'at2.stokSkipped', { player: agent.name }, `${agent.name} (Stok): no Lv30+ account could sign it · left`, viewerId);
+    return 'skip';
+  }
+
+  // \`buyerId\` and our account \`ownerAccId\` are friends only for \`fn\` (one signing).
+  async _tempFriend(buyerId, ownerAccId, fn, signal) {
+    const [b, o] = await Promise.all([buyerId, ownerAccId].map(id => this.friendNet.friendsOf(id, { signal }).catch(() => null)));
+    if (!b || !o || b.ids.size >= 49 || o.ids.size >= 49) return false;
+    try { await this.friendNet._befriend(buyerId, ownerAccId, signal); }
+    catch (error) {
+      if (error?.name === 'AbortError') throw error;
+      this._log('warning', 'at2.tempFriendFailed', { name: this._name(buyerId), owner: this._name(ownerAccId), error: error.message }, `${this._name(buyerId)} ↔ ${this._name(ownerAccId)}: friendship for Stok failed · ${error.message}`, buyerId);
+      return false;
+    }
+    this._log('info', 'at2.tempFriend', { name: this._name(buyerId), owner: this._name(ownerAccId) }, `${this._name(buyerId)} ↔ ${this._name(ownerAccId)}: friends for one Stok signing`, buyerId);
+    try { return await fn(); }
+    finally {
+      // always undone, also after a stop
+      await this.friendNet._unfriend(buyerId, this._userIdOf(ownerAccId)).catch(error =>
+        this._log('warning', 'at2.tempUnfriendFailed', { name: this._name(buyerId), owner: this._name(ownerAccId), error: error.message }, `${this._name(buyerId)} ↔ ${this._name(ownerAccId)}: the friendship could not be removed · ${error.message}`, buyerId));
+    }
+  }
+
+  // A Lv30+ account that is not a Harcayıcı signs a Stok (plain connection); at the end of the
+  // turn it trades it to a Harcayıcı.
+  async _helperSign(h, ownerUserId, agent, signal) {
+    const acc = this._ensureAcc(h);
+    const price = Number(agent.baseSalary) || 0;
+    const fr = await this.friendNet.fundsAndRoster(h, signal);
+    if (Number.isFinite(fr.funds)) { acc.funds = fr.funds; if (acc.fundsStart == null) acc.fundsStart = fr.funds; }
+    if (Number.isFinite(acc.funds) && acc.funds < price) return false;
+    if (fr.ids.has(agent.id) || fr.total >= R.ROSTER_MAX) return false;
+    const r = await this.friendNet.signFrom(h, ownerUserId, agent.id, signal);
+    if (!r?.success) {
+      const m = String(r?.message || r?.error || 'refused');
+      if (/limit|daily|today|maximum|too many/i.test(m)) this._block(h, m);
+      else if (!/not available|already signed/i.test(m)) this._log('warning', 'at2.signFailed', { player: agent.name, error: m }, `${agent.name} could not be signed`, h);
+      return false;
+    }
+    const salary = Number(r.revealedPlayer?.id === agent.id && r.revealedPlayer?.signedSalary) || (r.salaryCut ? Math.round(price * 0.95) : price);
+    const from = this.friendNet.friends?.get?.(h)?.names?.get(ownerUserId) || this._name(this.friendNet.accountOfUser?.(ownerUserId)) || '?';
+    const row = this._row({ ...agent, signedSalary: salary }, this.state.config, undefined, undefined, { status: 'keep', from });
+    row.discounted = salary < price;
+    row.dir = 'side';
+    acc.players[agent.id] = row;
+    acc.bought += 1;
+    acc.spent += salary;
+    if (Number.isFinite(acc.funds)) acc.funds -= salary;
+    this._stokHolders.add(h);
+    this._log('success', 'at2.friendSigned', { name: this._name(h), player: agent.name, owner: from, price: salary }, `${this._name(h)} signed ${agent.name} off ${from}'s board · ${salary} TK`, h);
+    this._save();
+    await sleep(this.timing.stepMs, signal);
+    return true;
+  }
+
+  // Would this account sign the player under its own role rules (main: always)?
+  _mayTake(id, agent, roleMap) {
+    const rule = this._ruleFor(id);
+    const cfg = R.configFor(this.state.config, rule);
+    return Boolean(R.classify(agent, cfg, roleMap)) && R.accountAllows(rule, R.signReason(agent, cfg, roleMap), agent, roleMap, cfg);
+  }
+  async _firstSpender(order, ownerUserId, price, floor, signal) {
+    // A board of one of our accounts: its own friend list (one cached read) says which
+    // spenders can reach it — friendship is two-sided, so 60 spender lists need not be read.
+    const ownerAcc = this.friendNet.accountOfUser?.(ownerUserId);
+    const ownerFriends = ownerAcc ? await this.friendNet.friendsOf(ownerAcc, { signal }).catch(() => null) : null;
+    for (const sp of order) {
+      const funds = this.state.accounts[sp].funds;
+      if (Number.isFinite(funds) && funds - price < floor) continue;
+      const reach = ownerFriends ? ownerFriends.ids.has(this._userIdOf(sp)) : await this.friendNet.isFriend(sp, ownerUserId, { signal });
+      if (!reach) continue;
+      return sp;
+    }
+    return null;
+  }
+
+  // The spender signs the player off its friend's board (plain connection, nobody signed out).
+  // Its roster never fills: when full (or the player is already there) it lists its bench.
+  async _spenderBuy(sp, ownerUserId, agent, signal) {
+    const acc = this._ensureAcc(sp);
+    const price = Number(agent.baseSalary) || 0;
+    const fr = await this.friendNet.fundsAndRoster(sp, signal);
+    if (Number.isFinite(fr.funds)) { acc.funds = fr.funds; if (acc.fundsStart == null) acc.fundsStart = fr.funds; }
+    if (Number.isFinite(acc.funds) && acc.funds < price) return false;
+    if (fr.ids.has(agent.id) || fr.total >= R.ROSTER_MAX) {
+      // the whole bench of Satılabilir / Stok goes in one go: the next signings need no sign-in
+      if (!(await this._spenderRoom(sp, [agent.id], 1, signal, { all: true }))) return false;
+    }
+    const r = await this.friendNet.signFrom(sp, ownerUserId, agent.id, signal);
+    if (!r?.success) {
+      const m = String(r?.message || r?.error || 'refused');
+      if (/limit|daily|today|maximum|too many/i.test(m)) this._block(sp, m);
+      else this._log('warning', 'at2.signFailed', { player: agent.name, error: m }, `${agent.name} could not be signed`, sp);
+      return false;
+    }
+    const salary = Number(r.revealedPlayer?.id === agent.id && r.revealedPlayer?.signedSalary) || (r.salaryCut ? Math.round(price * 0.95) : price);
+    const row = this._row({ ...agent, signedSalary: salary }, this.state.config, undefined, undefined, { status: 'keep', from: this.friendNet.friends.get(sp)?.names?.get(ownerUserId) || null });
+    row.discounted = salary < price;
+    row.dir = 'side';
+    acc.role = 'spender';
+    acc.players[agent.id] = row;
+    acc.bought += 1;
+    this._spenderTodo.add(sp);
+    acc.spent += salary;
+    if (Number.isFinite(acc.funds)) acc.funds -= salary;
+    this._log('success', 'at2.spenderSigned', { name: this._name(sp), player: agent.name, price: salary }, `${this._name(sp)} signed ${agent.name} off a friend's board · ${salary} TK`, sp);
+    this._save();
+    await sleep(this.timing.stepMs, signal);
+    return true;
+  }
+
+  // Room on a spender: its copies of `dupIds` and then enough bench players for `need` more go
+  // to the market at the spender price (its roster never fills up). Kart / cheap players that
+  // wait for main stay. Uses the connection the spender has, or opens one for the moment.
+  async _spenderRoom(sp, dupIds, need, signal, { all = false } = {}) {
+    const cfg = this.state.config;
+    const wasOpen = this.conns.has(sp);
+    const conn = await this._open(sp, signal);
+    const acc = this._ensureAcc(sp);
+    try {
+      const roster = R.rosterOf(await conn.roster());
+      const waitsForMain = p => acc.players[p.id]?.dir === 'main' && !['converted', 'listed', 'none'].includes(acc.players[p.id]?.status);
+      const keepAlone = this.state.config.benchDecisions?.[sp] || {}; // "leave it" before the start
+      const free = roster.bench.filter(p => !R.tradeBlock(p) && keepAlone[p.id]?.action !== 'none' && acc.players[p.id]?.status !== 'none');
+      const pick = [];
+      for (const id of dupIds || []) {
+        if (!roster.ids.has(id)) continue;
+        const own = free.find(p => p.id === id);
+        if (!own) return false; // a starter / equipped copy cannot go
+        pick.push(own);
+      }
+      if (all) {
+        // every Satılabilir / Stok on its bench (bought, traded in, or left by an earlier run)
+        const roleMap = this._roleMap();
+        for (const p of free) {
+          const row = acc.players[p.id];
+          if (pick.includes(p) || waitsForMain(p)) continue;
+          if (row ? row.dir === 'side' : R.classify(p, cfg, roleMap, this._teamPlayers()) === 'side') pick.push(p);
+        }
+      }
+      // `need` places are made in any case (other bench players go too when the Satılabilir /
+      // Stok are not enough); with `all` and no need, only those are listed
+      const limit = need > 0 ? R.ROSTER_MAX - need : Infinity;
+      for (const p of free) { if (roster.total - pick.length <= limit) break; if (!pick.includes(p) && !waitsForMain(p)) pick.push(p); }
+      if (roster.total - pick.length > limit) return false;
+      for (const p of pick) {
+        await this._gate(signal);
+        const { price, currency, fire } = this._listPrice(p, sp);
+        if (fire) {
+          // marked "fire when not 5% off" in Otomatik Fiyatlandırma: the junk copy goes, it is not listed
+          const f = await conn.fire(p.id).catch(error => ({ success: false, message: error.message }));
+          this._log(f?.success ? 'success' : 'warning', f?.success ? 'at2.firedNoDisc' : 'at2.fireFailed', { name: p.name, error: f?.error || f?.message || '' }, f?.success ? `${p.name} was not signed 5% off · fired` : `${p.name} could not be fired: ${f?.error || f?.message || ''}`, sp);
+          if (f?.success && acc.players[p.id]) acc.players[p.id].status = 'fired';
+          if (!f?.success && !all) return false;
+          continue;
+        }
+        const r = await conn.sell(p.id, price, currency);
+        this._log(r?.success ? 'success' : 'warning', r?.success ? 'at2.listed' : 'at2.listFailed', { name: p.name, price, currency, error: r?.message || '' }, `${p.name} listed · ${price} ${currency}`, sp);
+        if (!r?.success) { if (all) continue; return false; }
+        acc.listed += 1;
+        if (acc.players[p.id]) acc.players[p.id].status = 'listed';
+        try { this.onSpenderListed?.({ accountId: sp, player: p, price, currency }); } catch {}
+      }
+      this._save();
+      return true;
+    } finally {
+      if (!wasOpen && sp !== this.state.currentSideId) this._park(sp);
+    }
+  }
+
+  // The spenders that got players in this turn put every Satılabilir / Stok on the market at
+  // their default price (user 2026-11-06: bought players were left on the bench, unlisted).
+  async _flushSpenders(signal) {
+    if (!this._friendsOn()) return;
+    for (const h of [...this._stokHolders]) {
+      this._stokHolders.delete(h);
+      if (h === this.state.config.mainId) continue;
+      const wasOpen = this.conns.has(h);
+      try { await this._open(h, signal); await this._sideToSpender(h, signal); }
+      catch (error) {
+        if (error?.name === 'AbortError') throw error;
+        this._log('warning', 'at2.spenderTradeFailed', { name: this._name(h), error: error.message }, `${this._name(h)}: ${error.message}`, h);
+      } finally { if (!wasOpen && h !== this.state.currentSideId) this._close(h); }
+    }
+    const ids = [...this._spenderTodo];
+    this._spenderTodo.clear();
+    for (const sp of ids) {
+      await this._gate(signal);
+      try { await this._spenderRoom(sp, [], 0, signal, { all: true }); }
+      catch (error) {
+        if (error?.name === 'AbortError') throw error;
+        this._log('warning', 'at2.spenderTradeFailed', { name: this._name(sp), error: error.message }, `${this._name(sp)}: ${error.message}`, sp);
+      }
+    }
+  }
+
+  // The run ends early (stop, another task, an error): the spenders and Stok holders that got
+  // players in this turn hand them on / list them before the connections close. At most
+  // 3 minutes; a second Stop ends it at once.
+  async _listLeftovers() {
+    if (!this.state || !this._friendsOn()) return;
+    const count = this._spenderTodo.size + this._stokHolders.size;
+    if (!count) return;
+    const ctrl = new AbortController();
+    this._leftoverCtrl = ctrl;
+    this.pauseGate = null; // a paused run lists too
+    const timer = setTimeout(() => ctrl.abort(), 3 * 60 * 1000);
+    this._step('leftovers', { count });
+    this._log('info', 'at2.leftovers', { count }, `Auto Trade is stopping · ${count} spender(s) list their players first`);
+    try {
+      await this._flushSpenders(ctrl.signal);
+      this._log('success', 'at2.leftoversDone', { count }, 'Spender players listed before the stop');
+    } catch (error) {
+      this._log('warning', 'at2.leftoversFailed', { error: error?.name === 'AbortError' ? 'stopped' : error.message }, `Spender listing before the stop did not finish: ${error?.name === 'AbortError' ? 'stopped' : error.message}`);
+    } finally {
+      clearTimeout(timer);
+      this._leftoverCtrl = null;
+    }
+  }
+
+  // Start of a run: the spenders' benches are read without logging in; those holding
+  // Satılabilir / Stok (earlier runs, a stop half way) list them.
+  async _spenderSweep(signal) {
+    if (!this._friendsOn()) return;
+    const ids = this._spenderIds();
+    const cfg = this.state.config;
+    const roleMap = this._roleMap();
+    const team = this._teamPlayers();
+    for (let i = 0; i < ids.length; i += 4) {
+      await this._gate(signal);
+      await Promise.all(ids.slice(i, i + 4).map(async sp => {
+        const fr = await this.friendNet.fundsAndRoster(sp, signal).catch(error => { if (error?.name === 'AbortError') throw error; return null; });
+        if (fr?.bench?.some(p => !R.tradeBlock(p) && R.classify(p, cfg, roleMap, team) === 'side')) this._spenderTodo.add(sp);
+      }));
+    }
+    await this._flushSpenders(signal);
+  }
+
+  // Spenders with the TK for `need` (after the floor), richest first.
+  async _spendersByTk(need = 0) {
+    const floor = this.state.config.spenderMinTk || 0;
+    const ids = this._spenderIds();
+    ids.forEach(id => this._ensureAcc(id));
+    // TK of 60 spenders is read at most every 2 minutes (each trade updates its own number)
+    if (!this._spenderFundsAt || this.now() - this._spenderFundsAt > 2 * 60 * 1000 || ids.some(id => this.state.accounts[id].funds == null)) {
+      await this._refreshFunds(ids);
+      this._spenderFundsAt = this.now();
+    }
+    return R.sideOrder(ids.map(id => ({ id, funds: this.state.accounts[id].funds })))
+      .filter(x => !Number.isFinite(x.funds) || x.funds - need >= floor).map(x => x.id);
+  }
+
+  // Main's Satılabilir / Stok go to the spenders (in the same trade their Kart / cheap players
+  // come to main). A spender that cannot take part is passed over; what is left goes to the
+  // sides the old way.
+  async _mainToSpenders(signal) {
+    if (!this._friendsOn()) return;
+    const mainId = this.state.config.mainId;
+    const main = this.conns.get(mainId);
+    if (!main) return;
+    const spenders = await this._spendersByTk();
+    const roleMap = this._roleMap();
+    for (const sp of spenders) {
+      await this._gate(signal);
+      const all = this._ours(mainId, R.rosterOf(await main.roster()), 'side');
+      if (!all.length) return;
+      const no = all.filter(p => !this._mayTake(sp, p, roleMap)).map(p => p.id);
+      if (no.length) this.state.excluded[sp] = [...new Set([...(this.state.excluded[sp] || []), ...no])];
+      const give = all.filter(p => !(this.state.excluded[sp] || []).includes(p.id));
+      if (!give.length) continue;
+      const cost = give.slice(0, R.TRADE_MAX).reduce((n, p) => n + R.salaryOf(p), 0);
+      const known = this.state.accounts[sp].funds;
+      if (Number.isFinite(known) && known - cost < (this.state.config.spenderMinTk || 0)) continue; // not opened for nothing
+      const wasOpen = this.conns.has(sp);
+      try {
+        await this._open(sp, signal);
+        this._ensureAcc(sp).role = 'spender';
+        const funds = await this.conns.get(sp).funds().catch(() => null);
+        if (Number.isFinite(funds) && funds - cost < (this.state.config.spenderMinTk || 0)) continue;
+        if (!(await this._spenderRoom(sp, give.map(p => p.id), Math.min(give.length, R.TRADE_MAX), signal))) continue;
+        this._log('info', 'at2.toSpender', { from: this._name(mainId), name: this._name(sp), count: Math.min(give.length, R.TRADE_MAX) }, `${this._name(mainId)} → ${this._name(sp)} (Harcayıcı)`, sp);
+        const r = await this._tradeWithMain(sp, signal);
+        this._spenderTodo.add(sp);
+        if (r?.skipped) continue;
+      } catch (error) {
+        if (error?.name === 'AbortError') throw error;
+        this._log('warning', 'at2.spenderTradeFailed', { name: this._name(sp), error: error.message }, `${this._name(sp)}: ${error.message}`, sp);
+      } finally {
+        if (!wasOpen) this._park(sp);
+      }
+    }
+  }
+
+  // At the end of a side's turn the Satılabilir / Stok players it kept go to a spender
+  // (the spender pays their salary). None can → the side keeps them, like before.
+  async _sideToSpender(sideId, signal) {
+    if (!this._friendsOn() || this._accountRoleId(sideId) === 'spender') return;
+    const side = this.conns.get(sideId);
+    const sideAcc = this._acc(sideId);
+    for (let round = 0; round < MAX_TRADE_ROUNDS; round++) {
+      await this._gate(signal);
+      const kept = this._ours(sideId, R.rosterOf(await side.roster()), 'side').filter(p => sideAcc.players[p.id]?.status === 'keep');
+      if (!kept.length) return;
+      const roleMap = this._roleMap();
+      const floor = this.state.config.spenderMinTk || 0;
+      let give = [];
+      const sp = (await this._spendersByTk()).find(id => {
+        if (id === sideId) return false;
+        give = kept.filter(p => this._mayTake(id, p, roleMap) && !(this.state.excluded[id] || []).includes(p.id)).slice(0, R.TRADE_MAX);
+        const funds = this.state.accounts[id].funds;
+        return give.length && (!Number.isFinite(funds) || funds - give.reduce((n, p) => n + R.salaryOf(p), 0) >= floor);
+      });
+      if (!sp) { this._log('info', 'at2.noSpender', { name: this._name(sideId) }, `${this._name(sideId)}: no Harcayıcı with enough TK · it keeps its players`, sideId); return; }
+      const wasOpen = this.conns.has(sp);
+      try {
+        await this._open(sp, signal);
+        this._ensureAcc(sp).role = 'spender';
+        if (!(await this._spenderRoom(sp, give.map(p => p.id), give.length, signal))) { (this.state.excluded[sp] ||= []).push(...give.map(p => p.id)); continue; }
+        const ok = await this._tradePair(sideId, sp, give, signal);
+        if (!ok) (this.state.excluded[sp] ||= []).push(...give.map(p => p.id));
+      } catch (error) {
+        if (error?.name === 'AbortError') throw error;
+        this._log('warning', 'at2.spenderTradeFailed', { name: this._name(sp), error: error.message }, `${this._name(sp)}: ${error.message}`, sp);
+        (this.state.excluded[sp] ||= []).push(...give.map(p => p.id));
+      } finally {
+        if (!wasOpen) this._park(sp);
+      }
+    }
+  }
+
+  // One trade: `hostId` gives `give`, `guestId` gives nothing and pays their salary.
+  async _tradePair(hostId, guestId, give, signal) {
+    const host = this.conns.get(hostId), guest = this.conns.get(guestId);
+    const hostRoster = R.rosterOf(await host.roster()), guestRoster = R.rosterOf(await guest.roster());
+    const guestFunds = await guest.funds().catch(() => this._acc(guestId).funds);
+    const plan = R.planTrade({ mainRoster: guestRoster, sideRoster: hostRoster, mainGive: [], sideGive: give, mainFunds: guestFunds, sideFunds: Infinity });
+    if (plan.empty || !plan.mainCanPay) return false;
+    this._log('info', 'at2.toSpender', { from: this._name(hostId), name: this._name(guestId), count: plan.sideGives.length }, `${this._name(hostId)} → ${this._name(guestId)} (Harcayıcı)`, guestId);
+    const result = await this._executeTrade(hostId, plan, signal, guestId);
+    if (!result.success) { this._log('warning', 'at2.tradeFailed', { side: this._name(guestId), error: result.message }, `Trade with ${this._name(guestId)} failed: ${result.message}`, guestId); return false; }
+    const h = this._acc(hostId), g = this._ensureAcc(guestId);
+    for (const p of plan.sideGives) {
+      const row = h.players[p.id];
+      delete h.players[p.id];
+      g.players[p.id] = { ...row, status: 'keep', from: h.name };
+    }
+    this._spenderTodo.add(guestId);
+    h.tradesOut += plan.sideGives.length; g.tradesIn += plan.sideGives.length;
+    h.tkReceived += plan.tk; g.tkPaid += plan.tk;
+    g.funds = Number.isFinite(g.funds) ? g.funds - plan.tk : g.funds;
+    h.funds = Number.isFinite(h.funds) ? h.funds + plan.tk : h.funds;
+    this._log('success', 'at2.spenderTraded', { from: h.name, name: g.name, count: plan.sideGives.length, tk: plan.tk }, `${h.name} gave ${plan.sideGives.length} player(s) to ${g.name} · ${plan.tk} TK`, guestId);
+    this._save();
+    return true;
+  }
+
+  // After its own Scout an account looks at its friends' boards (Main's own board is its turn):
+  // Kart / cheap players go to Main when Main can reach that board, otherwise to this account
+  // (the old way, then a trade); Satılabilir / Stok go to a spender, or the side keeps them when
+  // none can take them. Main does not keep Satılabilir from friends.
+  async _friendBoards(id, role, signal) {
+    if (!this._friendsOn()) return;
+    const mainId = this.state.config.mainId;
+    const mainUser = this._userIdOf(mainId);
+    const roleMap = this._roleMap();
+    const roleNames = this._roleNames();
+    let friends;
+    try { friends = await this.friendNet.friendsOf(id, { signal }); }
+    catch (error) { if (error?.name === 'AbortError') throw error; this._log('warning', 'at2.friendsFailed', { name: this._name(id), error: error.message }, `${this._name(id)}: friend list could not be read`, id); return; }
+    const mainFriends = role === 'main' ? friends : await this.friendNet.friendsOf(mainId, { signal }).catch(() => null);
+    const seen = (this._boardSeen ||= new Map());
+    // a board already gone through in the last 10 minutes has nothing new (refreshes every 30)
+    const owners = [...friends.ids].filter(u => u !== mainUser && this.now() - (seen.get(u) || 0) >= 10 * 60 * 1000);
+    owners.forEach(u => seen.set(u, this.now()));
+    // the boards are read 4 at a time (one round trip each); signing stays one by one
+    const boards = new Map();
+    const read = async u => { try { boards.set(u, await this.friendNet.board(id, u, signal)); } catch (error) { if (error?.name === 'AbortError') throw error; } };
+    for (let i = 0; i < owners.length; i += 4) {
+      await this._gate(signal);
+      await Promise.all(owners.slice(i, i + 4).map(read));
+    }
+    for (const ownerUser of owners) {
+      await this._gate(signal);
+      const board = boards.get(ownerUser);
+      if (!board || !board.freeAgents.some(a => !a.isSigned && R.classify(a, this.state.config, roleMap))) continue;
+      const ownerName = friends.names.get(ownerUser) || '?';
+      for (const agent of board.freeAgents) {
+        await this._gate(signal);
+        if (agent.isSigned) continue;
+        const base = R.classify(agent, this.state.config, roleMap);
+        if (base === 'side' && this._needsLv30(agent, roleMap)) {
+          if (await this._stokBuy(ownerUser, agent, signal, id) === 'self') await this._friendSign(id, role, ownerUser, ownerName, agent, roleMap, roleNames, signal);
+          continue;
+        }
+        if (base === 'side') {
+          const sp = await this._spenderFor(ownerUser, agent, signal, id);
+          if (sp && await this._spenderBuy(sp, ownerUser, agent, signal)) continue;
+          // nobody else can: main (all its friends' boards) or the side signs it and hands it
+          // to a Harcayıcı by trade later
+          await this._friendSign(id, role, ownerUser, ownerName, agent, roleMap, roleNames, signal);
+          continue;
+        }
+        if (base !== 'main') continue;
+        const viaMain = role === 'main' || Boolean(mainFriends?.ids?.has(ownerUser));
+        await this._friendSign(viaMain ? mainId : id, viaMain ? 'main' : role, ownerUser, ownerName, agent, roleMap, roleNames, signal);
+      }
+    }
+  }
+
+  // `buyerId` (main or the side in its turn, both connected) signs a friend's board player
+  // under its own rules, like its own Scout.
+  async _friendSign(buyerId, role, ownerUser, ownerName, agent, roleMap, roleNames, signal) {
+    if (this._blocked(buyerId)) return false;
+    if (this._level(buyerId) < 30 && this._needsLv30(agent, roleMap)) return false; // Stok / Lv30+ only
+    const rule = role === 'main' ? null : this._ruleFor(buyerId);
+    const cfg = R.configFor(this.state.config, rule);
+    const dir = R.classify(agent, cfg, roleMap);
+    if (!dir || dir === 'ask' || !R.accountAllows(rule, R.signReason(agent, cfg, roleMap), agent, roleMap, cfg)) return false;
+    const acc = this._acc(buyerId) || this._ensureAcc(buyerId);
+    const conn = this.conns.get(buyerId) || await this._open(buyerId, signal);
+    let roster = R.rosterOf(await conn.roster());
+    if (roster.ids.has(agent.id)) return false;
+    if (roster.total >= R.ROSTER_MAX) {
+      if (!(await this._makeRoom(buyerId, role, signal))) return false;
+      roster = R.rosterOf(await conn.roster());
+      if (roster.total >= R.ROSTER_MAX) return false;
+    }
+    const price = Number(agent.baseSalary) || 0;
+    // TK is tracked; it is read again only when the tracked number says it is not enough
+    if (!Number.isFinite(acc.funds) || acc.funds < price) acc.funds = await conn.funds().catch(() => acc.funds);
+    if (Number.isFinite(acc.funds) && acc.funds < price) return false;
+    this._step('signing', { name: this._name(buyerId), player: agent.name, price }, buyerId);
+    const r = await this.friendNet.signFrom(buyerId, ownerUser, agent.id, signal);
+    if (!r?.success) {
+      const m = String(r?.message || r?.error || 'refused');
+      if (/limit|daily|today|maximum|too many/i.test(m)) this._block(buyerId, m);
+      else if (!/not available|already signed/i.test(m)) this._log('warning', 'at2.signFailed', { player: agent.name, error: m }, `${agent.name} could not be signed`, buyerId);
+      return false;
+    }
+    // the reply says whether the salary was cut (Lv30+, 5%); no second roster read
+    const signedAs = r.revealedPlayer && r.revealedPlayer.id === agent.id ? r.revealedPlayer : null;
+    const salary = Number(signedAs?.signedSalary) || (r.salaryCut ? Math.round(price * 0.95) : price);
+    const row = this._row({ ...agent, ...(signedAs || {}), signedSalary: salary }, cfg, roleMap, roleNames, { from: ownerName });
+    row.status = row.dir ? this._statusFor(row.dir, role) : 'none';
+    row.discounted = salary < price;
+    acc.players[agent.id] = row;
+    acc.bought += 1;
+    acc.spent += salary; // paid = salary, discount included
+    if (Number.isFinite(acc.funds)) acc.funds -= salary;
+    this._log('success', 'at2.friendSigned', { name: this._name(buyerId), player: agent.name, price: salary, owner: ownerName }, `${this._name(buyerId)} signed ${agent.name} off ${ownerName}'s board · ${salary} TK`, buyerId);
+    this._save();
+    await sleep(this.timing.stepMs, signal);
+    return true;
+  }
+
   // A full roster: main converts or unloads to sides; a side gives to main or lists.
   async _makeRoom(id, role, signal) {
     if (role === 'main') {
       if (await this._convertMain(signal)) return true;
+      // Satılabilir / Stok fill main: a Harcayıcı takes them first, the sides only after
+      await this._mainToSpenders(signal);
+      const main = this.conns.get(this.state.config.mainId);
+      if (main && R.rosterOf(await main.roster()).total < R.ROSTER_MAX) return true;
       return this._unloadMain(signal);
+    }
+    // A full side holding more Satılabilir / Stok than main-bound players hands them to a
+    // Harcayıcı first: one big trade instead of many 1-player trades with main (live 2026-11-05).
+    if (this._friendsOn() && this._accountRoleId(id) !== 'spender') {
+      const full = R.rosterOf(await this.conns.get(id).roster());
+      const toMain = this._ours(id, full, 'main').length;
+      const toSpender = this._ours(id, full, 'side').filter(p => this._acc(id).players[p.id]?.status === 'keep').length;
+      if (toSpender > toMain) {
+        await this._sideToSpender(id, signal);
+        if (R.rosterOf(await this.conns.get(id).roster()).total < R.ROSTER_MAX) return true;
+      }
     }
     const r = await this._tradeWithMain(id, signal);
     if (r?.skipped) return false;
-    const roster = R.rosterOf(await this.conns.get(id).roster());
+    let roster = R.rosterOf(await this.conns.get(id).roster());
+    if (roster.total < R.ROSTER_MAX) return true;
+    // A Harcayıcı running as a side keeps its Satılabilir / Stok: its roster never fills, a few
+    // bench players go to the market at their default price (nobody is asked, the run goes on).
+    if (this._friendsOn() && this._accountRoleId(id) === 'spender') {
+      if (await this._spenderRoom(id, [], 3, signal)) return true;
+    }
+    // still full of Satılabilir / Stok: they go to a Harcayıcı before anything is listed
+    await this._sideToSpender(id, signal);
+    roster = R.rosterOf(await this.conns.get(id).roster());
     if (roster.total < R.ROSTER_MAX) return true;
     return this._askListing(id, roster, signal);
   }
@@ -781,7 +1510,22 @@ class AutoTradeEngine {
         throw new UserFixError(`${plan.dupToMain.map(p => p.name).join(', ')} is already on main.`, 'at2.dupOnMain', { names: plan.dupToMain.map(p => p.name).join(', ') });
       }
       if (plan.empty) return {};
-      if (!plan.mainCanPay) throw new UserFixError(`Main needs ${plan.tk} TK for this trade, it has ${mainFunds}.`, 'at2.mainFunds', { name: this._name(mainId), funds: mainFunds, need: plan.tk });
+      if (!plan.mainCanPay) {
+        // main takes as many as its TK pays for; the rest waits on the side (no stop)
+        const mainGets = plan.mainGives.reduce((n, p) => n + R.salaryOf(p), 0);
+        const afford = [];
+        let cost = 0;
+        for (const p of plan.sideGives) { if (cost + R.salaryOf(p) - mainGets <= mainFunds) { afford.push(p); cost += R.salaryOf(p); } }
+        const waiting = plan.sideGives.filter(p => !afford.includes(p));
+        this._log('warning', 'at2.mainFundsWait', { main: this._name(mainId), funds: mainFunds, side: this._name(sideId), names: waiting.map(p => p.name).join(', ') }, `${this._name(mainId)} has ${mainFunds} TK · ${waiting.map(p => p.name).join(', ')} wait on ${this._name(sideId)}`, sideId);
+        if (!afford.length && !plan.mainGives.length) return {};
+        const small = R.planTrade({ mainRoster, sideRoster, mainGive: plan.mainGives, sideGive: afford, mainFunds, sideFunds });
+        if (small.empty || !small.mainCanPay || !small.sideCanPay) return {};
+        const res = await this._executeTrade(sideId, small, signal);
+        if (res.success) { this._afterTrade(sideId, small); if (small.sideGives.length) await this._convertMain(signal); }
+        else this._log('warning', 'at2.tradeFailed', { side: this._name(sideId), error: res.message }, `Trade with ${this._name(sideId)} failed: ${res.message}`, sideId);
+        return {};
+      }
       if (!plan.sideCanPay) {
         this._log('warning', 'at2.sideFunds', { name: this._name(sideId), funds: sideFunds, need: -plan.tk }, `${this._name(sideId)}: not enough TK for the trade, account skipped`, sideId);
         return { skipped: true };
@@ -802,12 +1546,13 @@ class AutoTradeEngine {
     return {};
   }
 
-  async _executeTrade(sideId, plan, signal) {
+  async _executeTrade(sideId, plan, signal, guestId = null) {
     const s = this.state;
-    const mainId = s.config.mainId;
+    const mainId = guestId || s.config.mainId;
     const main = this.conns.get(mainId);
     const side = this.conns.get(sideId);
     const password = this.credentials.decryptSecret(s.config.roomPasswordEncrypted);
+    const before = new Map([...plan.mainGives.map(p => [`g:${p.id}`, this._acc(mainId).players[p.id]?.status]), ...plan.sideGives.map(p => [`h:${p.id}`, this._acc(sideId).players[p.id]?.status])]);
     for (const p of plan.mainGives) this._acc(mainId).players[p.id].status = 'trading';
     for (const p of plan.sideGives) this._acc(sideId).players[p.id].status = 'trading';
     this._step('trading', { side: this._name(sideId), give: plan.mainGives.length, take: plan.sideGives.length, tk: plan.tk }, sideId);
@@ -853,8 +1598,8 @@ class AutoTradeEngine {
       if (error?.name === 'AbortError') throw error;
       return { success: false, message: error.message };
     } finally {
-      for (const p of plan.mainGives) if (this._acc(mainId).players[p.id]?.status === 'trading') this._acc(mainId).players[p.id].status = 'toTrade';
-      for (const p of plan.sideGives) if (this._acc(sideId).players[p.id]?.status === 'trading') this._acc(sideId).players[p.id].status = 'toTrade';
+      for (const p of plan.mainGives) if (this._acc(mainId).players[p.id]?.status === 'trading') this._acc(mainId).players[p.id].status = before.get(`g:${p.id}`) || 'toTrade';
+      for (const p of plan.sideGives) if (this._acc(sideId).players[p.id]?.status === 'trading') this._acc(sideId).players[p.id].status = before.get(`h:${p.id}`) || 'toTrade';
       if (roomId) side.cancelRoom(roomId);
       main.leave();
     }
@@ -880,6 +1625,9 @@ class AutoTradeEngine {
     main.tradesIn += plan.sideGives.length;
     if (plan.tk > 0) { main.tkPaid += plan.tk; side.tkReceived += plan.tk; }
     if (plan.tk < 0) { side.tkPaid += -plan.tk; main.tkReceived += -plan.tk; }
+    // the TK moves at once (the last trade of a turn is not followed by a fresh read)
+    if (Number.isFinite(main.funds)) main.funds -= plan.tk;
+    if (Number.isFinite(side.funds)) side.funds += plan.tk;
     this._log('success', 'at2.traded', { side: side.name, give: plan.mainGives.length, take: plan.sideGives.length, tk: plan.tk }, `Trade with ${side.name}: main gave ${plan.mainGives.length}, got ${plan.sideGives.length} · ${plan.tk} TK`, sideId);
     this._save();
   }
@@ -909,10 +1657,12 @@ class AutoTradeEngine {
   // A side full of players it keeps: ask the user which to list on the market.
   async _askListing(id, roster, signal) {
     const acc = this._acc(id);
-    const players = this._ours(id, roster, 'side').map(p => {
+    // a player put on hold (Beklet) is not asked about again
+    const players = this._ours(id, roster, 'side').filter(p => !acc.players[p.id]?.held).map(p => {
       const row = acc.players[p.id];
-      const kind = row.roleIds?.some(r => (this.state.config.mainToSideRoleIds || []).includes(r) && r !== 'sellable') ? 'stock' : 'sellable';
-      return { id: p.id, name: row.name, salary: row.salary, value: row.price, base: row.base ?? (Number(p.newBaseSalary) || null), roles: row.roles, ...LIST_DEFAULTS[kind] };
+      // the Otomatik Fiyatlandırma price is filled in; the user can still change it
+      const { price, currency } = this._listPrice(p, id);
+      return { id: p.id, name: row.name, salary: row.salary, value: row.price, base: row.base ?? (Number(p.newBaseSalary) || null), roles: row.roles, price, currency };
     });
     if (!players.length) return false;
     this.state.listingRequest = { accountId: id, name: acc.name, players };
@@ -926,15 +1676,33 @@ class AutoTradeEngine {
     this._save();
     if (signal.aborted) throw abortError();
     if (!items?.length) return false;
-    await this._list(id, items, signal);
-    return R.rosterOf(await this.conns.get(id).roster()).total < R.ROSTER_MAX;
+    // each player: list (at its price) · fire · hold (stays on the side, shown in "List on
+    // market" under the page). An item without an action is a listing (older pages).
+    const toList = items.filter(it => !it.action || it.action === 'list');
+    const toFire = items.filter(it => it.action === 'fire');
+    for (const it of items.filter(it => it.action === 'hold')) {
+      const row = acc.players[it.id];
+      if (row) { row.held = true; this._log('info', 'at2.held', { name: row.name }, `${row.name} kept on the side (Beklet)`, id); }
+    }
+    if (toList.length) await this._list(id, toList, signal);
+    const conn = this.conns.get(id);
+    for (const it of toFire) {
+      await this._gate(signal);
+      const row = acc.players[it.id];
+      const r = await conn.fire(it.id).catch(error => ({ success: false, message: error.message }));
+      if (r?.success && row) row.status = 'fired';
+      this._log(r?.success ? 'success' : 'warning', r?.success ? 'at2.fired' : 'at2.fireFailed', { name: row?.name || it.id, error: r?.error || r?.message || '' }, r?.success ? `${row?.name || it.id} fired` : `${row?.name || it.id} could not be fired: ${r?.error || r?.message || ''}`, id);
+      this._save();
+    }
+    return R.rosterOf(await conn.roster()).total < R.ROSTER_MAX;
   }
 
-  async _list(id, items, signal) {
+  async _list(id, items, signal, { userAsked = false } = {}) {
     const conn = this.conns.get(id);
     const acc = this._acc(id);
     for (const it of items) {
-      await this._gate(signal);
+      // asked by the user from "List on market": a paused run does not hold it back
+      if (userAsked) { if (signal.aborted) throw abortError(); } else await this._gate(signal);
       const r = await conn.sell(it.id, it.price, it.currency);
       const row = acc.players[it.id];
       if (r?.success) { if (row) row.status = 'listed'; acc.listed += 1; }
@@ -956,7 +1724,7 @@ class AutoTradeEngine {
     try {
       if (temp) await this._open(accountId, signal);
       this._step('listing', { name: this._name(accountId), count: items.length }, accountId);
-      await this._list(accountId, items, signal);
+      await this._list(accountId, items, signal, { userAsked: true });
       await this._restoreParked(accountId, signal).catch(error => this._log('error', 'os.restoreFailed', { name: this._name(accountId), error: error.message }, error.message, accountId));
     } finally {
       if (temp) this._close(accountId);

@@ -331,6 +331,7 @@ tr.row-dragging .row-handle{background:var(--bg-fff1e7);color:var(--fg-b94d08);b
 .pl-table td{white-space:nowrap}.pl-up{color:var(--fg-079455);font-weight:800}.pl-down{color:var(--fg-d92d20);font-weight:800}.pl-base-row{background:var(--bg-fffbf2)}.pl-was{display:block;font-size:11px;color:var(--fg-98a2b3)}
 .pl-injured{display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;border-radius:50%;background:var(--bg-d92d20);color:var(--fg-ffffff);font-size:11px;font-weight:900;margin-left:6px}
 .pl-roles{display:flex;gap:4px;flex-wrap:wrap;cursor:pointer;min-height:20px}.pl-base-badge{background:var(--bg-f79009);border-color:var(--bd-f79009)}.pl-role-edit{margin-top:6px}
+.hidden-roled{margin-top:18px}.role-remove{display:inline-flex;align-items:center;gap:3px;background:none;border:0;padding:0;cursor:pointer;color:inherit;font:inherit}.role-remove:hover{opacity:.7}
 .pl-card{font-size:12px;color:var(--fg-475467);display:inline-flex;gap:4px;align-items:center}.pl-pager{display:flex;gap:10px;align-items:center;justify-content:center;margin:12px 0;font-size:12px;font-weight:700}.pl-error{padding:10px 14px;margin-bottom:12px;color:var(--fg-b42318);background:var(--bg-fff7f5)}
 
 .value-cell{display:inline-flex;gap:8px;align-items:center}.value-cell .pl-up,.value-cell .pl-down{font-size:11px}
@@ -377,6 +378,7 @@ button.eq-chip{font:inherit;cursor:pointer;transition:.12s}button.eq-chip:not(:d
 .pvp-arena em{font-style:normal;font-size:11px;font-weight:750;color:var(--fg-9a6800)}
 .buy-menu{display:inline-block;position:relative}.buy-pop{position:fixed;z-index:200;width:260px;max-height:320px;overflow:auto;background:var(--bg-ffffff);border:1px solid var(--bd-dfe4eb);border-radius:12px;box-shadow:0 18px 50px rgba(16,24,40,.22);padding:10px;display:grid;gap:4px;text-align:left}.buy-pop>b{font-size:12px;color:var(--fg-253248)}.buy-pop>small{font-size:11.5px;color:var(--fg-c25a12);font-weight:800;margin-bottom:4px}.buy-pop button{display:flex;justify-content:space-between;align-items:center;gap:8px;height:34px;padding:0 10px;border:1px solid var(--bd-e4e7ec);border-radius:8px;background:var(--bg-fbfcfd);font-size:11.5px;font-weight:750;color:var(--fg-253248);cursor:pointer}.buy-pop button:hover:not(:disabled){border-color:var(--bd-1b8d62);background:var(--bg-effaf4)}.buy-pop button em{font-style:normal;font-size:11.5px;color:var(--fg-19714e);font-weight:800}.buy-pop button.off{opacity:.45;cursor:not-allowed}.buy-pop button.off em{color:var(--fg-98a2b3)}
 .bought-list{margin-top:18px}.bought-filter{display:flex;gap:6px;margin-bottom:8px}.chip.on{background:var(--bg-273f82);color:var(--fg-ffffff);border-color:var(--bd-273f82)}.bought-price{display:inline-flex;align-items:center;gap:6px}.bought-price .price-input{width:110px}
+.bought-bulk{display:flex;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap}.bought-list .sel-col{width:28px;text-align:center}.bought-list tr.selected td{background:var(--bg-273f82, rgba(39,63,130,.12));background:color-mix(in srgb, currentColor 6%, transparent)}
 .ab-interval{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:800;color:var(--fg-667085)}.ab-interval input{width:70px;height:36px;border:1px solid var(--bd-d7dde6);border-radius:8px;padding:0 8px}
 .ab-status{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:12px 14px;margin-bottom:14px;border-left:4px solid var(--bd-98a2b3);font-size:12px}.ab-status.ok{border-left-color:var(--bd-1f9d68)}.ab-status.bad{border-left-color:var(--bd-d74b3f);background:var(--bg-fff8f7)}.ab-warn{font-style:normal;color:var(--fg-b23328);font-weight:750}
 .ab-grid{display:grid;grid-template-columns:minmax(0,1fr) 380px;gap:16px;align-items:start}.ab-add{position:relative;display:flex;gap:8px;align-items:center;margin-bottom:8px}.ab-add input{flex:1;height:36px;border:1px solid var(--bd-d7dde6);border-radius:9px;padding:0 12px}.ab-sugg{position:absolute;top:40px;left:0;right:120px;z-index:20;background:var(--bg-ffffff);border:1px solid var(--bd-dfe4eb);border-radius:10px;box-shadow:0 12px 30px rgba(16,24,40,.15);padding:6px;display:grid;gap:2px}.ab-sugg button{display:flex;justify-content:space-between;gap:10px;border:0;background:transparent;padding:7px 9px;border-radius:7px;cursor:pointer;text-align:left;font-size:12px}.ab-sugg button:hover{background:var(--bg-f3f5f9)}.ab-sugg small{color:var(--fg-7b8798)}
@@ -1016,3 +1018,99 @@ td.good-text b,td.bad-text b{font-weight:800}
 .office-page .dp-table td{white-space:normal}.office-page .dp-table td.actions,.office-page .dp-table td.num{white-space:nowrap}
 .office-page .dp-table td.grp-name{white-space:nowrap}
 .bulk-role{display:grid;gap:10px}.bulk-role-pick{display:flex;align-items:center;gap:10px}.bulk-role-pick select{height:32px;border:1px solid var(--d-line);border-radius:8px;background:var(--d-surface);color:var(--d-ink);padding:0 8px}
+.guide-body ol.guide-steps{margin:0;padding-left:20px;display:grid;gap:5px}.guide-body ol.guide-steps li{padding-left:2px}.guide-body ul.guide-tips li::marker{content:'💡 '}.guide-body dl.guide-problems>div{border-color:var(--bd-f2d0cc,#f2d0cc);background:var(--bg-fff7f5,#fff7f5)}.guide-body dl.guide-problems dt{color:var(--fg-8f3128,#8f3128)}
+
+/* Auto Trade · Otomatik Fiyatlandırma */
+.at2-pricing { display: grid; gap: 12px; }
+.at2-pricing h4 { margin: 10px 0 6px; }
+.at2-pricing-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 10px; }
+.at2-pricing-bar .guide-search { max-width: 240px; }
+.at2-pricing-table td { vertical-align: middle; }
+.at2-pricing-table .bought-price input { width: 96px; }
+.at2-pricing-table tr.at2-noprice td:first-child { box-shadow: inset 3px 0 0 var(--warn, #e0a030); }
+.at2-price-banner { display: flex; align-items: center; justify-content: space-between; gap: 12px; border-left: 3px solid var(--warn, #e0a030); }
+.dp-tabs .so-count { margin-left: 6px; }
+
+/* Turnuva · son çalıştırma raporu (özet tablo + açılır hesap listesi) */
+.tn-summary{width:100%;border-collapse:collapse;table-layout:fixed;margin-top:4px}
+.tn-summary th{font-size:11px;font-weight:800;color:var(--fg-667085);text-align:center;padding:6px 4px;border-bottom:1px solid var(--bd-d9dee7)}
+.tn-summary td{text-align:center;padding:8px 4px}
+.tn-count{font-size:18px;font-weight:800;background:none;border:0;color:var(--fg-273f82,#273f82);cursor:pointer;padding:2px 10px;border-radius:8px;text-decoration:underline dotted;text-underline-offset:4px}
+.tn-count:hover{background:var(--bg-eef1f5)}
+.tn-count.zero{color:var(--fg-667085);cursor:default;text-decoration:none;display:inline-block}
+.tn-pop-wrap{position:relative;display:inline-block}
+.tn-pop{position:absolute;z-index:40;top:calc(100% + 6px);left:50%;transform:translateX(-50%);min-width:220px;max-width:320px;max-height:300px;overflow:auto;background:var(--bg-ffffff);border:1px solid var(--bd-d9dee7);border-radius:10px;box-shadow:0 10px 28px rgba(15,23,42,.18);padding:10px 12px;text-align:left}
+.tn-pop-head{display:flex;justify-content:space-between;gap:8px;margin-bottom:6px}
+.tn-pop ul{list-style:none;margin:0 0 8px;padding:0;font-size:12px}
+.tn-pop li{padding:3px 0;border-bottom:1px solid var(--bd-eef1f5,#eef1f5)}
+.tn-pop li:last-child{border-bottom:0}
+.tn-events{margin-top:10px}
+.tn-events h4{margin:0 0 6px;font-size:12px}
+.tn-event-chips{display:flex;flex-wrap:wrap;gap:8px}
+.tn-event-chip{display:inline-flex;align-items:center;gap:4px;border:1px solid var(--bd-d9dee7);border-radius:20px;padding:2px 4px 2px 12px;font-size:12px;font-weight:700}
+.tn-event-chip .tn-count{font-size:14px}
+
+/* Auto Buy · maaş aralıkları */
+.ab-range{white-space:nowrap}
+.ab-range input{width:84px}
+.ab-range > span{margin:0 4px;color:var(--fg-667085)}
+.ab-range-row td{border-top:0;background:var(--bg-f8fafc,rgba(127,127,127,.04))}
+.ab-range-mark{padding-left:10px;font-size:12px}
+.ab-add-range{display:block;margin-top:4px;font-size:11px}
+.mk-grp-status{white-space:normal}.mk-grp-status .pill{margin-right:4px}
+.mk-grp-total{margin-right:6px}
+
+/* Auto Trade · arayüz düzeltmeleri (2026-11-07) */
+.at2-price-banner{padding:10px 14px;margin-bottom:12px;gap:14px}
+.at2-price-banner>span{font-weight:700}
+.at2-pricing-defaults{padding:14px 16px}
+.at2-pricing-defaults p{margin:0 0 10px}
+.at2-pricing-defaults h4{margin:0 0 8px}
+.at2-pricing-defaults .at2-row{margin-bottom:8px}
+.at2-pricing-defaults .at2-row input{width:140px}
+.at2-pricing .table-panel{overflow-x:auto}
+.at2-pricing-bar{padding:12px 14px 0}
+.at2-pricing-table{min-width:0}
+.at2-pricing-table th,.at2-pricing-table td{padding-left:8px;padding-right:8px;white-space:nowrap}
+.at2-pricing-table th{white-space:normal;line-height:1.2}
+.at2-pricing-table .bought-price{gap:4px}
+.at2-pricing-table .bought-price input{width:68px;height:28px;border:1px solid var(--bd-d0d5dd);border-radius:7px;padding:0 6px;font-size:12px;background:var(--bg-ffffff);color:inherit}
+.at2-pricing-table .currency-toggle button{height:24px;padding:0 6px;font-size:10px}
+.at2-pricing-table td:first-child{white-space:normal;min-width:180px}
+.at2-pricing-table td small.warn-text{display:block}
+.at2-rr-row input[type=number]{height:30px;border:1px solid var(--bd-d0d5dd);border-radius:8px;padding:0 8px;font-size:12px;background:var(--bg-ffffff);color:inherit}
+.at2-rr-row input[type=number]:disabled{opacity:.55}
+.at2-moved-note{flex-basis:100%;font-size:12px;color:var(--fg-667085);padding:2px 0 4px}
+
+/* Auto Trade · elle listeleme penceresi (Listele / Kov / Beklet) */
+.at2-lm-all{display:flex;align-items:center;gap:6px;margin:6px 0 10px;font-size:12px;font-weight:700}
+.at2-lm-acts{display:inline-flex;border:1px solid var(--bd-d7dde6);border-radius:8px;overflow:hidden}
+.at2-lm-act{height:28px;padding:0 10px;border:0;border-right:1px solid var(--bd-d7dde6);background:var(--bg-ffffff);color:var(--fg-667085);font-size:11px;font-weight:800;cursor:pointer}
+.at2-lm-act:last-child{border-right:0}
+.at2-lm-act.ok.on{background:#1f9d55;color:#fff}
+.at2-lm-act.bad.on{background:#d92d20;color:#fff}
+.at2-lm-act.muted.on{background:var(--bg-273f82);color:#fff}
+.at2-lm-table tr.at2-lm-open td:first-child{box-shadow:inset 3px 0 0 var(--warn,#e0a030)}
+.at2-lm-table tr.at2-lm-fire td{opacity:.75}
+.at2-lm-table .bought-price input{width:76px;height:28px;border:1px solid var(--bd-d0d5dd);border-radius:7px;padding:0 6px;font-size:12px;background:var(--bg-ffffff);color:inherit}
+.modal-actions .warn-text,.modal-actions .bad-text{margin-right:auto;font-size:12px}
+
+/* APK / TIX aktarımı */
+.apk-mode button{height:34px;padding:0 12px}
+.apk-check{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:700;margin:4px 0 10px}
+.apk-eligible{margin:10px 0 4px;font-size:12px}
+.apk-stats>div{display:flex;flex-direction:column;gap:2px}
+.apk-stats small{font-size:11px;color:var(--fg-667085)}
+.apk-mode{width:max-content}
+
+/* Günlük İşler · Daily Slot */
+.dp-grow{flex:1;min-width:260px}
+.ds-prizes,.ds-totals{display:flex;flex-wrap:wrap;gap:6px}
+.ds-prize{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:700;padding:3px 8px;border-radius:12px;border:1px solid var(--bd-d9dee7);background:var(--bg-ffffff)}
+.ds-prize.r-uncommon{border-color:#3fa66b;color:#2e7d4f}
+.ds-prize.r-rare{border-color:#3b82f6;color:#2563eb}
+.ds-prize.r-epic{border-color:#9b5de5;color:#7c3aed}
+.ds-prize.r-legendary{border-color:#f59e0b;color:#b45309}
+.ds-prize.r-mythic{border-color:#ef4444;color:#dc2626}
+.at2-pricing-table .bought-price input:disabled{opacity:.5;font-style:italic}
+.ds-prize-btn{cursor:pointer;font-family:inherit}.ds-prize-btn:hover{filter:brightness(.95);text-decoration:underline dotted}

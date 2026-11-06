@@ -29,6 +29,7 @@ const { SocialService } = require('./services/social-service.cjs');
 const { AccountProfileService } = require('./services/account-profile-service.cjs');
 const { CardsService } = require('./services/cards-service.cjs');
 const { AutoTradeEngine } = require('./services/auto-trade-engine.cjs');
+const { FriendNetwork } = require('./services/friend-network.cjs');
 const { MarketService } = require('./services/market-service.cjs');
 const { GameSessions } = require('./services/game-sessions.cjs');
 // The old browser Player Market (player-market-*.cjs) is kept on disk but no longer used.
@@ -43,12 +44,14 @@ const { DailyBossService, EliteAscentService, ProfessionalService } = require('.
 const { OfficeService, MagicTeamService } = require('./services/office-service.cjs');
 const { SkillsService } = require('./services/skills-service.cjs');
 const { TkTransferService } = require('./services/tk-transfer-service.cjs');
+const { ApkTransferService } = require('./services/apk-transfer-service.cjs');
 const { ValuePredictService } = require('./services/value-predict-service.cjs');
 const { InjuryService } = require('./services/injury-service.cjs');
 const { ActivateService } = require('./services/activate-service.cjs');
 const { PropService } = require('./services/prop-service.cjs');
 const { QuizService } = require('./services/quiz-service.cjs');
 const { CheerService } = require('./services/cheer-service.cjs');
+const { DailySlotService } = require('./services/daily-slot-service.cjs');
 const { ChatService } = require('./services/chat-service.cjs');
 const { BuyService } = require('./services/buy-service.cjs');
 const { TowerService } = require('./services/tower-service.cjs');
@@ -84,6 +87,7 @@ let pvp;
 let goup;
 let quiz;
 let cheer;
+let dailySlot;
 let chat;
 let goupDone = null;
 let dailyBoss;
@@ -98,6 +102,8 @@ let bossDone = null;
 let ascentDone = null;
 let professional;
 let tkTransfer;
+let apkTransfer;
+let apkDone = null;
 let valuePredict;
 let injuries;
 let lastInjuryRevision = -1;
@@ -125,6 +131,14 @@ let lastAutoTradeRevision = -1;
 let dataDir;
 let systemLocale = 'en-US';
 let pendingState = null;
+// The page gets a new state only after it has taken the last one (app:state-ack), and at
+// most every STATE_GAP_MS: with many accounts (PVP: a log line every few ms) states piled
+// up in the page faster than it could draw them, until it ran out of memory and went white.
+const STATE_GAP_MS = 250;
+const STATE_ACK_WAIT_MS = 5000;
+let stateInFlightAt = 0;   // when the last unanswered state was sent (0: none waiting)
+let stateDirty = false;
+let lastStateSentAt = 0;
 let lastCardsKey = null;
 let lastTradeRows = null;
 let lastTradeScanning = null;
@@ -166,9 +180,11 @@ function snapshot({ incremental = false } = {}) {
     skills: skills?.snapshot() || { busy: [] },
     professional: professional?.snapshot() || { running: false, run: null, info: {} },
     tkTransfer: tkTransfer?.snapshot() || { running: false, run: null, config: null, lastReport: null },
+    apkTransfer: apkTransfer?.snapshot() || { running: false, run: null, config: null, lastReport: null },
     goup: goup?.snapshot() || { running: false, run: null, points: {}, event: null, lastReport: null },
     quiz: quiz?.snapshot() || { running: false, run: null, bankSize: 0, lastReport: null },
     cheer: cheer?.snapshot() || { busy: false, last: null },
+    dailySlot: dailySlot?.snapshot() || { running: false, rows: {}, lastRun: null },
     signup: signup?.snapshot() || { running: false, rows: [] },
     chatFeed: gameEvents?.chatFeed() || [],
     social: social?.snapshot() || { badges: {}, totals: { requests: 0, unread: 0, mail: 0 } },
@@ -204,15 +220,28 @@ function snapshot({ incremental = false } = {}) {
 }
 
 function emitState() {
+  stateDirty = true;
   if (pendingState || !mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isLoading()) return;
   // Services can report several changes in the same event-loop turn. Send the
   // latest complete state once, avoiding repeated disk work and IPC cloning.
-  pendingState = setTimeout(() => {
-    pendingState = null;
-    if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isLoading()) {
-      mainWindow.webContents.send('app:state', snapshot({ incremental: true }));
-    }
-  }, 50);
+  const wait = Math.max(50, STATE_GAP_MS - (Date.now() - lastStateSentAt));
+  pendingState = setTimeout(sendState, wait);
+}
+
+function sendState() {
+  pendingState = null;
+  if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isLoading()) return;
+  // the page is still on the last one: the ack sends the next (a page that never answers,
+  // e.g. while reloading, gets one again after STATE_ACK_WAIT_MS)
+  if (stateInFlightAt && Date.now() - stateInFlightAt < STATE_ACK_WAIT_MS) return;
+  stateDirty = false;
+  stateInFlightAt = lastStateSentAt = Date.now();
+  mainWindow.webContents.send('app:state', snapshot({ incremental: true }));
+}
+
+function onStateAck() {
+  stateInFlightAt = 0;
+  if (stateDirty) emitState();
 }
 
 
@@ -311,8 +340,16 @@ async function pauseServicesFor(accountIds, taskName, { prefix = 'sc', logTask =
   const note = (level, code, service, extra = {}) => activity.add({ level, accountId: null, accountName: '', taskName: logTask, code, params: { service, task: taskName, ...extra }, message: `${service} · ${code}` });
   const at = autoTrade.snapshot().run;
   if (at && ['running', 'paused', 'awaitingListing', 'awaitingRole', 'stopping'].includes(at.status) && overlap(at.config?.accountIds)) {
-    await autoTrade.stop();
-    resume.push(['Auto Trade', () => autoTrade.continue()]);
+    // a quick buy / listing / fire by hand on an account Auto Trade is not on right now: Auto
+    // Trade only waits for that account (user 2026-11-06,
+    // the whole run stopped for every listing / fire by hand)
+    if (prefix === 'ab' && autoTrade.holdAccounts && ![...ids].some(id => autoTrade.usesAccount(id))) {
+      const release = autoTrade.holdAccounts([...ids]);
+      resume.push(['Auto Trade', async () => release()]);
+    } else {
+      await autoTrade.stop();
+      resume.push(['Auto Trade', () => autoTrade.continue()]);
+    }
   }
   const ab = buy.snapshot();
   if (!skipAutoBuy && ab.auto?.status === 'running' && overlap(ab.config?.accountOrder)) {
@@ -541,6 +578,14 @@ async function pauseAccountForBuy(accountId, taskName) {
   return async () => { await resumeTasks(); await resumeServices(); };
 }
 
+// A Harcayıcı opened by Auto Trade (it is not one of the run's accounts): its Auto Play and
+// other services step aside while the connection is open.
+async function pauseAccountForTrade(accountId, taskName) {
+  const resumeServices = await pauseServicesFor([accountId], taskName, { prefix: 'atp', logTask: taskName });
+  const resumeTasks = await pauseTasksFor([accountId], taskName, 'atp');
+  return async () => { await resumeTasks(); await resumeServices(); };
+}
+
 function autoTradeConflicts(accountIds) {
   const ids = new Set(accountIds);
   const name = id => store.getAccounts().find(a => a.id === id)?.name || id;
@@ -597,7 +642,20 @@ function createWindow() {
   const devUrl = process.env.VITE_DEV_SERVER_URL;
   if (devUrl) mainWindow.loadURL(devUrl);
   else mainWindow.loadFile(path.join(__dirname, '..', '..', 'dist', 'index.html'));
-  mainWindow.webContents.once('did-finish-load', emitState);
+  // also after a reload (the page crashed and came back): a full new start
+  mainWindow.webContents.on('did-finish-load', () => { stateInFlightAt = 0; emitState(); });
+  // The page process died (out of memory, GPU): it used to stay white while the tasks went
+  // on. It is logged and the page loaded again; the tasks keep running.
+  let reloads = [];
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    stateInFlightAt = 0;
+    if (details?.reason === 'clean-exit' || app.__reallyQuit || app.__closingTasks) return;
+    activity?.add({ level: 'warning', taskName: 'App', code: 'app.rendererGone', params: { reason: details?.reason || '?', code: details?.exitCode ?? '' }, message: `The window crashed (${details?.reason || '?'}) and was reloaded; the tasks went on.` });
+    reloads = reloads.filter(at => Date.now() - at < 60000);
+    if (reloads.length >= 3) return; // crashing again and again: left as it is
+    reloads.push(Date.now());
+    setTimeout(() => { try { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.reload(); } catch {} }, 1000);
+  });
 }
 
 function initServices() {
@@ -633,7 +691,8 @@ function initServices() {
   scout = new ScoutService({ store, activity, sessions: gameSessions, cardsService: cards, accountProfile, gameHealth, onChanged: emitState });
   trading = new TradingHallService({ store, credentials, browserService, activity, onChanged: emitState });
   dailyRewards = new DailyRewardService({ store, activity, engine, sessions: gameSessions, gameHealth, isPaused: () => Boolean(globalPause), onChanged: emitState });
-  autoTrade = new AutoTradeEngine({ gameHealth, store, credentials, activity, sessions: gameSessions, accountProfile, onChanged: emitState, onAttention: autoTradeAttention, onScout: (id, reply) => scout.showSocketScout?.(id, reply), onCycleEnd: () => cards.refresh() });
+  const friendNet = new FriendNetwork({ store, sessions: gameSessions, activity, perSide: () => autoTrade?.lastConfig?.spendersPerSide, onChanged: () => { if (autoTrade) autoTrade.revision++; emitState(); } });
+  autoTrade = new AutoTradeEngine({ friendNet, pauseAccount: pauseAccountForTrade, onSpenderListed: e => buy?.recordListed?.(e), gameHealth, store, credentials, activity, sessions: gameSessions, accountProfile, onChanged: emitState, onAttention: autoTradeAttention, onScout: (id, reply) => scout.showSocketScout?.(id, reply), onCycleEnd: () => cards.refresh() });
   market = new MarketService({ store, activity, accountProfile, sessions: gameSessions, onChanged: emitState });
   const alertedDays = new Map(); // playerId -> day already reported
   players = new PlayersService({
@@ -665,8 +724,10 @@ function initServices() {
   valuePredict = new ValuePredictService({ store, activity, onChanged: emitState, injuries: () => injuries?.snapshot() });
   injuries = new InjuryService({ store, activity, onChanged: emitState });
   tkTransfer = new TkTransferService({ store, activity, sessions: gameSessions, onChanged: emitState });
+  apkTransfer = new ApkTransferService({ store, activity, sessions: gameSessions, friendNet, accountProfile, onChanged: emitState });
   quiz = new QuizService({ store, activity, gameHealth, sessions: gameSessions, onChanged: emitState });
   cheer = new CheerService({ store, activity, gameHealth, sessions: gameSessions, onChanged: emitState });
+  dailySlot = new DailySlotService({ store, activity, engine, gameHealth, sessions: gameSessions, onChanged: emitState });
   chat = new ChatService({ store, activity, gameHealth, sessions: gameSessions, onChanged: emitState });
   draft = new DraftService({ store, activity, gameHealth, sessions: gameSessions, accountProfile, onChanged: emitState, onAttention: autoTradeAttention });
   equipment = new EquipmentService({ store, activity, sessions: gameSessions, onChanged: emitState });
@@ -785,6 +846,7 @@ function addAccountRecord(payload) {
 
 function registerIpc() {
   ipcMain.handle('app:bootstrap', async () => snapshot());
+  ipcMain.on('app:state-ack', onStateAck);
 
   ipcMain.handle('accounts:add', async (_event, payload) => addAccountRecord(payload));
   ipcMain.handle('signup:create', async (_event, form) => {
@@ -931,6 +993,8 @@ function registerIpc() {
   ipcMain.handle('auto-trade:list-players', async (_event, { accountId, items }) => autoTrade.listPlayers(accountId, items));
   ipcMain.handle('auto-trade:fire-player', async (_event, { accountId, playerId }) => autoTrade.firePlayer(accountId, playerId));
   ipcMain.handle('auto-trade:save-draft', async (_event, form) => autoTrade.saveDraft(form));
+  ipcMain.handle('auto-trade:save-pricing', async (_event, pricing) => autoTrade.savePricing(pricing));
+  ipcMain.handle('auto-trade:friend-sync', async () => autoTrade.friendNet.sync({ force: true }));
   ipcMain.handle('auto-trade:fire-players', async (_event, { accountId, playerIds }) => autoTrade.firePlayers(accountId, playerIds));
 
 
@@ -938,6 +1002,7 @@ function registerIpc() {
   ipcMain.handle('cards:update-role', async (_event, { id, patch, name, color }) => cards.updateRole(id, patch || { name, color }));
   ipcMain.handle('cards:delete-role', async (_event, id) => cards.deleteRole(id));
   ipcMain.handle('cards:set-player-roles', async (_event, { playerKey, roleIds }) => cards.setPlayerRoles(playerKey, roleIds));
+  ipcMain.handle('cards:set-hidden-roles', async (_event, { playerKey, roleIds }) => cards.setHiddenRoles(playerKey, roleIds));
   ipcMain.handle('cards:set-tracked-teams', async (_event, teams) => cards.setTrackedTeams(teams));
   ipcMain.handle('cards:refresh', async () => cards.refresh());
   ipcMain.handle('cards:reset', async () => cards.resetData());
@@ -1035,8 +1100,10 @@ function registerIpc() {
   ipcMain.handle('buy:sell', async (_event, { entryId, price, currency }) => buy.sell(entryId, price, currency));
   ipcMain.handle('buy:remove-bought', async (_event, ids) => buy.removeBought(ids || []));
   ipcMain.handle('buy:convert', async (_event, entryId) => buy.convert(entryId));
+  ipcMain.handle('buy:fire', async (_event, ids) => buy.fire(ids || []));
   ipcMain.handle('buy:add-watch', async (_event, players) => buy.addWatch(players || []));
   ipcMain.handle('buy:update-watch', async (_event, { id, patch }) => buy.updateWatch(id, patch || {}));
+  ipcMain.handle('buy:add-range', async (_event, id) => buy.addRange(id));
   ipcMain.handle('buy:remove-watch', async (_event, ids) => buy.removeWatch(ids || []));
   ipcMain.handle('buy:set-config', async (_event, patch) => buy.setConfig(patch || {}));
   ipcMain.handle('buy:start-auto', async (_event, options) => startAutoBuy(options || {}));
@@ -1067,6 +1134,17 @@ function registerIpc() {
     return tkTransfer.snapshot();
   });
   ipcMain.handle('tk:stop', async () => { tkTransfer.stop(); return tkTransfer.snapshot(); });
+  // APK / TIX transfer: Auto Play on the chosen accounts (and the spenders it may use) is stopped first.
+  ipcMain.handle('apk:start', async (_event, raw) => {
+    const config = apkTransfer.validate(raw || {});
+    if (apkTransfer.snapshot().running) throw new Error('APK transfer is already running.');
+    const spenders = config.useSpenders ? store.getAccounts().filter(a => a.role === 'spender').map(a => a.id) : [];
+    const resume = await pauseTasksFor([...new Set([config.mainId, ...config.sideIds, ...spenders])], 'APK Transfer', 'apk');
+    apkDone = apkTransfer.runAndWait(config).catch(() => {}).finally(resume);
+    return apkTransfer.snapshot();
+  });
+  ipcMain.handle('apk:stop', async () => { apkTransfer.stop(); return apkTransfer.snapshot(); });
+  ipcMain.handle('apk:save-config', async (_event, raw) => apkTransfer.saveConfig(raw || {}));
   ipcMain.handle('pro:start', async (_event, plan) => startProvingManual(professional, plan, 'Professional', 'pf', p => { proDone = p; }));
   ipcMain.handle('pro:stop', async () => { professional.stop(); return professional.snapshot(); });
   ipcMain.handle('pro:status', async (_event, accountIds) => professional.status(Array.isArray(accountIds) ? accountIds : null));
@@ -1108,6 +1186,9 @@ function registerIpc() {
   ipcMain.handle('social:act', async (_event, { accountId, action, targetId } = {}) => social.act(accountId, action, targetId));
   ipcMain.handle('social:claimMail', async (_event, { accountId, mailId } = {}) => social.claimMail(accountId, mailId || null));
   ipcMain.handle('social:poll', async () => { await social.poll(); return social.snapshot(); });
+  ipcMain.handle('slot:scan', async (_event, ids) => dailySlot.scan(Array.isArray(ids) ? ids : []));
+  ipcMain.handle('slot:spin', async (_event, ids) => dailySlot.spin(Array.isArray(ids) ? ids : []));
+  ipcMain.handle('slot:stop', async () => { dailySlot.stop(); return dailySlot.snapshot(); });
   ipcMain.handle('cheer:send', async (_event, { fromIds, targetId } = {}) => cheer.cheer(Array.isArray(fromIds) ? fromIds : [], targetId));
   ipcMain.handle('chat:start', async (_event, config) => { chat.runAndWait(config || {}).catch(() => {}); await new Promise(r => setTimeout(r, 50)); if (!chat.snapshot().running) throw new Error(chat.snapshot().lastReport?.lastError || 'Chat could not start.'); return chat.snapshot(); });
   ipcMain.handle('chat:stop', async () => { chat.stop(); return chat.snapshot(); });
@@ -1149,11 +1230,13 @@ async function shutdownServices() {
     () => office?.stop(),
     () => professional?.stop(),
     () => tkTransfer?.stop(),
+    () => apkTransfer?.stop(),
     () => valuePredict?.stop(),
     () => injuries?.stop(),
     () => quiz?.stop(),
     () => chat?.stop(),
     () => cheer?.stop(),
+    () => dailySlot?.stop(),
     () => tower?.stop(),
     () => gameHealth?.shutdown(),
     () => accountHealth?.stop(),

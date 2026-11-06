@@ -1,22 +1,38 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import SortTable from './SortTable';
 import { filOf } from '../i18n-fil';
 import RatingBadge from './RatingBadge';
 import InjuryMark from './InjuryMark';
 import { roleDefs, roleOf, RolePill } from './AccountRoles';
 import { GroupedPicks } from './AccountGroups';
+import { BoughtList } from './BuyParts';
 
 const api = window.dreamteam;
 
 const TEXT = {
   tr: {
     title: 'Auto Trade', subtitle: 'Scout · karta çevirme · Main ↔ Side takasları',
+    tabs: { run: 'Auto Trade', pricing: 'Otomatik Fiyatlandırma' },
+    pr: {
+      intro: 'Harcayıcılar Satılabilir ve Stok oyuncuları buradaki fiyatlarla pazara koyar. Fiyat girmediğin oyuncu, türünün varsayılan fiyatıyla listelenir. Değişiklikler hemen kaydedilir; Auto Trade çalışırken de geçerlidir.',
+      defaults: 'Varsayılan fiyatlar', sellable: 'Satılabilir', stok: 'Stok',
+      price: 'Fiyat', discPrice: '%5 indirimli alınırsa', fireNoDisc: 'İndirimsizse kov', fireNoDiscHint: '%5 indirimle alınmadıysa harcayıcı bu oyuncuyu pazara koymaz, kovar (geri alınamaz)', fireNoDiscAsk: '{name} %5 indirimle alınmadığında pazara konmayacak, kovulacak (oyundaki FIRE, geri alınamaz). Emin misin?', lv30: 'Sadece Lv30+', always: 'her zaman',
+      value: 'Değer', valueDisc: '%5 düşük', base: 'Base', role: 'Rol', player: 'Oyuncu',
+      search: 'Oyuncu ara…', fAll: 'Tümü', fMissing: 'Fiyatı girilmemiş', fSellable: 'Satılabilir', fStok: 'Stok', fLv30: 'Lv30+ işaretli',
+      missing: '{n} oyuncunun fiyatı girilmemiş · varsayılan fiyatla listelenir', allSet: 'Bütün oyuncuların fiyatı girilmiş',
+      noPrice: 'fiyat yok', firedShort: 'indirimsizse kovulur', firedNoPrice: 'İndirimsizse kov seçili: indirimsiz alınırsa kovulacağı için normal fiyat kullanılmaz', useDefault: 'varsayılan: {p}', sameAsPrice: 'boş: normal fiyat',
+      none: 'Satılabilir ya da Stok rolü verilmiş oyuncu yok. Rolleri Kartlar → Oyuncu Listesi\'nden verebilirsin.',
+      saved: 'Kaydedildi', clear: 'Temizle',
+      hint: '%5 indirimli fiyat: oyuncu Lv30+ bir hesapla %5 indirimle alındıysa (Base olsun olmasın) bu fiyat kullanılır; boş bırakırsan normal fiyat. Sadece Lv30+: bu Satılabilir oyuncuyu Stok gibi yalnız Lv30+ hesaplar alır (gerekirse geçici arkadaşlıkla).',
+      banner: '{n} Satılabilir / Stok oyuncunun fiyatı girilmemiş; varsayılan fiyatla listelenecek.', bannerBtn: 'Fiyatları gir'
+    },
+    spenderPricesMoved: 'Harcayıcı satış fiyatları artık “Otomatik Fiyatlandırma” sekmesinde (oyuncu başına).',
     start: 'Başlat', pause: 'Duraklat', resume: 'Devam ettir', stop: 'Durdur', cont: 'Kaldığı yerden devam et', reset: 'İlerlemeyi sıfırla',
     resetConfirm: 'Kayıtlı ilerleme silinecek ve Auto Trade sıfırdan başlayacak. Emin misin?', yes: 'Evet, sıfırla', cancel: 'Vazgeç', close: 'Kapat',
     status: { awaitingRole: 'Seçimini bekliyor', idle: 'Hazır', waitingGame: 'Oyun bekleniyor · gelince devam edecek', running: 'Çalışıyor', paused: 'Duraklatıldı', stopping: 'Durduruluyor', stopped: 'Durduruldu', error: 'Hata · senin müdahalen gerekiyor', done: 'Tamamlandı', awaitingListing: 'Pazar listesi bekleniyor' },
     accounts: 'Hesaplar', selectAll: 'Tümünü seç', mainBadge: 'Main', actingMain: 'Bu çalıştırmada Main gibi davranacak hesap', actingMainHint: 'Asıl Main seçili değil. Seçim sadece bu çalıştırma için; asıl Main değişmez.',
     routing: 'Roller', sideToMain: 'Side → Main', mainToSide: 'Main → Side', sideToMainNote: 'Side → Main yönündeki roller Main\'e geçer ve Main\'de karta çevrilir.', mainToSideNote: 'Main → Side yönündeki roller Side hesaplarda kalır; sonunda pazara listeleyebilirsin.',
-    roleRules: 'Hesap rollerine göre kurallar', roleRulesHint: 'Main hariç her hesap rolünün Scout\'tan ne imzalayacağı. Satılabilir: Satılabilir rollü oyuncular; Kart: Kart rollü oyuncular; Ucuz: fiyat sınırının altındakiler. Fiyat boşsa genel sınır geçerli. Sayı, o roldeki seçili hesap sayısı.', rrRole: 'Rol', rrCheap: 'Ucuz', rrPrice: 'Fiyat sınırı', rrUnused: 'Bu rol yukarıdaki yön seçimlerinde yok, oyuncu yönlendirmiyor',
+    roleRules: 'Hesap rollerine göre kurallar', roleRulesHint: 'Main hariç her hesap rolünün Scout\'tan ne imzalayacağı. Satılabilir: Satılabilir rollü oyuncular; Kart: Kart rollü oyuncular; Ucuz: fiyat sınırının altındakiler. Fiyat boşsa genel sınır geçerli. Sayı, o roldeki seçili hesap sayısı. Harcayıcı satırı da geçerlidir: orada kapalı olan oyuncuyu Harcayıcılar ne Scout\'tan alır ne takasla kabul eder.', rrRole: 'Rol', rrCheap: 'Ucuz', rrPrice: 'Fiyat sınırı', rrUnused: 'Bu rol yukarıdaki yön seçimlerinde yok, oyuncu yönlendirmiyor',
     maxPrice: 'Maksimum fiyat (Scout Price)', maxPriceHint: 'Bu fiyat ve altındaki oyuncular rolüne bakılmadan Main\'e gider ve karta çevrilir. 0–2500; 50\'nin altı = sadece roller.',
     room: 'Trade odası', roomDesc: 'Oda adı', roomPass: 'Oda şifresi', roomPassSaved: 'kayıtlı', showPass: 'Şifreyi göster', hidePass: 'Şifreyi gizle',
     loop: 'Döngü', loopOff: 'Tek tur', loopCount: 'Belirli sayıda', loopInfinite: 'Sonsuz', loopTimes: 'tur', loopHint: 'Döngüde her hesaba Scout\'u yenilendiğinde (30 dk) tekrar girilir.',
@@ -41,6 +57,8 @@ const TEXT = {
     noBench: 'Hiçbir hesabın bench\'inde oyuncu yok.', startNow: 'Başlat',
     live: 'Canlı durum', openTime: 'açık', visits: 'giriş', tk: 'TK', noPlayers: 'Henüz oyuncu yok',
     player: 'Oyuncu', salary: 'Maaş', value: 'Değer', base: 'Base', listPrice: 'Satış fiyatı',
+    spenderListTitle: 'Harcayıcı pazar listesi', spenderListHint: 'Harcayıcıların yer açmak için pazara koyduğu oyuncular. Fiyatı ve para birimini seç, Fiyatı güncelle de: oyuncu çekilip yeni fiyatla tekrar konur.',
+    friendBoards: 'Arkadaş Scout\'larını kullan (Harcayıcı ağı)', friendBoardsHint: 'Main ve side\'lar kendi Scout\'larından sonra arkadaşlarının Scout\'larına da bakar: Kart / ucuz oyuncuları Main alır (arkadaşıysa), Satılabilir / Stok oyuncuları TK\'sı yeten bir Harcayıcı alır (Stok\'u önce Lv30+ hesaplar, %5 maaş indirimi şansı). Harcayıcı alamazsa (günlük sınır, TK yok) Main ya da side alır ve takasla Harcayıcıya verir; o da olmazsa side tutar. Arkadaşlıkları Auto Trade kurar; Main\'in listesine dokunulmaz.', spenderSellPrice: 'Harcayıcı · Satılabilir varsayılan fiyatı', spenderStockPrice: 'Harcayıcı · Stok varsayılan fiyatı', spenderPriceHint: 'Harcayıcının kadrosu dolunca ya da aynı oyuncu gelince yedeklerinden biri pazara konur: Stok oyuncu Stok fiyatıyla, diğerleri Satılabilir fiyatıyla. Sonra Harcayıcı pazar listesinden değiştirebilirsin.', spendersPerSide: 'Hesap başına Harcayıcı arkadaş', spendersPerSideHint: 'Her hesabın kaç Harcayıcıyla arkadaş olacağı. Biri TK bitirince diğeri alır. Değiştirince ağ bir sonraki turda (ya da Arkadaş ağını şimdi kur ile) yeniden kurulur.', spenderMinTk: 'Harcayıcı TK tabanı', spenderMinTkHint: 'Alımdan sonra bu TK\'nın altına düşecek Harcayıcı kullanılmaz, sıradakine geçilir.', friendSync: 'Arkadaş ağını şimdi kur', friendSyncing: 'Kuruluyor…', friendSyncDone: 'Arkadaş ağı: {done}/{total} yeni arkadaşlık · {removed} eski kaldırıldı', friendSyncSkipped: 'Arkadaş ağı güncel (ya da Harcayıcı yok)',
     baseProjected: 'Ertesi günün Base değerini kullan (Base × 0,95)', baseProjectedHint: 'Base her gün yeniden hesaplanır ve indirimli alımlar onu ~%5 düşürür. Açıkken maaş yarınki Base ile karşılaştırılır: Base 50 iken 50 maaşlı oyuncu Base sayılmaz, 48 maaşlı sayılır.',
     price: 'Fiyat', role: 'Rol', stateCol: 'Durum', from: 'Nereden',
     pstatus: { bought: 'Alındı', existing: 'Önceden vardı', toTrade: 'Takas edilecek', trading: 'Takas ediliyor', keep: 'Side\'da kalıyor', toConvert: 'Karta çevrilecek', converting: 'Çevriliyor', converted: 'Karta çevrildi', listed: 'Pazarda', none: 'Dokunulmuyor', fired: 'Kovuldu' },
@@ -49,10 +67,10 @@ const TEXT = {
     summary: 'Özet', bought: 'Alınan', spent: 'Harcanan TK', converted: 'Karta çevrilen', tradedIn: 'Takasla gelen', tradedOut: 'Takasla giden', tkPaid: 'Takasta ödenen', tkReceived: 'Takasta alınan', listed: 'Pazara konan', tkNow: 'TK (başlangıç → şimdi)',
     cards: 'Karta çevrilen oyuncular', thisRun: 'Bu çalıştırma', total: 'Toplam', resetCards: 'Tabloyu sıfırla', resetCardsConfirm: 'Karta çevrilen oyuncuların sayıları (bu çalıştırma ve toplam) silinecek. Emin misin?',
     listTitle: 'Pazara listele', listHint: 'Side\'larda kalan oyuncular. Fiyat ve para birimi seçip istediklerini listele.', listSelected: 'Seçilileri listele', nothingToList: 'Listelenecek oyuncu yok.',
-    roleModal: '{name} · rolü iki yönlü bir oyuncu', roleModalHint: 'Bu oyuncunun rolleri ({roles}) hem karta çevirme hem satılabilir yönünü gösteriyor. Ne yapılsın? Seçimin bu çalıştırma boyunca aynı oyuncu için geçerli.', roleMain: 'Karta çevir', roleSide: 'Satılabilir (yan hesapta kalsın)', roleLeave: 'Dokunma', listingModal: '{name} kadrosu doldu', listingModalHint: 'Kalacak oyuncularla dolu. Hangi oyuncular pazara konsun? Listelenince Auto Trade devam eder.', listAndGo: 'Listele ve devam et', skipList: 'Listeleme, bu hesabı bitir',
+    roleModal: '{name} · rolü iki yönlü bir oyuncu', roleModalHint: 'Bu oyuncunun rolleri ({roles}) hem karta çevirme hem satılabilir yönünü gösteriyor. Ne yapılsın? Seçimin bu çalıştırma boyunca aynı oyuncu için geçerli.', roleMain: 'Karta çevir', roleSide: 'Satılabilir (yan hesapta kalsın)', roleLeave: 'Dokunma', listingModal: '{name} kadrosu doldu', listingModalHint: 'Kalacak oyuncularla dolu. Her oyuncu için seç: Listele (girdiğin fiyattan pazara konur), Kov (takımdan atılır, geri alınamaz) ya da Beklet (kadroda kalır, sayfanın altındaki “Pazara listele” tablosunda görünür). Hepsini seçip Tamam deyince işlemler yapılır ve Auto Trade devam eder.', actList2: 'Listele', actFire2: 'Kov', actHold: 'Beklet', allAs: 'Hepsini:', chooseAll: '{n} oyuncu için seçim yapılmadı', fireWarn: '{n} oyuncu kovulacak · geri alınamaz', okGo: 'Tamam', priceShort: 'Fiyat', listAndGo: 'Listele ve devam et', skipList: 'Listeleme, bu hesabı bitir',
     errorTitle: 'Auto Trade durdu', errorHint: 'Sorunu oyunda düzeltip "Kaldığı yerden devam et"e bas. Hesaplara yeniden girilir ve kaldığı yerden sürer.',
     cycle: 'Tur {n}', waitScout: '{name} Scout yenilenmesini bekliyor · {time}',
-    steps: { starting: 'Başlıyor', opening: '{name} açılıyor', scouting: '{name} Scout · {candidates} uygun · {attempts} hak', signing: '{name}: {player} alınıyor ({price} TK)', callback: '{name}: Call back', converting: 'Main: {count} oyuncu karta çevriliyor', trading: '{side} ile takas · Main {give} verir, {take} alır · {tk} TK', waitingScout: '{name} Scout yenilenmesini bekliyor', cardScan: 'Main hesabında kart taraması yapılıyor', listing: '{name}: {count} oyuncu pazara konuyor', done: 'Bitti', stopped: 'Durduruldu' }
+    steps: { starting: 'Başlıyor', opening: '{name} açılıyor', scouting: '{name} Scout · {candidates} uygun · {attempts} hak', signing: '{name}: {player} alınıyor ({price} TK)', callback: '{name}: Call back', converting: 'Main: {count} oyuncu karta çevriliyor', trading: '{side} ile takas · Main {give} verir, {take} alır · {tk} TK', waitingScout: '{name} Scout yenilenmesini bekliyor', cardScan: 'Main hesabında kart taraması yapılıyor', leftovers: 'Durmadan önce {count} harcayıcı oyuncularını pazara koyuyor', friendSync: 'Arkadaş ağı kontrol ediliyor', listing: '{name}: {count} oyuncu pazara konuyor', done: 'Bitti', stopped: 'Durduruldu' }
   },
   en: {
     title: 'Auto Trade', subtitle: 'Scout · star cards · main ↔ side trades',
@@ -61,7 +79,7 @@ const TEXT = {
     status: { awaitingRole: 'Waiting for your choice', idle: 'Ready', waitingGame: 'Waiting for the game · continues when it is back', running: 'Running', paused: 'Paused', stopping: 'Stopping', stopped: 'Stopped', error: 'Error · needs you', done: 'Finished', awaitingListing: 'Waiting for a market listing' },
     accounts: 'Accounts', selectAll: 'Select all', mainBadge: 'Main', actingMain: 'Account acting as main for this run', actingMainHint: 'The real main is not selected. This choice is for this run only; the real main stays main.',
     routing: 'Roles', sideToMain: 'Side → Main', mainToSide: 'Main → Side', sideToMainNote: 'Roles routed side → main move to main and are turned into star cards there.', mainToSideNote: 'Roles routed main → side stay on the sides; you can list them on the market at the end.',
-    roleRules: 'Rules by account role', roleRulesHint: 'What every account role but Main signs from Scout. Every column is a player role of the Cards page (Sellable, Card, Stock…); Cheap: players at or under the price limit whatever their role. An empty price uses the general limit. The number is how many selected accounts have the role.', rrRole: 'Role', rrCheap: 'Cheap', rrPrice: 'Price limit', rrUnused: 'This role is in neither direction above, so it routes no players',
+    roleRules: 'Rules by account role', roleRulesHint: 'What every account role but Main signs from Scout. Every column is a player role of the Cards page (Sellable, Card, Stock…); Cheap: players at or under the price limit whatever their role. An empty price uses the general limit. The number is how many selected accounts have the role. The Harcayıcı row counts too: a player switched off there is neither signed nor taken by trade by the Harcayıcı accounts.', rrRole: 'Role', rrCheap: 'Cheap', rrPrice: 'Price limit', rrUnused: 'This role is in neither direction above, so it routes no players',
     maxPrice: 'Maximum price (Scout Price)', maxPriceHint: 'Players at or below this price go to main and become cards whatever their role. 0–2500; under 50 = roles only.',
     room: 'Trade room', roomDesc: 'Room name', roomPass: 'Room password', roomPassSaved: 'saved', showPass: 'Show password', hidePass: 'Hide password',
     loop: 'Loop', loopOff: 'Single run', loopCount: 'Number of cycles', loopInfinite: 'Endless', loopTimes: 'cycles', loopHint: 'In a loop every account is entered again when its Scout refreshes (30 min).',
@@ -86,6 +104,8 @@ const TEXT = {
     noBench: 'No account has players on the bench.', startNow: 'Start',
     live: 'Live', openTime: 'open', visits: 'visits', tk: 'TK', noPlayers: 'No players yet',
     player: 'Player', salary: 'Salary', value: 'Value', base: 'Base', listPrice: 'List price',
+    spenderListTitle: 'Harcayıcı market list', spenderListHint: 'Players the Harcayıcı accounts listed to make room. Pick a price and currency and press Update price: the player is taken off and listed again at the new price.',
+    friendBoards: "Use friends' Scouts (Harcayıcı network)", friendBoardsHint: "After their own Scout, main and the sides look at their friends' Scouts too: main takes Kart / cheap players (when it is a friend), a Harcayıcı with enough TK takes Satılabilir / Stok (Stok by Lv30+ accounts first, 5% salary cut chance). When no Harcayıcı can (daily limit, no TK) main or the side signs it and trades it to a Harcayıcı; if that fails too, the side keeps it. Auto Trade makes the friendships itself; main's list is never touched.", spenderSellPrice: 'Harcayıcı · Satılabilir default price', spenderStockPrice: 'Harcayıcı · Stok default price', spenderPriceHint: 'When a Harcayıcı is full or gets a player it already has, one of its bench players is listed: a Stok player at the Stok price, the others at the Satılabilir price. You can change it later in the Harcayıcı market list.', spendersPerSide: 'Harcayıcı friends per account', spendersPerSideHint: 'How many Harcayıcı accounts every account is friends with. When one runs out of TK another one signs. After a change the network is built again at the next cycle (or with Build the friend network now).', spenderMinTk: 'Harcayıcı TK floor', spenderMinTkHint: 'A Harcayıcı that would drop below this TK after the signing is skipped for the next one.', friendSync: 'Build the friend network now', friendSyncing: 'Building…', friendSyncDone: 'Friend network: {done}/{total} new friendship(s) · {removed} old removed', friendSyncSkipped: 'Friend network is up to date (or no Harcayıcı)',
     baseProjected: "Use tomorrow's Base (Base × 0.95)", baseProjectedHint: "Base is recomputed daily and discounted signings pull it ~5% down. When on, the salary is compared with tomorrow's Base: at Base 50 a 50 salary is not Base, a 48 salary is.",
     price: 'Price', role: 'Role', stateCol: 'Status', from: 'From',
     pstatus: { bought: 'Bought', existing: 'Was there', toTrade: 'To be traded', trading: 'Trading', keep: 'Stays on side', toConvert: 'To be converted', converting: 'Converting', converted: 'Converted', listed: 'Listed', none: 'Untouched', fired: 'Fired' },
@@ -94,10 +114,25 @@ const TEXT = {
     summary: 'Summary', bought: 'Bought', spent: 'TK spent', converted: 'Converted', tradedIn: 'Traded in', tradedOut: 'Traded out', tkPaid: 'TK paid in trades', tkReceived: 'TK received in trades', listed: 'Listed', tkNow: 'TK (start → now)',
     cards: 'Players turned into cards', thisRun: 'This run', total: 'Total', resetCards: 'Reset table', resetCardsConfirm: 'The card counts (this run and totals) will be deleted. Are you sure?',
     listTitle: 'List on market', listHint: 'Players left on the sides. Pick price and currency and list the ones you want.', listSelected: 'List selected', nothingToList: 'Nothing to list.',
-    roleModal: '{name} · a player with roles both ways', roleModalHint: 'This player\'s roles ({roles}) point both to cards and to Satılabilir. What should happen? Your choice counts for this player for the rest of the run.', roleMain: 'Turn into a card', roleSide: 'Satılabilir (keep on the side)', roleLeave: 'Leave it', listingModal: '{name} roster is full', listingModalHint: 'It is full of players it keeps. Which should go on the market? Auto Trade continues after listing.', listAndGo: 'List and continue', skipList: 'Do not list, finish this account',
+    tabs: { run: 'Auto Trade', pricing: 'Auto Pricing' },
+    pr: {
+      intro: 'The spenders list Sellable and Stock players at these prices. A player without its own price is listed at the default price of its kind. Changes are saved at once and count while Auto Trade runs too.',
+      defaults: 'Default prices', sellable: 'Sellable', stok: 'Stock',
+      price: 'Price', discPrice: 'If signed 5% off', fireNoDisc: 'Fire if not 5% off', fireNoDiscHint: 'When it was not signed 5% off the spender does not list this player, it fires it (cannot be undone)', fireNoDiscAsk: '{name} will not be listed but fired when it was not signed 5% off (the game’s FIRE, cannot be undone). Are you sure?', lv30: 'Lv30+ only', always: 'always',
+      value: 'Value', valueDisc: '5% lower', base: 'Base', role: 'Role', player: 'Player',
+      search: 'Search player…', fAll: 'All', fMissing: 'No price yet', fSellable: 'Sellable', fStok: 'Stock', fLv30: 'Marked Lv30+',
+      missing: '{n} player(s) have no price · listed at the default price', allSet: 'Every player has a price',
+      noPrice: 'no price', firedShort: 'fired if not 5% off', firedNoPrice: 'Fire if not 5% off is on: a full-price copy is fired, so the normal price is never used', useDefault: 'default: {p}', sameAsPrice: 'empty: normal price',
+      none: 'No player has the Sellable or Stock role. Give roles in Cards → Player List.',
+      saved: 'Saved', clear: 'Clear',
+      hint: '5% off price: used when the player was signed 5% off by a Lv30+ account (at Base or not); empty means the normal price. Lv30+ only: this Sellable player is signed only by Lv30+ accounts, like Stock (through a friend for the moment when needed).',
+      banner: '{n} Sellable / Stock player(s) have no price; they will be listed at the default price.', bannerBtn: 'Enter prices'
+    },
+    spenderPricesMoved: 'Spender sale prices are now in the “Auto Pricing” tab (per player).',
+    roleModal: '{name} · a player with roles both ways', roleModalHint: 'This player\'s roles ({roles}) point both to cards and to Satılabilir. What should happen? Your choice counts for this player for the rest of the run.', roleMain: 'Turn into a card', roleSide: 'Satılabilir (keep on the side)', roleLeave: 'Leave it', listingModal: '{name} roster is full', listingModalHint: 'It is full of players it keeps. Choose for every player: List (put on the market at the price you enter), Fire (removed from the team, cannot be undone) or Hold (stays in the roster and shows in “List on market” under the page). When every player has a choice, OK does the work and Auto Trade goes on.', actList2: 'List', actFire2: 'Fire', actHold: 'Hold', allAs: 'All:', chooseAll: '{n} player(s) have no choice yet', fireWarn: '{n} player(s) will be fired · cannot be undone', okGo: 'OK', priceShort: 'Price', listAndGo: 'List and continue', skipList: 'Do not list, finish this account',
     errorTitle: 'Auto Trade stopped', errorHint: 'Fix it in the game and press "Continue". The accounts are opened again and the run goes on from there.',
     cycle: 'Cycle {n}', waitScout: '{name} waits for its Scout · {time}',
-    steps: { starting: 'Starting', opening: 'Opening {name}', scouting: '{name} Scout · {candidates} eligible · {attempts} callbacks', signing: '{name}: signing {player} ({price} TK)', callback: '{name}: Call back', converting: 'Main: converting {count} player(s)', trading: 'Trade with {side} · main gives {give}, gets {take} · {tk} TK', waitingScout: '{name} waits for its Scout refresh', cardScan: 'Scanning the cards of the main account', listing: '{name}: listing {count} player(s)', done: 'Done', stopped: 'Stopped' }
+    steps: { starting: 'Starting', opening: 'Opening {name}', scouting: '{name} Scout · {candidates} eligible · {attempts} callbacks', signing: '{name}: signing {player} ({price} TK)', callback: '{name}: Call back', converting: 'Main: converting {count} player(s)', trading: 'Trade with {side} · main gives {give}, gets {take} · {tk} TK', waitingScout: '{name} waits for its Scout refresh', cardScan: 'Scanning the cards of the main account', leftovers: 'Before stopping, {count} spender(s) list their players', friendSync: 'Checking the friend network', listing: '{name}: listing {count} player(s)', done: 'Done', stopped: 'Stopped' }
   },
   get fil() { return filOf(this.en); }
 };
@@ -136,6 +171,13 @@ export default function AutoTradePage({ state, t, toast, msgText, Modal, refresh
     loopMode: last.loopMode || 'off', loopCount: String(last.loopCount || 2),
     baseAsSellable: Boolean(last.baseAsSellable),
     baseProjected: last.baseProjected !== false,
+    friendBoards: last.friendBoards !== false,
+    spenderSellPrice: String(last.spenderSellPrice || last.spenderPrice || 999999),
+    spenderSellCurrency: last.spenderSellCurrency || 'TIX',
+    spenderStockPrice: String(last.spenderStockPrice || last.spenderPrice || 999999),
+    spenderStockCurrency: last.spenderStockCurrency || 'TIX',
+    spenderMinTk: String(last.spenderMinTk || 0),
+    spendersPerSide: String(last.spendersPerSide || 5),
     roleRules: last.roleRules || {}
   }));
   const set = patch => setForm(f => ({ ...f, ...patch }));
@@ -150,6 +192,10 @@ export default function AutoTradePage({ state, t, toast, msgText, Modal, refresh
   const [decisions, setDecisions] = useState({});
   const [confirmReset, setConfirmReset] = useState(false);
   const [showHow, setShowHow] = useState(false);
+  const [tab, setTab] = useState(() => { try { return localStorage.getItem('at2.tab') || 'run'; } catch { return 'run'; } });
+  const chooseTab = id => { setTab(id); try { localStorage.setItem('at2.tab', id); } catch {} };
+  const pricingRows = usePricingRows(state, roles);
+  const missingPrices = pricingRows.filter(p => !at.pricing?.players?.[p.id]?.price && !at.pricing?.players?.[p.id]?.fireNoDisc).length;
   const run_ = async fn => { try { return await fn(); } catch (e) { toast(e.message, 'error'); } };
 
   // trading opens at level 10: lower accounts cannot be picked
@@ -190,7 +236,8 @@ export default function AutoTradePage({ state, t, toast, msgText, Modal, refresh
 
   const statusKey = run?.status || 'idle';
   const stepText = run ? fill(x.steps[run.step] || '', run.stepParams || {}) : '';
-  const accRows = run ? run.config.accountIds.map(id => run.accounts[id]).filter(Boolean) : [];
+  // Harcayıcılar used by the run are shown after the run's own accounts
+  const accRows = run ? [...run.config.accountIds.map(id => run.accounts[id]), ...Object.values(run.accounts).filter(a => a?.role === 'spender' && !run.config.accountIds.includes(a.id))].filter(Boolean) : [];
   const mainAcc = run ? run.accounts[run.config.mainId] : null;
   const activeSide = run ? run.accounts[run.currentSideId || (run.activeId !== run.config.mainId ? run.activeId : '')] : null;
   const others = accRows.filter(a => a !== mainAcc && a !== activeSide);
@@ -207,6 +254,8 @@ export default function AutoTradePage({ state, t, toast, msgText, Modal, refresh
       </div>
     </div>
 
+    <div className="dp-tabs">{Object.keys(x.tabs).map(id => <button key={id} className={tab === id ? 'active' : ''} onClick={() => chooseTab(id)}>{x.tabs[id]}{id === 'pricing' && missingPrices > 0 && <i className="so-count">{missingPrices}</i>}</button>)}</div>
+
     {run && <div className="at2-status panel">
       <span className={`pill ${statusKey === 'error' ? 'bad' : running ? (statusKey === 'paused' ? 'warn' : 'ok') : 'muted'}`}><i />{x.status[statusKey] || statusKey}</span>
       {run.config.loopMode !== 'off' && <span className="pill muted"><i />{fill(x.cycle, { n: run.cycle })}{run.config.loopMode === 'count' ? ` / ${run.config.loopCount}` : ' / ∞'}</span>}
@@ -216,6 +265,9 @@ export default function AutoTradePage({ state, t, toast, msgText, Modal, refresh
 
     {run?.status === 'error' && <div className="panel at2-error"><b>{x.errorTitle}</b><span>{msgText(t, run.error?.code || 'at2.failed', { ...(run.error?.params || {}), error: run.error?.message }, run.error?.message)}</span><small>{x.errorHint}</small></div>}
 
+    {tab === 'pricing' && <PricingTab x={x} pricing={at.pricing} rows={pricingRows} toast={toast} />}
+    {tab === 'run' && missingPrices > 0 && <div className="panel at2-price-banner"><span>{fill(x.pr.banner, { n: missingPrices })}</span><button className="btn ghost small" onClick={() => chooseTab('pricing')}>{x.pr.bannerBtn}</button></div>}
+    {tab === 'run' && <>
     {!running && <ConfigPanel state={state} x={x} form={form} set={set} accounts={accounts} realMain={realMain} selected={selected} mainSelected={mainSelected} toggleAcc={toggleAcc} locked={locked} levelOf={levelOf} roles={roles} toggleRole={toggleRole} priceValid={priceValid} last={last} />}
     <div className="panel at2-how"><button className="link-btn" onClick={() => setShowHow(v => !v)}>{showHow ? '▾' : '▸'} {x.howTitle}</button>{showHow && <ol>{x.how.map((h, i) => <li key={i}>{h}</li>)}</ol>}</div>
 
@@ -229,6 +281,8 @@ export default function AutoTradePage({ state, t, toast, msgText, Modal, refresh
       <Summary run={run} x={x} />
       <CardCounts run={run} totals={at.cardTotals || {}} x={x} Modal={Modal} toast={toast} />
       <ListingPanel run={run} x={x} defaults={at.listDefaults} toast={toast} playerIndex={playerIndex} Modal={Modal} />
+    </>}
+    {(state.buy?.bought || []).some(e => e.source === 'trade') && <BoughtList state={state} lang={t.lang} toast={toast} source="trade" title={x.spenderListTitle} hint={x.spenderListHint} />}
     </>}
 
     {pre && <Modal title={x.preTitle} onClose={() => setPre(null)} width={1040}>
@@ -275,8 +329,117 @@ function ConfigPanel({ state, x, form, set, accounts, realMain, selected, mainSe
     <section className="at2-options">
       <label className="at2-check"><input type="checkbox" checked={form.baseAsSellable} onChange={e => set({ baseAsSellable: e.target.checked })} /><span>{x.baseAsSellable}</span><small>{x.baseAsSellableHint}</small></label>
       <label className={`at2-check at2-sub ${form.baseAsSellable ? '' : 'off'}`}><input type="checkbox" disabled={!form.baseAsSellable} checked={form.baseProjected} onChange={e => set({ baseProjected: e.target.checked })} /><span>{x.baseProjected}</span><small>{x.baseProjectedHint}</small></label>
+      <label className="at2-check"><input type="checkbox" checked={form.friendBoards} onChange={e => set({ friendBoards: e.target.checked })} /><span>{x.friendBoards}</span><small>{x.friendBoardsHint}</small></label>
     </section>
+    {form.friendBoards && <FriendNetRow x={x} form={form} set={set} />}
   </div>;
+}
+
+// Players with the Satılabilir or Stok role (Kartlar → Oyuncu Listesi), for the pricing tab.
+function usePricingRows(state, roles) {
+  return useMemo(() => {
+    const byName = n => roles.filter(r => String(r.name).trim().toLocaleLowerCase('tr-TR').startsWith(n)).map(r => r.id);
+    const sell = new Set(byName('satılabilir').concat(byName('sellable')));
+    const stok = new Set(byName('stok').concat(byName('stock')));
+    return (state.players?.players || []).filter(p => (p.roleIds || []).some(r => sell.has(r) || stok.has(r))).map(p => ({
+      id: p.id, name: p.name, team: p.team, position: p.position, rating: p.rating, value: p.value, base: p.base, atBase: p.atBase,
+      kind: (p.roleIds || []).some(r => stok.has(r)) ? 'stok' : 'sellable'
+    })).sort((a, b) => (Number(b.value) || 0) - (Number(a.value) || 0));
+  }, [state.players, roles]);
+}
+
+// "Otomatik Fiyatlandırma": a default per kind, and per player a price, a price for when it
+// was signed 5% off, and "Lv30+ only". Saved as it changes (also while Auto Trade runs).
+// A price box that keeps what is typed itself: the page's frequent refreshes never touch it while it
+// has focus (user 2026-11-07: typing into the prices did not work). Text box with a number keypad,
+// digits only; every change goes up at once, an empty box means "no price".
+function PriceBox({ value, onChange, placeholder, disabled, className }) {
+  const [text, setText] = useState(value ? String(value) : '');
+  const focused = useRef(false);
+  useEffect(() => { if (!focused.current) setText(value ? String(value) : ''); }, [value]);
+  return <input type="text" inputMode="numeric" className={className} placeholder={placeholder} disabled={disabled} value={disabled ? '' : text}
+    onFocus={() => { focused.current = true; }}
+    onBlur={() => { focused.current = false; setText(value ? String(value) : ''); }}
+    onChange={e => { const v = e.target.value.replace(/[^\d]/g, ''); setText(v); onChange(v); }} />;
+}
+const CurToggle = ({ value, onChange, disabled }) => <span className="currency-toggle">{['APK', 'TIX'].map(c => <button type="button" key={c} disabled={disabled} className={value === c ? 'on' : ''} onClick={() => onChange(c)}>{c}</button>)}</span>;
+
+function PricingTab({ x, pricing, rows, toast }) {
+  const p = x.pr;
+  const [draft, setDraft] = useState(() => JSON.parse(JSON.stringify(pricing || { defaults: { sellable: { price: 20, currency: 'APK' }, stok: { price: 99999, currency: 'TIX' } }, players: {} })));
+  const [dirty, setDirty] = useState(false);
+  const [q, setQ] = useState('');
+  const [filter, setFilter] = useState('all');
+  useEffect(() => {
+    if (!dirty) return;
+    const h = setTimeout(async () => {
+      try { await api.autoTrade.savePricing(draft); setDirty(false); }
+      catch (e) { toast(e.message, 'error'); }
+    }, 600);
+    return () => clearTimeout(h);
+  }, [draft, dirty]);
+  const setDef = (kind, patch) => { setDraft(d => ({ ...d, defaults: { ...d.defaults, [kind]: { ...d.defaults[kind], ...patch } } })); setDirty(true); };
+  const setPl = (id, patch) => { setDraft(d => ({ ...d, players: { ...d.players, [id]: { ...(d.players[id] || {}), ...patch } } })); setDirty(true); };
+  const clean = v => String(v).replace(/[^\d]/g, '');
+  const def = draft.defaults;
+  const fmt = d => `${Number(d.price).toLocaleString()} ${d.currency}`;
+  const s = q.trim().toLocaleLowerCase('tr-TR');
+  const list = rows.filter(r => {
+    const own = draft.players[r.id] || {};
+    if (s && !String(r.name).toLocaleLowerCase('tr-TR').includes(s)) return false;
+    if (filter === 'missing') return !own.price && !own.fireNoDisc;
+    if (filter === 'sellable' || filter === 'stok') return r.kind === filter;
+    if (filter === 'lv30') return own.lv30 || r.kind === 'stok';
+    return true;
+  });
+  const missing = rows.filter(r => !draft.players[r.id]?.price && !draft.players[r.id]?.fireNoDisc).length;
+  return <div className="at2-pricing">
+    <div className="panel at2-pricing-defaults"><p className="muted-text">{p.intro}</p>
+      <h4>{p.defaults}</h4>
+      <div className="at2-row">{['sellable', 'stok'].map(k => <label key={k}><span>{p[k]}</span><span className="bought-price"><PriceBox value={def[k].price} onChange={v => setDef(k, { price: v })} /><CurToggle value={def[k].currency} onChange={c => setDef(k, { currency: c })} /></span></label>)}</div>
+      <small className="muted-text">{p.hint}</small>
+    </div>
+    <div className="panel table-panel">
+      <div className="at2-pricing-bar">
+        <input className="guide-search" placeholder={p.search} value={q} onChange={e => setQ(e.target.value)} />
+        <div className="at2-chips">{[['all', p.fAll], ['missing', p.fMissing], ['sellable', p.fSellable], ['stok', p.fStok], ['lv30', p.fLv30]].map(([k, l]) => <button key={k} type="button" className={`at2-chip ${filter === k ? 'on' : ''}`} onClick={() => setFilter(k)}>{l}{k === 'missing' && missing > 0 ? ` (${missing})` : ''}</button>)}</div>
+        <span className={missing ? 'warn-text' : 'muted-text'}>{missing ? fill(p.missing, { n: missing }) : p.allSet}</span>
+      </div>
+      {!rows.length ? <p className="muted-text">{p.none}</p> :
+      <SortTable className="at2-pricing-table"><thead><tr><th>{p.player}</th><th>{p.role}</th><th>{p.value}</th><th>{p.valueDisc}</th><th>{p.base}</th><th>{p.price}</th><th>{p.discPrice}</th><th title={p.fireNoDiscHint}>{p.fireNoDisc}</th><th>{p.lv30}</th></tr></thead>
+        <tbody>{list.map(r => { const own = draft.players[r.id] || {}; const d = def[r.kind]; return <tr key={r.id} className={own.price ? '' : 'at2-noprice'}>
+          <td><b>{r.name}</b><InjuryMark name={r.name} /> <span className="muted-text">{r.position}{r.team ? ` · ${r.team}` : ''}</span> <RatingBadge grade={r.rating} mini />{r.atBase && <span className="base-badge">BASE</span>}</td>
+          <td>{p[r.kind]}</td>
+          <td>{num(r.value)}</td>
+          <td>{r.value ? num(Math.round(Number(r.value) * 0.95)) : '—'}</td>
+          <td>{num(r.base)}</td>
+          <td title={own.fireNoDisc ? p.firedNoPrice : ''}><span className="bought-price"><PriceBox disabled={own.fireNoDisc} placeholder={own.fireNoDisc ? p.firedShort : fill(p.useDefault, { p: fmt(d) })} value={own.price} onChange={v => setPl(r.id, { price: v, currency: own.currency || d.currency })} /><CurToggle disabled={own.fireNoDisc} value={own.currency || d.currency} onChange={c => setPl(r.id, { currency: c })} /></span>{!own.price && !own.fireNoDisc && <small className="warn-text"> {p.noPrice}</small>}</td>
+          <td><span className="bought-price"><PriceBox placeholder={p.sameAsPrice} value={own.discPrice} onChange={v => setPl(r.id, { discPrice: v, discCurrency: own.discCurrency || own.currency || d.currency })} /><CurToggle value={own.discCurrency || own.currency || d.currency} onChange={c => setPl(r.id, { discCurrency: c })} /></span></td>
+          <td title={p.fireNoDiscHint}><input type="checkbox" checked={Boolean(own.fireNoDisc)} onChange={e => { if (e.target.checked && !window.confirm(fill(p.fireNoDiscAsk, { name: r.name }))) return; setPl(r.id, { fireNoDisc: e.target.checked }); }} /></td>
+          <td>{r.kind === 'stok' ? <span className="muted-text">{p.always}</span> : <input type="checkbox" checked={Boolean(own.lv30)} onChange={e => setPl(r.id, { lv30: e.target.checked })} />}</td>
+        </tr>; })}</tbody></SortTable>}
+    </div>
+  </div>;
+}
+
+// Harcayıcı settings and a button that builds the friend network now (Auto Trade also does
+// it by itself at the start of a cycle when accounts or roles changed).
+function FriendNetRow({ x, form, set }) {
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState('');
+  const sync = async () => {
+    setBusy(true); setMsg('');
+    try {
+      const r = await api.autoTrade.friendSync();
+      setMsg(r?.skipped ? x.friendSyncSkipped : fill(x.friendSyncDone, { done: r?.done || 0, total: r?.total || 0, removed: r?.removed || 0 }));
+    } catch (e) { setMsg(String(e?.message || e)); } finally { setBusy(false); }
+  };
+  return <section className="at2-row">
+    <small className="at2-moved-note">{x.spenderPricesMoved}</small>
+    <label><span>{x.spendersPerSide}</span><input type="number" min="1" max="20" step="1" value={form.spendersPerSide} onChange={e => set({ spendersPerSide: e.target.value.replace(/[^\d]/g, '') })} /><small>{x.spendersPerSideHint}</small></label>
+    <label><span>{x.spenderMinTk}</span><input type="number" min="0" step="1" value={form.spenderMinTk} onChange={e => set({ spenderMinTk: e.target.value.replace(/[^\d]/g, '') })} /><small>{x.spenderMinTkHint}</small></label>
+    <label><span>&nbsp;</span><button type="button" className="btn ghost small" disabled={busy} onClick={sync}>{busy ? x.friendSyncing : x.friendSync}</button>{msg && <small>{msg}</small>}</label>
+  </section>;
 }
 
 // What the sides of each account role may sign (user 2026-10-31). Main has no limits; a
@@ -332,21 +495,21 @@ function AccountBoard({ acc, x, highlight, playerIndex }) {
   const rows = Object.values(acc.players || {});
   return <div className={`panel at2-board ${highlight ? 'hl' : ''} st-${acc.status}`}>
     <div className="at2-board-head">
-      <div><b>{acc.name}</b> <span className={`at2-role ${acc.role}`}>{acc.role === 'main' ? 'MAIN' : 'SIDE'}</span></div>
+      <div><b>{acc.name}</b> <span className={`at2-role ${acc.role}`}>{acc.role === 'main' ? 'MAIN' : acc.role === 'spender' ? 'HARCAYICI' : 'SIDE'}</span></div>
       <span className={`pill ${acc.status === 'active' ? 'ok' : acc.status === 'skipped' ? 'bad' : 'muted'}`}><i />{x.accStatus[acc.status] || acc.status}</span>
     </div>
     <div className="at2-board-meta"><span>{x.tk}: <b>{num(acc.funds)}</b></span><span>{x.openTime}: <b>{dur(acc.openSeconds)}</b></span><span>{x.visits}: <b>{acc.visits}</b></span>{acc.scout?.attemptsLeft != null && <span>Call back: <b>{acc.scout.attemptsLeft}</b></span>}</div>
-    {rows.length ? <div className="at2-table"><SortTable><thead><tr><th>{x.player}</th><th>{x.price}</th><th>{x.salary}</th><th>{x.base}</th><th>{x.role}</th><th>{x.stateCol}</th></tr></thead>
+    {rows.length ? <div className="at2-table"><SortTable><thead><tr><th>{x.player}</th><th>{x.value}</th><th>{x.salary}</th><th>{x.base}</th><th>{x.role}</th><th>{x.stateCol}</th></tr></thead>
       <tbody>{rows.map(r => <tr key={r.id}><td><b>{r.name}</b><InjuryMark name={r.name} />{isAtBase(moneyOf(r, playerIndex)) && <span className="base-badge">BASE</span>}{r.from && <span className="muted-text"> · {x.from}: {r.from}</span>}</td><Money r={r} playerIndex={playerIndex} x={x} /><td>{r.roles?.join(', ') || (r.dir === 'main' ? '≤ ' + x.price : '—')}</td><td><span className={`pill ${STATUS_TONE[r.status] || 'muted'}`}><i />{x.pstatus[r.status] || r.status}</span></td></tr>)}</tbody></SortTable></div>
       : <p className="muted-text at2-noplayers">{x.noPlayers}</p>}
   </div>;
 }
 
 function Summary({ run, x }) {
-  const rows = run.config.accountIds.map(id => run.accounts[id]).filter(Boolean);
+  const rows = [...run.config.accountIds.map(id => run.accounts[id]), ...Object.values(run.accounts).filter(a => a?.role === 'spender' && !run.config.accountIds.includes(a.id))].filter(Boolean);
   return <><h3 className="section-title">{x.summary}</h3>
     <div className="panel table-panel"><SortTable><thead><tr><th></th><th>{x.bought}</th><th>{x.spent}</th><th>{x.converted}</th><th>{x.tradedOut}</th><th>{x.tradedIn}</th><th>{x.tkPaid}</th><th>{x.tkReceived}</th><th>{x.listed}</th><th>{x.tkNow}</th><th>{x.openTime}</th></tr></thead>
-      <tbody>{rows.map(a => <tr key={a.id}><td><b>{a.name}</b> <span className={`at2-role ${a.role}`}>{a.role === 'main' ? 'MAIN' : 'SIDE'}</span></td><td>{a.bought}</td><td>{num(a.spent)}</td><td>{a.converted}</td><td>{a.tradesOut}</td><td>{a.tradesIn}</td><td>{num(a.tkPaid)}</td><td>{num(a.tkReceived)}</td><td>{a.listed}</td><td>{num(a.fundsStart)} → <b>{num(a.funds)}</b></td><td>{dur(a.openSeconds)}</td></tr>)}</tbody></SortTable></div></>;
+      <tbody>{rows.map(a => <tr key={a.id}><td><b>{a.name}</b> <span className={`at2-role ${a.role}`}>{a.role === 'main' ? 'MAIN' : a.role === 'spender' ? 'HARCAYICI' : 'SIDE'}</span></td><td>{a.bought}</td><td>{num(a.spent)}</td><td>{a.converted}</td><td>{a.tradesOut}</td><td>{a.tradesIn}</td><td>{num(a.tkPaid)}</td><td>{num(a.tkReceived)}</td><td>{a.listed}</td><td>{num(a.fundsStart)} → <b>{num(a.funds)}</b></td><td>{dur(a.openSeconds)}</td></tr>)}</tbody></SortTable></div></>;
 }
 
 function CardCounts({ run, totals, x, Modal, toast }) {
@@ -373,9 +536,10 @@ const defaultListing = (row, run, defaults) => {
 // an older run row does not carry.
 function moneyOf(r, playerIndex) {
   const p = playerIndex?.get(r.id);
-  return { salary: r.salary ?? null, value: r.value ?? r.price ?? p?.value ?? null, base: r.base ?? p?.base ?? null };
+  // value = the player's value from the Oyuncular list (never the Scout price paid)
+  return { salary: r.salary ?? null, value: p?.value ?? r.value ?? null, base: r.base ?? p?.base ?? null };
 }
-// Price · salary · Base cells (price = Scout price, salary = what was actually signed).
+// Value · salary · Base cells (salary = what was actually signed).
 function Money({ r, playerIndex }) {
   const m = moneyOf(r, playerIndex);
   return <><td>{num(m.value)}</td><td><b>{num(m.salary)}</b></td><td>{num(m.base)}</td></>;
@@ -425,12 +589,31 @@ function RoleModal({ req, x, Modal }) {
 }
 
 function ListingModal({ req, x, Modal, playerIndex }) {
-  const [rows, setRows] = useState(() => req.players.map(p => ({ ...p, checked: true })));
-  const edit = (i, patch) => setRows(r => r.map((x, j) => j === i ? { ...x, ...patch } : x));
-  const send = items => api.autoTrade.respondListing(items);
-  return <Modal title={fill(x.listingModal, { name: req.name })} onClose={() => {}} width={720}>
+  // every player needs one of: list (with a price) · fire · hold
+  const [rows, setRows] = useState(() => req.players.map(p => ({ ...p, action: null })));
+  const [sending, setSending] = useState(false);
+  const edit = (i, patch) => setRows(r => r.map((v, j) => j === i ? { ...v, ...patch } : v));
+  const all = action => setRows(r => r.map(v => ({ ...v, action })));
+  const open = rows.filter(r => !r.action).length;
+  const badPrice = rows.some(r => r.action === 'list' && !(Number(r.price) >= 1));
+  const fires = rows.filter(r => r.action === 'fire').length;
+  const send = async () => {
+    setSending(true);
+    try { await api.autoTrade.respondListing(rows.map(r => ({ id: r.id, action: r.action, price: Number(r.price), currency: r.currency }))); } finally { setSending(false); }
+  };
+  const ACTS = [['list', x.actList2, 'ok'], ['fire', x.actFire2, 'bad'], ['hold', x.actHold, 'muted']];
+  return <Modal title={fill(x.listingModal, { name: req.name })} onClose={() => {}} width={860}>
     <p className="muted-text">{x.listingModalHint}</p>
-    <SortTable className="at2-modal-table"><thead><tr><th></th><th>{x.player}</th><th>{x.salary}</th><th>{x.value}</th><th>{x.base}</th><th>{x.role}</th><th>{x.listPrice}</th><th></th></tr></thead><tbody>{rows.map((r, i) => { const m = moneyOf(r, playerIndex); return <tr key={r.id}><td><input type="checkbox" checked={r.checked} onChange={e => edit(i, { checked: e.target.checked })} /></td><td><b>{r.name}</b><InjuryMark name={r.name} />{isAtBase(m) && <span className="base-badge">BASE</span>}</td><td>{num(m.salary)}</td><td>{num(m.value)}</td><td>{num(m.base)}</td><td>{(r.roles || []).join(', ')}</td><td><input className="eq-small" type="number" min="1" value={r.price} onChange={e => edit(i, { price: e.target.value })} /></td><td><select value={r.currency} onChange={e => edit(i, { currency: e.target.value })}><option>APK</option><option>TIX</option></select></td></tr>; })}</tbody></SortTable>
-    <div className="modal-actions"><button className="btn ghost" onClick={() => send(null)}>{x.skipList}</button><button className="btn primary" onClick={() => send(rows.filter(r => r.checked).map(r => ({ id: r.id, price: Number(r.price), currency: r.currency })))}>{x.listAndGo}</button></div>
+    <div className="at2-lm-all"><span>{x.allAs}</span>{ACTS.map(([a, label]) => <button key={a} type="button" className="btn ghost small" onClick={() => all(a)}>{label}</button>)}</div>
+    <SortTable className="at2-modal-table at2-lm-table"><thead><tr><th>{x.player}</th><th>{x.salary}</th><th>{x.value}</th><th>{x.base}</th><th>{x.role}</th><th data-nosort>{x.stateCol}</th><th data-nosort>{x.priceShort}</th></tr></thead><tbody>{rows.map((r, i) => { const m = moneyOf(r, playerIndex); return <tr key={r.id} className={r.action ? `at2-lm-${r.action}` : 'at2-lm-open'}>
+      <td><b>{r.name}</b><InjuryMark name={r.name} />{isAtBase(m) && <span className="base-badge">BASE</span>}</td><td>{num(m.salary)}</td><td>{num(m.value)}</td><td>{num(m.base)}</td><td>{(r.roles || []).join(', ')}</td>
+      <td><span className="at2-lm-acts">{ACTS.map(([a, label, tone]) => <button key={a} type="button" className={`at2-lm-act ${tone} ${r.action === a ? 'on' : ''}`} onClick={() => edit(i, { action: a })}>{label}</button>)}</span></td>
+      <td>{r.action === 'list' ? <span className="bought-price"><input type="number" min="1" step="1" value={r.price} onChange={e => edit(i, { price: e.target.value.replace(/[^\d]/g, '') })} /><span className="currency-toggle">{['APK', 'TIX'].map(c => <button type="button" key={c} className={r.currency === c ? 'on' : ''} onClick={() => edit(i, { currency: c })}>{c}</button>)}</span></span> : <span className="muted-text">—</span>}</td>
+    </tr>; })}</tbody></SortTable>
+    <div className="modal-actions">
+      {open > 0 && <span className="warn-text">{fill(x.chooseAll, { n: open })}</span>}
+      {fires > 0 && <span className="bad-text">{fill(x.fireWarn, { n: fires })}</span>}
+      <button className="btn primary" disabled={open > 0 || badPrice || sending} onClick={send}>{x.okGo}</button>
+    </div>
   </Modal>;
 }

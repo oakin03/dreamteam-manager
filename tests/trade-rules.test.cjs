@@ -117,3 +117,13 @@ test('rules by account role: every player role has its own column (Stok too)', (
   const old = R.normalizeRoleRules({ x: { sellable: false } }).x;
   assert.equal(R.accountAllows(old, 'sellable', { id: 's1' }, roleMap, cfg), false);
 });
+
+test('Base: a value under Base pulls tomorrow\'s Base to value × 0.95 (Isaiah Collier, 2026-11-06)', () => {
+  // value 426 under Base 460: the game shows Base today, but tomorrow Base is 405 → 426 is not Base
+  assert.equal(R.salaryAtBase({ baseSalary: 426, signedSalary: 426, newBaseSalary: 460 }, { projected: true }), false);
+  assert.equal(R.salaryAtBase({ baseSalary: 426, signedSalary: 426, newBaseSalary: 460 }), false, 'also without the projection');
+  assert.equal(R.salaryAtBase({ baseSalary: 426, signedSalary: 405, newBaseSalary: 460 }, { projected: true }), true, 'signed 5% under the value');
+  // value at or over Base: as before
+  assert.equal(R.salaryAtBase({ baseSalary: 50, signedSalary: 48, newBaseSalary: 50 }, { projected: true }), true);
+  assert.equal(R.salaryAtBase({ baseSalary: 50, signedSalary: 50, newBaseSalary: 50 }, { projected: true }), false);
+});

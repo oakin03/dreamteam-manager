@@ -18,6 +18,7 @@ const PARK_PRICE = 9999999;   // Auto Buy lists a bought player here until the u
 const PAYMENT_MODE = { APK: 'APK_TICKET', TIX: 'TICKET' };
 const SEARCH_PAGE_SIZE = 8;
 const SEARCH_MAX_PAGES = 12;
+const taskOf = source => source === 'auto' ? 'Auto Buy' : source === 'trade' ? 'Auto Trade' : 'Trading Hall';
 const maxPrice = tickets => tickets.reduce((m, t) => Math.max(m, Number(t.price) || 0), 0);
 const CURRENCY = { APK_TICKET: 'APK', TICKET: 'TIX' };
 const DEFAULT_INTERVAL_SEC = 10;
@@ -39,8 +40,11 @@ const finite = v => v !== '' && v != null && Number.isFinite(Number(v));
 // A watch row is used only when both limits are set (all conditions must hold), and the
 // quantity too unless "unlimited" is ticked (the default). qty = how many to buy in total.
 const isUnlimited = row => row.unlimited !== false;
+// A row may have a lower salary limit too (salary ranges, user 2026-11-06: Jokic 0–2318 at
+// one price, 2319–2347 at another); empty = 0.
+const minSalaryOf = row => (finite(row.minSalary) ? Math.max(0, Number(row.minSalary)) : 0);
 function rowReady(row) {
-  return finite(row.maxPrice) && Number(row.maxPrice) >= 1 && finite(row.maxSalary) && Number(row.maxSalary) >= 0 && PAYMENT_MODE[row.currency]
+  return finite(row.maxPrice) && Number(row.maxPrice) >= 1 && finite(row.maxSalary) && Number(row.maxSalary) >= 0 && minSalaryOf(row) <= Number(row.maxSalary) && PAYMENT_MODE[row.currency]
     && (isUnlimited(row) || (finite(row.qty) && Number(row.qty) >= 1 && Number.isInteger(Number(row.qty))));
 }
 // Bought as many as asked: the row is left out of the scans.
@@ -53,7 +57,8 @@ function matchingTickets(row, tickets) {
     && (!t.status || t.status === 'LISTED')
     && CURRENCY[t.paymentMode] === row.currency
     && Number(t.price) <= Number(row.maxPrice)
-    && Number(t.signedSalary) <= Number(row.maxSalary))
+    && Number(t.signedSalary) <= Number(row.maxSalary)
+    && Number(t.signedSalary) >= minSalaryOf(row))
     .sort((a, b) => Number(a.price) - Number(b.price));
 }
 
@@ -282,6 +287,17 @@ class BuyService {
     }
   }
 
+  // A Harcayıcı listed a player by itself (Auto Trade, roster full or a duplicate): it joins
+  // this list so its price can be set and changed like a bought one.
+  recordListed({ accountId, player, price, currency }) {
+    if (!accountId || !player?.id) return;
+    const data = this._data();
+    const salary = Number(player.signedSalary ?? player.baseSalary);
+    const entry = { id: crypto.randomUUID(), accountId, playerId: player.id, name: player.name || player.visualName || player.id, position: player.position || null, grade: player.grade || null, salary: Number.isFinite(salary) ? salary : null, base: Number(player.newBaseSalary) || null,value: Number(player.baseSalary) || null,  boughtPrice: null, currency: currency || 'TIX', ticketId: null, source: 'trade', boughtAt: new Date(this.now()).toISOString(), state: 'listed', listPrice: Number(price) || null, listCurrency: currency || 'TIX', listedAt: new Date(this.now()).toISOString() };
+    data.bought = [entry, ...data.bought].slice(0, MAX_BOUGHT);
+    this._save(data);
+  }
+
   // Bought player -> market at `price` / `currency`. If it is already listed (Auto Buy
   // parks it at 9,999,999 TIX) the listing is taken back first, like the Market relist.
   async sell(entryId, price, currency) {
@@ -291,7 +307,7 @@ class BuyService {
     this.busy[entryId] = true;
     this.onChanged();
     try {
-      const task = entry.source === 'auto' ? 'Auto Buy' : 'Trading Hall';
+      const task = taskOf(entry.source);
       return await this._withAccount(entry.accountId, task, async () => {
         const conn = await this._conn(entry.accountId);
         return this._sell(conn, entryId, price, currency, null, task);
@@ -342,7 +358,7 @@ class BuyService {
     if (this.busy[entryId]) throw new Error('Already working on this player.');
     this.busy[entryId] = true;
     this.onChanged();
-    const task = entry.source === 'auto' ? 'Auto Buy' : 'Trading Hall';
+    const task = taskOf(entry.source);
     try {
       return await this._withAccount(entry.accountId, task, async () => {
         const conn = await this._conn(entry.accountId);
@@ -402,6 +418,53 @@ class BuyService {
     } finally { conn.close(); }
   }
 
+  // Take off the market (when listed) and fire (user 2026-11-06, Harcayıcı list; the page asks
+  // first). One account at a time, one connection each; a refusal goes on with the next player.
+  // Fired players leave the list.
+  async fire(entryIds = []) {
+    const want = new Set(entryIds);
+    const entries = this._data().bought.filter(e => want.has(e.id) && e.state !== 'converted' && !this.busy[e.id]);
+    if (!entries.length) throw new Error('Select at least one player.');
+    const byAcc = new Map();
+    for (const e of entries) { if (!byAcc.has(e.accountId)) byAcc.set(e.accountId, []); byAcc.get(e.accountId).push(e); }
+    let fired = 0, failed = 0, lastError = null;
+    for (const [accountId, list] of byAcc) {
+      const task = taskOf(list[0].source);
+      list.forEach(e => { this.busy[e.id] = true; });
+      this.onChanged();
+      try {
+        await this._withAccount(accountId, task, async () => {
+          const conn = await this._conn(accountId);
+          for (const entry of list) {
+            try {
+              if (entry.state === 'listed') {
+                const listing = await this._findListing(conn, entry, null);
+                if (listing) {
+                  const removed = await this._write(conn, 'market:cancelPlayerListing', { userId: conn.userId, ticketId: listing.id }, 'cancelResult', null);
+                  if (!removed?.success) throw new Error(removed?.message || 'unknown reply');
+                }
+              }
+              this._touch(accountId);
+              const r = await conn.socket.ack('firePlayer', { userId: conn.userId, playerId: entry.playerId }, { timeoutMs: 20000 }).catch(error => ({ success: false, error: error.message }));
+              if (!r?.success) throw new Error(r?.error || r?.message || 'unknown reply');
+              const data = this._data();
+              data.bought = data.bought.filter(e => e.id !== entry.id);
+              this._save(data);
+              fired++;
+              this._log('success', 'by.fired', { name: entry.name }, `${entry.name} taken off the market and fired`, accountId, task);
+            } catch (error) {
+              failed++;
+              lastError = error.message;
+              this._log('warning', 'by.fireFailed', { name: entry.name, error: error.message }, `${entry.name} could not be fired · ${error.message}`, accountId, task);
+            }
+          }
+        });
+      } finally { list.forEach(e => { delete this.busy[e.id]; }); this.onChanged(); }
+    }
+    if (!fired && lastError) throw new Error(lastError);
+    return { fired, failed, snapshot: this.snapshot() };
+  }
+
   removeBought(entryIds) {
     const ids = new Set(entryIds);
     const data = this._data();
@@ -428,8 +491,22 @@ class BuyService {
     const data = this._data();
     const row = data.watch.find(w => w.id === id);
     if (!row) throw new Error('Row not found.');
-    for (const k of ['maxSalary', 'maxPrice', 'currency', 'enabled', 'unlimited', 'qty']) if (k in patch) row[k] = patch[k];
+    for (const k of ['minSalary', 'maxSalary', 'maxPrice', 'currency', 'enabled', 'unlimited', 'qty']) if (k in patch) row[k] = patch[k];
     if ('resetCount' in patch) row.boughtCount = 0;
+    this._save(data);
+    return this.snapshot();
+  }
+  // Another salary range for the player of row `id`: a new row right after its last one, starting
+  // one above the highest salary limit set so far (same currency; price and limit empty).
+  addRange(id) {
+    const data = this._data();
+    const row = data.watch.find(w => w.id === id);
+    if (!row) throw new Error('Row not found.');
+    const siblings = data.watch.filter(w => w.playerId === row.playerId);
+    const top = Math.max(-1, ...siblings.map(w => (finite(w.maxSalary) ? Number(w.maxSalary) : -1)));
+    const add = { ...row, id: crypto.randomUUID(), minSalary: top >= 0 ? top + 1 : '', maxSalary: '', maxPrice: '', unlimited: true, qty: 1, boughtCount: 0, enabled: true };
+    const at = data.watch.indexOf(siblings[siblings.length - 1]);
+    data.watch.splice(at + 1, 0, add);
     this._save(data);
     return this.snapshot();
   }
@@ -560,13 +637,17 @@ class BuyService {
       // player by player while scanning made the hall jump around (user 2026-10-30).
       const scans = [];
       const boughtTickets = new Set();
+      const searched = new Map(); // playerId:currency → reply (salary ranges of one player share one search)
       for (const row of rows) {
         if (signal.aborted) throw abortError();
         if (!ok.has(row.currency)) continue;
-        const reply = await this._searchAll(anon, row, signal);
-        if (reply) scans.push({ playerIds: [row.playerId], currency: row.currency, tickets: reply.tickets.filter(t => (t.playerId || t.player?.id) === row.playerId), scope: { complete: reply.complete, cutoff: reply.cutoff } });
+        const key = `${row.playerId}:${row.currency}`;
+        const first = !searched.has(key);
+        const reply = first ? await this._searchAll(anon, row, signal) : searched.get(key);
+        searched.set(key, reply);
+        if (reply && first) scans.push({ playerIds: [row.playerId], currency: row.currency, tickets: reply.tickets.filter(t => (t.playerId || t.player?.id) === row.playerId), scope: { complete: reply.complete, cutoff: reply.cutoff } });
         for (const ticket of matchingTickets(row, reply?.tickets)) {
-          if (failedTickets.has(ticket.id)) continue;
+          if (failedTickets.has(ticket.id) || boughtTickets.has(ticket.id)) continue;
           const price = Number(ticket.price);
           const tried = new Set();
           const seller = sellerOf.get(String(ticket.user?.teamName || '').toLowerCase());

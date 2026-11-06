@@ -316,3 +316,32 @@ test('Auto Buy reads every page of the name search: a listing behind similar nam
   assert.equal(game.calls.filter(c => c.event === 'market:getMarketPlayers').some(c => c.payload.page === 2), true);
   assert.equal(scans[0].scope.complete, true);
 }, { timeout: 10000 });
+
+test('salary ranges: a second row for the same player starts above the first range and has its own price; one search per player', async () => {
+  const game = fakeGame({
+    users: { 'u-a': { apk: 1000, tix: 0 } },
+    // salary 2300 at 30 APK (≤ 40 of range 0–2318 → bought), 2340 at 30 APK (> 25 of range 2319–2347 → left), 2330 at 20 APK (bought)
+    listings: [L('t1', 'p1', 'Nikola Jokic', 30, 2300), L('t2', 'p1', 'Nikola Jokic', 30, 2340), L('t3', 'p1', 'Nikola Jokic', 20, 2330), L('t4', 'p1', 'Nikola Jokic', 10, 2400)]
+  });
+  const { svc, data } = service(game, [['a', 'Trophy3']]);
+  svc.addWatch([{ id: 'p1', name: 'Nikola Jokic' }]);
+  const first = data().watch[0];
+  svc.updateWatch(first.id, { maxPrice: 40, maxSalary: 2318, currency: 'APK' });
+  svc.addRange(first.id);
+  const second = data().watch[1];
+  assert.equal(second.playerId, 'p1');
+  assert.equal(second.minSalary, 2319, 'starts one above the first range');
+  assert.equal(second.maxSalary, '');
+  svc.updateWatch(second.id, { maxSalary: 2347, maxPrice: 25 });
+  assert.ok(rowReady(data().watch[1]));
+  assert.ok(!rowReady({ ...data().watch[1], minSalary: 2400 }), 'lower limit above the upper one');
+  const searches = [];
+  const orig = svc._searchAll.bind(svc);
+  svc._searchAll = (anon, row, signal) => { searches.push(row.playerId); return orig(anon, row, signal); };
+  await svc.startAuto({ accountIds: ['a'], intervalSec: 3 });
+  await new Promise(r => setTimeout(r, 1500));
+  svc.stopAuto();
+  await svc.done;
+  assert.deepEqual(game.st.listings.filter(l => l.status === 'SOLD').map(l => l.id).sort(), ['t1', 't3']);
+  assert.equal(searches.length, 1, 'one search in the scan for both ranges, not one per range');
+}, { timeout: 10000 });

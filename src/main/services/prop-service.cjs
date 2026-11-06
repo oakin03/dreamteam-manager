@@ -17,17 +17,20 @@ const MEDIUM = 'cmeuwyoyn0001kw6domi4mjg0';  // Water Bottle (Medium), +30
 const LARGE = 'cmeuwyoyn0002kw6d3fyk95w2';   // Water Bottle (Large) — not used
 const RESTORE = { [SMALL]: 10, [MEDIUM]: 30, [LARGE]: 50 };
 const TARGET = 95;          // fill every starter to 95+
-const MEDIUM_MAX = 85;      // a +30 only at 85 or below (+10s first)
+const MEDIUM_MAX = 75;      // 75 or below (25+ missing): +30 first; above it +10 (user 2026-11-06)
 const WAIT_HALFTIME_MS = 20 * 60 * 1000;
 const TIMEOUT_MS = 8000;
 
 function abortError() { const e = new Error('Aborted'); e.name = 'AbortError'; return e; }
 
-// Which prop a starter gets next (or null): +10 first; +30 only when ≤ 85 and no +10 left.
+// Which prop a starter gets next (or null), until 95: at 75 or below a +30, above it a +10
+// (15 → three +30s; 55 → +30 then +10). When the one it needs has run out the other is used,
+// but a +30 never above 85 (it would mostly be wasted).
 function nextProp(stamina, left) {
   if (stamina >= TARGET) return null;
+  if (stamina <= MEDIUM_MAX) return left[MEDIUM] > 0 ? MEDIUM : left[SMALL] > 0 ? SMALL : null;
   if (left[SMALL] > 0) return SMALL;
-  if (left[MEDIUM] > 0 && stamina <= MEDIUM_MAX) return MEDIUM;
+  if (left[MEDIUM] > 0 && stamina <= 85) return MEDIUM;
   return null;
 }
 

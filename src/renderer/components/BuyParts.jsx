@@ -10,7 +10,7 @@ export const BUY_TEXT = {
     buy: 'Satın Al', buying: 'Alınıyor…', bought: 'Alındı', chooseAccount: 'Hangi hesapla alınsın?', notEnough: 'yetersiz', noAccounts: 'Hesap yok',
     boughtTitle: 'Satın alınanlar', boughtHint: 'Fiyat ve para birimi seçip pazara koy. Pazardaysa önce çekilir, yeni fiyatla tekrar konur.', none: 'Henüz satın alınan oyuncu yok.',
     account: 'Hesap', player: 'Oyuncu', paid: 'Ödenen', salary: 'Maaş', base: 'Base', status: 'Durum', newPrice: 'Yeni fiyat', from: 'Nereden',
-    owned: 'Kadroda', listed: 'Pazarda · {price} {cur}', parked: 'Pazarda · 9.999.999 TIX (bekliyor)', sell: 'Satışa koy', reprice: 'Fiyatı güncelle', remove: 'Listeden kaldır', hall: 'Trading Hall', auto: 'Auto Buy',
+    owned: 'Kadroda', listed: 'Pazarda · {price} {cur}', parked: 'Pazarda · 9.999.999 TIX (bekliyor)', sell: 'Satışa koy', reprice: 'Fiyatı güncelle', remove: 'Listeden kaldır', fire: 'Pazardan çıkar ve kov', fireSel: 'Seçilileri pazardan çıkar ve kov', relistSel: 'Seçilileri tekrar listele', selected: '{count} seçili', fireTitle: 'Oyuncular kovulsun mu?', fireAsk: '{names} pazardan çekilip kovulacak. Bu geri alınamaz.', fireYes: 'Kov', okFired: '{count} oyuncu kovuldu', okRelisted: '{count} oyuncu listelendi', hall: 'Trading Hall', auto: 'Auto Buy',
     filterAll: 'Tümü', filterHall: 'Trading Hall', filterAuto: 'Auto Buy', okBought: '{name} alındı', invalid: 'Geçersiz fiyat',
     convert: 'Karta çevir', converting: 'Çevriliyor…', converted: 'Karta çevrildi', convertTitle: '{name} karta çevrilsin mi?', convertAsk: 'Oyuncu yıldız karta çevrilir ve kadrodan çıkar; geri alınamaz. Pazardaysa önce pazardan çekilir.', convertYes: 'Karta çevir', cancel: 'Vazgeç',
     warnLow: 'Maaşı ({salary}) değerinin ({value}) çok altında (%{pct}). Satarsan daha çok kazanabilirsin.', warnBase: 'Bu bir Base oyuncu (maaşı Base seviyesinde).', okConverted: '{name} karta çevrildi', value: 'Değer'
@@ -19,7 +19,7 @@ export const BUY_TEXT = {
     buy: 'Buy', buying: 'Buying…', bought: 'Bought', chooseAccount: 'Buy with which account?', notEnough: 'not enough', noAccounts: 'No accounts',
     boughtTitle: 'Bought players', boughtHint: 'Pick a price and currency and list them. A listed player is taken off first and listed again at the new price.', none: 'No bought players yet.',
     account: 'Account', player: 'Player', paid: 'Paid', salary: 'Salary', base: 'Base', status: 'Status', newPrice: 'New price', from: 'From',
-    owned: 'In roster', listed: 'On the market · {price} {cur}', parked: 'On the market · 9,999,999 TIX (waiting)', sell: 'List for sale', reprice: 'Update price', remove: 'Remove from list', hall: 'Trading Hall', auto: 'Auto Buy',
+    owned: 'In roster', listed: 'On the market · {price} {cur}', parked: 'On the market · 9,999,999 TIX (waiting)', sell: 'List for sale', reprice: 'Update price', remove: 'Remove from list', fire: 'Take off market and fire', fireSel: 'Take selected off market and fire', relistSel: 'List selected again', selected: '{count} selected', fireTitle: 'Fire the players?', fireAsk: '{names} will be taken off the market and fired. This cannot be undone.', fireYes: 'Fire', okFired: '{count} player(s) fired', okRelisted: '{count} player(s) listed', hall: 'Trading Hall', auto: 'Auto Buy',
     filterAll: 'All', filterHall: 'Trading Hall', filterAuto: 'Auto Buy', okBought: '{name} bought', invalid: 'Invalid price',
     convert: 'Turn into card', converting: 'Converting…', converted: 'Turned into a card', convertTitle: 'Turn {name} into a card?', convertAsk: 'The player becomes a star card and leaves the roster; this cannot be undone. A listed player is taken off the market first.', convertYes: 'Turn into card', cancel: 'Cancel',
     warnLow: 'The salary ({salary}) is far below the value ({value}) ({pct}%). Selling could earn more.', warnBase: 'This is a Base player (salary at its Base).', okConverted: '{name} turned into a card', value: 'Value'
@@ -99,9 +99,13 @@ export function BuyMenu({ row, state, lang, toast }) {
 }
 
 // Players bought from the Trading Hall or by Auto Buy: price them and list them.
-export function BoughtList({ state, lang, toast, source = null }) {
+// Selection and typed prices survive leaving the page (user 2026-11-06): kept per list here.
+const BOUGHT_UI = new Map();
+
+export function BoughtList({ state, lang, toast, source = null, title = null, hint = null }) {
   const x = BUY_TEXT[lang] || BUY_TEXT.en;
-  const [edits, setEdits] = useState({});
+  const uiKey = source || 'all';
+  const [edits, setEdits] = useState(() => BOUGHT_UI.get(uiKey)?.edits || {});
   const [filter, setFilter] = useState(source || '');
   const rows = (state.buy?.bought || []).filter(e => !filter || e.source === filter);
   const busy = state.buy?.busy || {};
@@ -109,6 +113,36 @@ export function BoughtList({ state, lang, toast, source = null }) {
   const mainId = state.accountProfile?.mainAccountId || null;
   const live = new Map((state.players?.players || []).map(p => [p.id, p]));
   const [ask, setAsk] = useState(null);
+  const [sel, setSel] = useState(() => new Set(BOUGHT_UI.get(uiKey)?.sel || []));
+  useEffect(() => { BOUGHT_UI.set(uiKey, { sel: [...sel], edits }); }, [uiKey, sel, edits]);
+  // Harcayıcı list: a player listed again at a new price leaves the table (user 2026-11-06)
+  const dropAfterSell = id => { if (source === 'trade') { api.buy.removeBought([id]).catch(() => {}); setSel(s => { if (!s.has(id)) return s; const n = new Set(s); n.delete(id); return n; }); } };
+  const [fireAsk, setFireAsk] = useState(null);
+  const [bulk, setBulk] = useState(false);
+  const live2 = rows.filter(e => e.state !== 'converted');
+  const chosen = live2.filter(e => sel.has(e.id));
+  const toggle = id => setSel(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const allOn = live2.length > 0 && chosen.length === live2.length;
+  const fire = async list => {
+    setFireAsk(null);
+    setBulk(true);
+    try { const r = await api.buy.fire(list.map(e => e.id)); toast(fill(x.okFired, { count: r?.fired ?? list.length }), r?.failed ? 'warning' : 'success'); setSel(new Set()); }
+    catch (err) { toast(err.message, 'error'); }
+    finally { setBulk(false); }
+  };
+  // every selected row at its own price box (or the price it is listed at), one after another
+  const relist = async () => {
+    const list = chosen.map(e => ({ e, v: get(e) })).map(({ e, v }) => ({ e, price: Number(v.price) || Number(e.listPrice), currency: v.currency || e.listCurrency || e.currency }));
+    if (list.some(i => !(i.price >= 1))) { toast(x.invalid, 'error'); return; }
+    setBulk(true);
+    let ok = 0;
+    try {
+      for (const i of list) { try { await api.buy.sell(i.e.id, i.price, i.currency); ok++; dropAfterSell(i.e.id); } catch (err) { toast(`${i.e.name}: ${err.message}`, 'error'); } }
+      setEdits(s => { const n = { ...s }; for (const i of list) delete n[i.e.id]; return n; });
+      if (ok) toast(fill(x.okRelisted, { count: ok }), 'success');
+      setSel(new Set());
+    } finally { setBulk(false); }
+  };
   const warnings = e => {
     const p = live.get(e.playerId);
     const value = Number(p?.value);
@@ -122,24 +156,32 @@ export function BoughtList({ state, lang, toast, source = null }) {
     try { await api.buy.convert(e.id); toast(fill(x.okConverted, { name: e.name }), 'success'); } catch (err) { toast(err.message, 'error'); }
   };
   const get = e => ({ price: e.listPrice && e.listPrice !== state.buy?.parkPrice ? e.listPrice : '', currency: e.listCurrency && e.listPrice !== state.buy?.parkPrice ? e.listCurrency : e.currency, ...edits[e.id] });
-  const edit = (id, patch) => setEdits(s => ({ ...s, [id]: { ...s[id], ...patch } }));
+  // a row whose price or currency is changed is selected by itself (user 2026-11-06)
+  const edit = (id, patch) => { setEdits(s => ({ ...s, [id]: { ...s[id], ...patch } })); setSel(s => s.has(id) ? s : new Set([...s, id])); };
   const sell = async e => {
     const v = get(e);
     if (!(Number(v.price) >= 1)) { toast(x.invalid, 'error'); return; }
-    try { await api.buy.sell(e.id, Number(v.price), v.currency); setEdits(s => { const n = { ...s }; delete n[e.id]; return n; }); } catch (err) { toast(err.message, 'error'); }
+    try { await api.buy.sell(e.id, Number(v.price), v.currency); setEdits(s => { const n = { ...s }; delete n[e.id]; return n; }); dropAfterSell(e.id); } catch (err) { toast(err.message, 'error'); }
   };
   return <section className="bought-list">
-    <h3 className="section-title">{x.boughtTitle} <small>{x.boughtHint}</small></h3>
-    {!source && <div className="bought-filter">{[['', x.filterAll], ['hall', x.filterHall], ['auto', x.filterAuto]].map(([k, l]) => <button key={k} className={`chip ${filter === k ? 'on' : ''}`} onClick={() => setFilter(k)}>{l}</button>)}</div>}
-    <div className="panel table-panel">{rows.length ? <SortTable><thead><tr><th>{x.account}</th><th>{x.player}</th><th>{x.paid}</th><th>{x.salary}</th><th>{x.base}</th><th>{x.status}</th><th>{x.newPrice}</th><th></th></tr></thead>
-      <tbody>{rows.map(e => { const v = get(e); const parked = e.state === 'listed' && e.listPrice === state.buy?.parkPrice; return <tr key={e.id}>
-        <td>{name(e.accountId)}{!source && <small className="cell-sub">{e.source === 'auto' ? x.auto : x.hall}</small>}</td>
+    <h3 className="section-title">{title || x.boughtTitle} <small>{hint || x.boughtHint}</small></h3>
+    {!source && <div className="bought-filter">{[['', x.filterAll], ['hall', x.filterHall], ['auto', x.filterAuto], ['trade', 'Auto Trade']].map(([k, l]) => <button key={k} className={`chip ${filter === k ? 'on' : ''}`} onClick={() => setFilter(k)}>{l}</button>)}</div>}
+    {chosen.length > 0 && <div className="bought-bulk"><b>{fill(x.selected, { count: chosen.length })}</b><button className="btn primary small" disabled={bulk} onClick={relist}>{x.relistSel}</button><button className="btn danger-soft small" disabled={bulk} onClick={() => setFireAsk(chosen)}>{x.fireSel}</button></div>}
+    <div className="panel table-panel">{rows.length ? <SortTable><thead><tr><th className="sel-col"><input type="checkbox" checked={allOn} disabled={!live2.length} onChange={() => setSel(allOn ? new Set() : new Set(live2.map(e => e.id)))} /></th><th>{x.account}</th><th>{x.player}</th><th>{source === 'trade' ? x.value : x.paid}</th><th>{x.salary}</th><th>{x.base}</th><th>{x.status}</th><th>{x.newPrice}</th><th></th></tr></thead>
+      <tbody>{rows.map(e => { const v = get(e); const parked = e.state === 'listed' && e.listPrice === state.buy?.parkPrice; return <tr key={e.id} className={sel.has(e.id) ? 'selected' : ''}>
+        <td className="sel-col">{e.state !== 'converted' && <input type="checkbox" checked={sel.has(e.id)} onChange={() => toggle(e.id)} />}</td>
+        <td>{name(e.accountId)}{!source && <small className="cell-sub">{e.source === 'auto' ? x.auto : e.source === 'trade' ? 'Auto Trade' : x.hall}</small>}</td>
         <td><b>{e.name}</b><InjuryMark name={e.name} />{e.salary != null && e.base > 0 && e.salary <= e.base && <span className="base-badge">BASE</span>}{e.position && <small className="cell-sub">{e.position} · {e.grade}</small>}</td>
-        <td><b className="price">{num(e.boughtPrice)}</b> {e.currency}</td><td>{num(e.salary)}</td><td>{num(e.base)}</td>
+        {source === 'trade' ? <td><b className="price">{num(live.get(e.playerId)?.value ?? e.value)}</b></td> : <td><b className="price">{num(e.boughtPrice)}</b> {e.currency}</td>}<td>{num(e.salary)}</td><td>{num(e.base)}</td>
         <td>{e.state === 'converted' ? <span className="pill muted"><i />{x.converted}</span> : e.state === 'listed' ? <span className={`pill ${parked ? 'warn' : 'ok'}`}><i />{parked ? x.parked : fill(x.listed, { price: num(e.listPrice), cur: e.listCurrency })}</span> : <span className="pill muted"><i />{x.owned}</span>}</td>
         <td>{e.state !== 'converted' && <span className="bought-price"><input className="price-input" type="number" min="1" value={v.price} onChange={ev => edit(e.id, { price: ev.target.value })} /><span className="currency-toggle">{['APK', 'TIX'].map(c => <button type="button" key={c} className={v.currency === c ? 'on' : ''} onClick={() => edit(e.id, { currency: c })}>{c}</button>)}</span><PriceHint playerId={e.playerId} name={e.name} currency={v.currency} lang={lang} onPick={p => edit(e.id, { price: p })} /></span>}</td>
-        <td className="actions">{e.state !== 'converted' && <button className="btn primary small" disabled={busy[e.id]} onClick={() => sell(e)}>{e.state === 'listed' ? x.reprice : x.sell}</button>}{mainId && e.accountId === mainId && e.state !== 'converted' && <button className="btn accent small" disabled={busy[e.id]} onClick={() => setAsk({ e, warn: warnings(e) })}>{busy[e.id] ? x.converting : x.convert}</button>}<button className="icon-btn" title={x.remove} onClick={() => api.buy.removeBought([e.id])}>×</button></td>
+        <td className="actions">{e.state !== 'converted' && <button className="btn primary small" disabled={busy[e.id]} onClick={() => sell(e)}>{e.state === 'listed' ? x.reprice : x.sell}</button>}{mainId && e.accountId === mainId && e.state !== 'converted' && <button className="btn accent small" disabled={busy[e.id]} onClick={() => setAsk({ e, warn: warnings(e) })}>{busy[e.id] ? x.converting : x.convert}</button>}{e.state !== 'converted' && <button className="btn danger-soft small" disabled={busy[e.id] || bulk} onClick={() => setFireAsk([e])}>{x.fire}</button>}<button className="icon-btn" title={x.remove} onClick={() => api.buy.removeBought([e.id])}>×</button></td>
       </tr>; })}</tbody></SortTable> : <div className="empty">{x.none}</div>}</div>
+    {fireAsk && <div className="modal-backdrop" onMouseDown={ev => ev.target === ev.currentTarget && setFireAsk(null)}><div className="modal" style={{ maxWidth: 480 }}>
+      <div className="modal-head"><b>{x.fireTitle}</b><button className="icon-btn" onClick={() => setFireAsk(null)}>×</button></div>
+      <p className="muted-text">{fill(x.fireAsk, { names: fireAsk.map(e => `${e.name} (${name(e.accountId)})`).join(', ') })}</p>
+      <div className="modal-actions"><button className="btn ghost" onClick={() => setFireAsk(null)}>{x.cancel}</button><button className="btn danger-soft" onClick={() => fire(fireAsk)}>{x.fireYes}</button></div>
+    </div></div>}
     {ask && <div className="modal-backdrop" onMouseDown={ev => ev.target === ev.currentTarget && setAsk(null)}><div className="modal" style={{ maxWidth: 480 }}>
       <div className="modal-head"><b>{fill(x.convertTitle, { name: ask.e.name })}</b><button className="icon-btn" onClick={() => setAsk(null)}>×</button></div>
       {ask.warn.length > 0 && <div className="convert-warn">{ask.warn.map(w => <p key={w}>⚠ {w}</p>)}</div>}

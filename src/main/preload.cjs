@@ -3,7 +3,9 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('dreamteam', {
   bootstrap: () => ipcRenderer.invoke('app:bootstrap'),
   onState: (callback) => {
-    const handler = (_event, state) => callback(state);
+    // the ack comes after the page has handled it (React draws in the task before), so
+    // the next state is sent only when the page is ready for it
+    const handler = (_event, state) => { try { callback(state); } finally { setTimeout(() => ipcRenderer.send('app:state-ack'), 0); } };
     ipcRenderer.on('app:state', handler);
     return () => ipcRenderer.removeListener('app:state', handler);
   },
@@ -18,8 +20,10 @@ contextBridge.exposeInMainWorld('dreamteam', {
     cheapest: (query) => ipcRenderer.invoke('buy:cheapest', query),
     removeBought: (ids) => ipcRenderer.invoke('buy:remove-bought', ids),
     convert: (entryId) => ipcRenderer.invoke('buy:convert', entryId),
+    fire: (ids) => ipcRenderer.invoke('buy:fire', ids),
     addWatch: (players) => ipcRenderer.invoke('buy:add-watch', players),
     updateWatch: (id, patch) => ipcRenderer.invoke('buy:update-watch', { id, patch }),
+    addRange: (id) => ipcRenderer.invoke('buy:add-range', id),
     removeWatch: (ids) => ipcRenderer.invoke('buy:remove-watch', ids),
     setConfig: (patch) => ipcRenderer.invoke('buy:set-config', patch),
     startAuto: (options) => ipcRenderer.invoke('buy:start-auto', options),
@@ -66,6 +70,16 @@ contextBridge.exposeInMainWorld('dreamteam', {
   },
   valuePredict: {
     refresh: () => ipcRenderer.invoke('vp:refresh')
+  },
+  dailySlot: {
+    scan: (ids) => ipcRenderer.invoke('slot:scan', ids),
+    spin: (ids) => ipcRenderer.invoke('slot:spin', ids),
+    stop: () => ipcRenderer.invoke('slot:stop')
+  },
+  apk: {
+    start: (config) => ipcRenderer.invoke('apk:start', config),
+    stop: () => ipcRenderer.invoke('apk:stop'),
+    saveConfig: (config) => ipcRenderer.invoke('apk:save-config', config)
   },
   tk: {
     start: (config) => ipcRenderer.invoke('tk:start', config),
@@ -193,7 +207,9 @@ contextBridge.exposeInMainWorld('dreamteam', {
     respondRole: (dir) => ipcRenderer.invoke('auto-trade:respond-role', dir),
     listPlayers: (accountId, items) => ipcRenderer.invoke('auto-trade:list-players', { accountId, items }),
     firePlayer: (accountId, playerId) => ipcRenderer.invoke('auto-trade:fire-player', { accountId, playerId }),
+    savePricing: (pricing) => ipcRenderer.invoke('auto-trade:save-pricing', pricing),
     saveDraft: form => ipcRenderer.invoke('auto-trade:save-draft', form),
+    friendSync: () => ipcRenderer.invoke('auto-trade:friend-sync'),
     firePlayers: (accountId, playerIds) => ipcRenderer.invoke('auto-trade:fire-players', { accountId, playerIds }),
     attention: (kind) => ipcRenderer.invoke('auto-trade:attention', kind)
   },
@@ -238,6 +254,7 @@ contextBridge.exposeInMainWorld('dreamteam', {
     updateRole: (id, patch) => ipcRenderer.invoke('cards:update-role', { id, patch }),
     deleteRole: (id) => ipcRenderer.invoke('cards:delete-role', id),
     setPlayerRoles: (playerKey, roleIds) => ipcRenderer.invoke('cards:set-player-roles', { playerKey, roleIds }),
+    setHiddenRoles: (playerKey, roleIds) => ipcRenderer.invoke('cards:set-hidden-roles', { playerKey, roleIds }),
     setTrackedTeams: (teams) => ipcRenderer.invoke('cards:set-tracked-teams', teams),
     setCustomTeam: async () => false // removed 2026-11-05
   },

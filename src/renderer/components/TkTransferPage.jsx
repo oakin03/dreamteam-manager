@@ -3,6 +3,7 @@ import SortTable from './SortTable';
 import { filOf } from '../i18n-fil';
 import InjuryMark from './InjuryMark';
 import { GroupedPicks } from './AccountGroups';
+import ApkTransferTab from './ApkTransferTab';
 
 const api = window.dreamteam;
 const TEXT = {
@@ -63,7 +64,18 @@ const fill = (s, p = {}) => String(s).replace(/\{(\w+)\}/g, (_, k) => p[k] ?? ''
 const num = v => (Number.isFinite(Number(v)) && v !== null && v !== '' ? Number(v).toLocaleString('tr-TR') : '—');
 const isInt = v => String(v).trim() !== '' && Number.isInteger(Number(v));
 
-export default function TkTransferPage({ state, t, toast }) {
+// TK / APK aktarımı: two tabs on one page (user 2026-11-07)
+const TABS = { tr: { tk: 'TK Aktarımı', apk: 'APK / TIX Aktarımı' }, en: { tk: 'TK Transfer', apk: 'APK / TIX Transfer' } };
+export default function TkTransferPage(props) {
+  const [tab, setTab] = useState(() => { try { return localStorage.getItem('tk.tab') || 'tk'; } catch { return 'tk'; } });
+  const labels = TABS[props.t.lang] || filOf(TABS.en);
+  const choose = id => { setTab(id); try { localStorage.setItem('tk.tab', id); } catch {} };
+  const live = { tk: Boolean(props.state.tkTransfer?.running), apk: Boolean(props.state.apkTransfer?.running) };
+  const tabs = <div className="dp-tabs">{['tk', 'apk'].map(id => <button key={id} className={tab === id ? 'active' : ''} onClick={() => choose(id)}>{labels[id]}{live[id] && <i className="dp-dot" />}</button>)}</div>;
+  return tab === 'apk' ? <ApkTransferTab {...props} tabs={tabs} /> : <TkTab {...props} tabs={tabs} />;
+}
+
+function TkTab({ state, t, toast, tabs }) {
   const x = TEXT[t.lang] || TEXT.en;
   const tk = state.tkTransfer || {};
   const accounts = state.accounts || [];
@@ -100,6 +112,7 @@ export default function TkTransferPage({ state, t, toast }) {
         ? <button className="btn danger-soft" onClick={() => api.tk.stop().catch(e => toast(e.message, 'error'))}>{x.stop}</button>
         : <button className="btn primary" disabled={errors.length > 0} onClick={start}>{x.start}</button>}</div>
     </div>
+    {tabs}
 
     <div className="panel tk-setup">
       <div className="tk-fields">

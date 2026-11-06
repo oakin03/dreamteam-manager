@@ -43,6 +43,11 @@ function salaryAtBase(player, { projected = false } = {}) {
   const salary = Number(player?.signedSalary);
   const base = Number(player?.newBaseSalary);
   if (player?.signedSalary == null || !Number.isFinite(salary) || !(base > 0)) return false;
+  // A value that fell under Base pulls tomorrow's Base to value × 0.95 (11:00): the game still
+  // shows such a player as Base today, but a salary equal to the value is not Base (user 2026-11-06,
+  // Isaiah Collier 426). The salary has to be at or under the value less 5%.
+  const value = Number(player?.baseSalary);
+  if (value > 0 && value < base) return salary <= nextBase(value);
   return salary <= (projected ? nextBase(base) : base);
 }
 

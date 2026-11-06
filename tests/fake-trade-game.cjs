@@ -12,7 +12,8 @@ function createWorld(users) {
       starters: (u.starters || ['s1', 's2', 's3', 's4', 's5'].map(s => `${uid}-${s}`)).map((id, i) => typeof id === 'string' ? player(id, 1000, { slot: ['PG', 'SG', 'SF', 'PF', 'C'][i] }) : id),
       bench: (u.bench || []).map((p, i) => ({ ...p, benchSlot: i + 1 })),
       lists: u.lists || [[]], attempts: u.attempts ?? 0, cooldownEnds: u.cooldownEnds ?? Date.now() + 30 * 60 * 1000,
-      signed: new Set(), made: [], listed: [], discount: u.discount || [], apk: u.apk ?? 0
+      signed: new Set(), made: [], listed: [], discount: u.discount || [], apk: u.apk ?? 0,
+      friends: new Set(u.friends || []), requests: []
     };
     for (const m of u.market || []) world.tickets.push({ id: `t-${++world.seq}`, sellerId: uid, playerId: m.player.id, player: m.player, signedSalary: m.player.signedSalary, price: m.price, paymentMode: m.paymentMode || 'APK_TICKET', status: 'LISTED' });
   }
@@ -26,6 +27,47 @@ function createWorld(users) {
     const needAuth = ['market:buyPlayer', 'market:settleTicket', 'signFreeAgent', 'CallBackFreeAgent', 'starcard:makeStarCards', 'market:sellPlayer', 'createTradeRoom', 'joinTradeRoom', 'selectTradePlayers', 'acceptTrade', 'confirmTrade', 'firePlayer'];
     if (needAuth.includes(event) && !s.userId) return reply({ success: false, message: 'Authentication required' });
     switch (event) {
+      // ---- friends (plain connection: the payload's userId is the account) ----
+      case 'getFriendsBootstrap': return reply({ success: true, friends: [...u.friends].map(id => ({ id, teamName: world.users[id]?.name || id, friendshipId: `f-${[uid, id].sort().join('-')}` })), requests: u.requests, sent: [], maxFriends: 50 });
+      case 'sendFriendRequest': {
+        const to = world.users[p.targetUserId];
+        if (u.friends.has(p.targetUserId)) return push('friendRequestResult', { success: false, message: 'Already friends' });
+        const friendshipId = `f-${[uid, p.targetUserId].sort().join('-')}`;
+        to.requests.push({ id: uid, friendshipId });
+        (world.friendOps ||= []).push(['send', uid, p.targetUserId]);
+        return push('friendRequestResult', { success: true, sentRequest: { friendshipId } });
+      }
+      case 'acceptFriendRequest': {
+        const req = u.requests.find(r => r.friendshipId === p.friendshipId);
+        if (!req) return push('friendRequestActionResult', { success: false, message: 'No request' });
+        u.requests = u.requests.filter(r => r !== req);
+        u.friends.add(req.id); world.users[req.id].friends.add(uid);
+        return push('friendRequestActionResult', { success: true });
+      }
+      case 'removeFriend': {
+        u.friends.delete(p.friendId); world.users[p.friendId]?.friends.delete(uid);
+        (world.friendOps ||= []).push(['remove', uid, p.friendId]);
+        return push('friendActionResult', { success: true });
+      }
+      case 'getFriendFreeAgents': {
+        const owner = world.users[p.friendId];
+        if (!u.friends.has(p.friendId)) return reply({ success: false, error: 'Not friends' });
+        return reply({ success: true, freeAgents: (owner.lists[0] || []).map(a => ({ ...a, isSigned: owner.signed.has(a.id) })), refreshesIn: 1800 });
+      }
+      case 'signFriendFreeAgent': {
+        const owner = world.users[p.friendId];
+        if (!u.friends.has(p.friendId)) return reply({ success: false, message: 'Not friends' });
+        if (world.options.friendLimit != null && (u.friendSigns || 0) >= world.options.friendLimit) return reply({ success: false, message: 'Daily friend signing limit reached' });
+        const a = (owner.lists[0] || []).find(x => x.id === p.playerId);
+        if (!a || owner.signed.has(a.id)) return reply({ success: false, message: 'Player not available' });
+        if (total(u) >= 11) return reply({ success: false, message: 'Roster is full' });
+        if ([...u.starters, ...u.bench].some(x => x.id === a.id)) return reply({ success: false, message: 'You already have this player' });
+        if (u.funds < a.baseSalary) return reply({ success: false, message: 'Not enough funds' });
+        owner.signed.add(a.id); u.funds -= a.baseSalary; u.friendSigns = (u.friendSigns || 0) + 1;
+        u.bench.push({ ...player(a.id, a.baseSalary, { name: a.name }), benchSlot: u.bench.length + 1 });
+        (world.friendSigns ||= []).push([uid, p.friendId, a.id]);
+        return reply({ success: true, message: `Signed ${a.name} off ${owner.name}'s board.`, salaryCut: false });
+      }
       case 'register': s.userId = p.userId; return push('registrationSuccess');
       case 'getTeamOptimized': return reply({ userId: uid, players: { starters: u.starters, bench: u.bench } });
       case 'getUserBasicInfo': return push('userBasicInfo', { success: true, funds: u.funds, autoPKTickets: u.apk });

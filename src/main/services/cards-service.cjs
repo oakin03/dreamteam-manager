@@ -313,10 +313,23 @@ class CardsService {
       };
     }).sort((a, b) => (a.modified - b.modified) || (a.x - b.x) || a.team.localeCompare(b.team));
 
+    // Roles of players that are not in the list (inactive card, or an old key with no card):
+    // still used by Auto Trade, so they are shown apart (user 2026-11-06, Russell Westbrook)
+    const listed = new Set(players.map(p => p.key));
+    const hiddenRoled = Object.entries(metadata.players)
+      .filter(([key, meta]) => Array.isArray(meta?.roleIds) && meta.roleIds.some(id => roles.some(r => r.id === id)) && !listed.has(key))
+      .map(([key, meta]) => {
+        const card = data.players[key] || null;
+        const label = card?.name || (String(key).split('|').find(k => /^name:|^slug:/.test(k)) || key).replace(/^(name|slug):/, '');
+        return { key, name: label, team: card?.team || null, grade: card?.grade || null, position: card?.position || null, lastSeenAt: card?.lastSeenAt || null, noCard: !card, roleIds: meta.roleIds, roles: meta.roleIds.map(id => roles.find(r => r.id === id)).filter(Boolean) };
+      })
+      .sort((a, b) => String(a.name).localeCompare(String(b.name)));
+
     this._snapshot = {
       scannerReady: Boolean(this.sessions && this.accountProfile),
       updatedAt: data.updatedAt,
       players,
+      hiddenRoled,
       roles,
       trackedTeams: metadata.trackedTeams,
       teams
@@ -381,6 +394,17 @@ class CardsService {
     this.store.saveCardRoles(roles.filter(r => r.id !== id));
     const metadata = this._metadata();
     for (const meta of Object.values(metadata.players)) if (Array.isArray(meta.roleIds)) meta.roleIds = meta.roleIds.filter(x => x !== id);
+    this.store.saveCardMetadata(metadata);
+    this.onChanged?.();
+    return true;
+  }
+
+  // Roles of a player that is not in the list (also a key without a card record).
+  setHiddenRoles(playerKey, roleIds) {
+    const metadata = this._metadata();
+    if (!metadata.players[playerKey]) throw new Error('Oyuncu bulunamadı.');
+    const valid = new Set(this._roles().map(r => r.id));
+    metadata.players[playerKey] = { ...metadata.players[playerKey], roleIds: [...new Set((roleIds || []).filter(id => valid.has(id)))], updatedAt: new Date().toISOString() };
     this.store.saveCardMetadata(metadata);
     this.onChanged?.();
     return true;
