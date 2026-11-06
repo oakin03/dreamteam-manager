@@ -163,7 +163,7 @@ class AutoTradeEngine {
         out.push({
           id: account.id, name: account.name, userId, funds: Number(info?.funds) || null,
           total: roster.total, starters: roster.starters.length,
-          bench: roster.bench.map(p => this._row(p, cfg, roleMap, roleNames, { status: 'existing', block: R.tradeBlock(p) }))
+          bench: roster.bench.map(p => this._row(p, cfg, roleMap, roleNames, { status: 'existing', block: R.tradeBlock(p), fireOnly: R.fireOnly(p) }))
         });
       }
     } finally { try { anon?.close(); } catch {} }
@@ -657,7 +657,9 @@ class AutoTradeEngine {
     const cfg = this.state.config;
     for (const p of roster.bench) {
       const d = decisions[p.id];
-      if (!d || d.action === 'none' || R.tradeBlock(p)) continue;
+      if (!d || d.action === 'none') continue;
+      // a 1-salary player that cannot be traded may only be fired; other blocked players are left alone
+      if (R.fireOnly(p) ? d.action !== 'fire' : R.tradeBlock(p)) continue;
       if (d.action === 'list') {
         await this._gate(signal);
         const r = await conn.sell(p.id, d.price, d.currency);

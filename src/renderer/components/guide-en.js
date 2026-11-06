@@ -222,7 +222,7 @@ export const GUIDE_EN = {
         "Enter the trade room name and password; choose the Loop (Single run, A number of runs, Endless).",
         "To use spenders turn on “Use friends' Scouts” and set the TK floor. Enter the sale prices in the “Auto Pricing” tab.",
         "Press “Start”. You are warned if another system uses these accounts; “Stop and start” goes on.",
-        "For accounts that already have bench players, decide per player: List on market, Include in trade, Turn into card, Fire or Do nothing.",
+        "For accounts that already have bench players, decide per player: List on market, Include in trade, Turn into card, Fire or Do nothing. Players with salary 1 that cannot be traded only have Fire and Do nothing.",
         "Follow the work in Live status. At the end sell what is left on the sides with “List on market”."
       ],
       buttons: [

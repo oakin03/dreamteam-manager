@@ -222,7 +222,7 @@ export const GUIDE_TR = {
         "Trade odası adını ve şifresini gir; Döngü'yü seç (Tek tur, Belirli sayıda, Sonsuz).",
         "Harcayıcı kullanacaksan “Arkadaş Scout'larını kullan”ı aç ve TK tabanını ayarla. Satış fiyatlarını “Otomatik Fiyatlandırma” sekmesinde gir.",
         "“Başlat”a bas. Başka bir sistem bu hesapları kullanıyorsa uyarılırsın; “Durdur ve başlat” ile devam edebilirsin.",
-        "Bench'inde önceden oyuncu olan hesaplar için her oyuncuya karar ver: Pazarda listele, Trade'e dahil et, Karta çevir, Kov ya da Hiçbir şey yapma.",
+        "Bench'inde önceden oyuncu olan hesaplar için her oyuncuya karar ver: Pazarda listele, Trade'e dahil et, Karta çevir, Kov ya da Hiçbir şey yapma. Maaşı 1 olan takas edilemez oyuncular için yalnız Kov ve Hiçbir şey yapma vardır.",
         "Çalışırken Canlı durum'dan hangi hesapta ne yapıldığını izle. Bitince yan hesaplarda kalanları “Pazara listele”den sat."
       ],
       buttons: [

@@ -144,6 +144,13 @@ function tradeBlock(player) {
   return null;
 }
 
+// 1-salary players the game does not let go in a trade (user 2026-11-07): at the start they can
+// only be fired or left. Starters and equipped players are never touched.
+function fireOnly(player) {
+  const block = tradeBlock(player);
+  return block !== 'starter' && block !== 'equipped' && salaryOf(player) > 0 && salaryOf(player) <= 1;
+}
+
 function rosterOf(reply) {
   const starters = reply?.players?.starters || [];
   const bench = reply?.players?.bench || [];
@@ -197,4 +204,4 @@ function tradeFailure(message) {
   return 'other';
 }
 
-module.exports = { ROSTER_MAX, TRADE_MAX, PRICE_RULE_MIN, roleMapFrom, teamPlayersFrom, salaryAtBase, nextBase, normalizeConfig, classify, signReason, normalizeRoleRules, accountAllows, configFor, tradeBlock, rosterOf, salaryOf, planTrade, sideOrder, tradeFailure };
+module.exports = { ROSTER_MAX, TRADE_MAX, PRICE_RULE_MIN, roleMapFrom, teamPlayersFrom, salaryAtBase, nextBase, normalizeConfig, classify, signReason, normalizeRoleRules, accountAllows, configFor, tradeBlock, fireOnly, rosterOf, salaryOf, planTrade, sideOrder, tradeFailure };

@@ -647,3 +647,17 @@ test('full side: each player is listed, fired or held as chosen; held ones stay 
   assert.ok(world.users.A.bench.some(p => p.id === 'k2') && run.accounts.A.players.k2.held && run.accounts.A.players.k2.status === 'keep', 'held one stays, still shown under the page');
   assert.ok(world.users.A.signed.has('k6'), 'the 7th was bought in the room made');
 });
+
+test('start: a 1-salary player that cannot be traded may be fired or left; nothing else is done with it', async () => {
+  const one = player('one', 1, { signedSalary: 1, type: 'XPLAYER' });
+  const two = player('two', 1, { signedSalary: 1 });
+  const keep = player('keep', 1, { signedSalary: 1 });
+  const { world, engine } = setup({ M: { funds: 50000, lists: [[]] }, A: { funds: 90000, bench: [one, two, keep], lists: [[]] } }, { accounts: ['M', 'A'] });
+  const pre = await engine.preflight({ accountIds: ['M', 'A'], config: {} });
+  const rows = pre.accounts.find(a => a.id === 'A').bench;
+  assert.ok(rows.every(r => r.fireOnly), 'all three are fire-only');
+  await engine.start({ accountIds: ['M', 'A'], sideToMainRoleIds: ['card'], mainToSideRoleIds: ['sellable'], maxPrice: 49,
+    benchDecisions: { A: { one: { action: 'fire' }, two: { action: 'fire' }, keep: { action: 'none' } } } });
+  assert.equal((await finish(engine)).status, 'done');
+  assert.deepEqual(world.users.A.bench.map(p => p.id), ['keep']);
+});

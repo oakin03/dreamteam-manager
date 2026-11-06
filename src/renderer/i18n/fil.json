@@ -2591,7 +2591,6 @@
  "Enter the maximum price: players at or under it go to Main and become cards whatever their role (under 50 = roles only).": "Ilagay ang maximum price: ang mga player na nasa presyong iyon o mas mababa ay pupunta sa Main at magiging card anuman ang role (mas mababa sa 50 = role lang).",
  "Enter the trade room name and password; choose the Loop (Single run, A number of runs, Endless).": "Ilagay ang pangalan at password ng trade room; piliin ang Loop (Isang run, Ilang beses, Walang katapusan).",
  "Press “Start”. You are warned if another system uses these accounts; “Stop and start” goes on.": "Pindutin ang “Start”. Bibigyan ka ng babala kung may ibang sistemang gumagamit ng mga account na ito; nagpapatuloy ang “Stop and start”.",
- "For accounts that already have bench players, decide per player: List on market, Include in trade, Turn into card, Fire or Do nothing.": "Para sa mga account na may bench player na, magpasya bawat player: List on market, Include in trade, Turn into card, Fire o Do nothing.",
  "Follow the work in Live status. At the end sell what is left on the sides with “List on market”.": "Sundan ang trabaho sa Live status. Sa dulo, ibenta ang natira sa mga side gamit ang “List on market”.",
  "Start / Pause / Resume": "Start / Pause / Resume",
  "Pause holds the work at a safe point; Resume continues from there.": "Pinahihinto ng Pause ang trabaho sa ligtas na punto; nagpapatuloy mula roon ang Resume.",
@@ -3058,5 +3057,8 @@
  "Today's prizes (total) · click a prize to see who won it": "Mga premyo ngayon (kabuuan) · i-click ang premyo para makita kung sino ang nanalo",
  "fired if not 5% off": "ifa-fire kung hindi 5% off",
  "Fire if not 5% off is on: a full-price copy is fired, so the normal price is never used": "Naka-on ang Fire if not 5% off: ifa-fire ang kopyang buong presyo, kaya hindi kailanman ginagamit ang normal na presyo",
- "Go-up, Professional, Daily Boss, Elite Ascent, Big 3, Props, Daily Quiz, Cheer, Chat and Daily Slot · all without a browser": "Go-up, Professional, Daily Boss, Elite Ascent, Big 3, Prop, Daily Quiz, Cheer, Chat at Daily Slot · lahat nang walang browser"
+ "Go-up, Professional, Daily Boss, Elite Ascent, Big 3, Props, Daily Quiz, Cheer, Chat and Daily Slot · all without a browser": "Go-up, Professional, Daily Boss, Elite Ascent, Big 3, Prop, Daily Quiz, Cheer, Chat at Daily Slot · lahat nang walang browser",
+ "Cannot be traded (salary 1)": "Hindi maite-trade (sahod 1)",
+ "This 1-salary player cannot be traded; it can only be fired or left as it is.": "Hindi maite-trade ang player na ito na may sahod na 1; ifa-fire lang ito o iiwan nang ganoon.",
+ "For accounts that already have bench players, decide per player: List on market, Include in trade, Turn into card, Fire or Do nothing. Players with salary 1 that cannot be traded only have Fire and Do nothing.": "Para sa mga account na may bench player na, magpasya bawat player: List on market, Include in trade, Turn into card, Fire o Do nothing. Fire at Do nothing lang ang para sa mga player na may sahod na 1 na hindi maite-trade."
 }
