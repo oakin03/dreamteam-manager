@@ -69,8 +69,17 @@ const TEXT = {
     listTitle: 'Pazara listele', listHint: 'Side\'larda kalan oyuncular. Fiyat ve para birimi seçip istediklerini listele.', listSelected: 'Seçilileri listele', nothingToList: 'Listelenecek oyuncu yok.',
     roleModal: '{name} · rolü iki yönlü bir oyuncu', roleModalHint: 'Bu oyuncunun rolleri ({roles}) hem karta çevirme hem satılabilir yönünü gösteriyor. Ne yapılsın? Seçimin bu çalıştırma boyunca aynı oyuncu için geçerli.', roleMain: 'Karta çevir', roleSide: 'Satılabilir (yan hesapta kalsın)', roleLeave: 'Dokunma', fireOnly: 'Takas edilemez (1 maaş)', fireOnlyHint: 'Maaşı 1 olan bu oyuncu takas edilemez; yalnız kovulabilir ya da olduğu gibi bırakılır.', listingModal: '{name} kadrosu doldu', listingModalHint: 'Kalacak oyuncularla dolu. Her oyuncu için seç: Listele (girdiğin fiyattan pazara konur), Kov (takımdan atılır, geri alınamaz) ya da Beklet (kadroda kalır, sayfanın altındaki “Pazara listele” tablosunda görünür). Hepsini seçip Tamam deyince işlemler yapılır ve Auto Trade devam eder.', actList2: 'Listele', actFire2: 'Kov', actHold: 'Beklet', allAs: 'Hepsini:', chooseAll: '{n} oyuncu için seçim yapılmadı', fireWarn: '{n} oyuncu kovulacak · geri alınamaz', okGo: 'Tamam', priceShort: 'Fiyat', listAndGo: 'Listele ve devam et', skipList: 'Listeleme, bu hesabı bitir',
     errorTitle: 'Auto Trade durdu', errorHint: 'Sorunu oyunda düzeltip "Kaldığı yerden devam et"e bas. Hesaplara yeniden girilir ve kaldığı yerden sürer.',
-    cycle: 'Tur {n}', waitScout: '{name} Scout yenilenmesini bekliyor · {time}',
-    steps: { starting: 'Başlıyor', opening: '{name} açılıyor', scouting: '{name} Scout · {candidates} uygun · {attempts} hak', signing: '{name}: {player} alınıyor ({price} TK)', callback: '{name}: Call back', converting: 'Main: {count} oyuncu karta çevriliyor', trading: '{side} ile takas · Main {give} verir, {take} alır · {tk} TK', waitingScout: '{name} Scout yenilenmesini bekliyor', cardScan: 'Main hesabında kart taraması yapılıyor', leftovers: 'Durmadan önce {count} harcayıcı oyuncularını pazara koyuyor', friendSync: 'Arkadaş ağı kontrol ediliyor', listing: '{name}: {count} oyuncu pazara konuyor', done: 'Bitti', stopped: 'Durduruldu' }
+    cycle: 'Tur {n}',
+    parallel: 'Aynı anda çalışan hesap', parallelHint: 'Yan hesaplar Scout\'larını aynı anda tarar; main ile takaslar yine sırayla yapılır. 1–6 (önerilen 3).',
+    activeTime: 'Aktif çalışma', cycleProgress: 'Bu tur: {done}/{total} hesap · {active} aynı anda', cycleEta: 'tahmini tur sonu ~{t}',
+    wrapStop: 'Durduruluyor: {cheap} ucuz oyuncu main\'e veriliyor (TK yetmezse kovuluyor), harcayıcılar oyuncularını pazara koyuyor',
+    wrapPause: 'Duraklatıldı: harcayıcılar oyuncularını pazara koyuyor (ucuz oyunculara dokunulmuyor)',
+    wrapLeft: '{done}/{total} işlem · kalan ~{t}',
+    prepBtn: 'Sadece hazırlık yap', prepHint: 'Bench kararlarını (pazara koy / kov / trade\'e dahil et) şimdi uygular, Auto Trade\'i başlatmaz. 1 saat içinde Auto Trade başlatırsan bu hesaplar tekrar kontrol edilmez.',
+    prepRunning: 'Hazırlık sürüyor · {done}/{total} hesap', prepStop: 'Hazırlığı durdur', prepDone: 'Hazırlık yapıldı ({time}) · {n} hesap tekrar kontrol edilmeyecek', prepClear: 'Hazırlığı unut',
+    prepared: 'Hazırlık yapıldı ({time}) · tekrar kontrol edilmedi', prepFailed: 'Hazırlık yarıda kaldı: {error}',
+    waitScout: '{name} Scout yenilenmesini bekliyor · {time}',
+    steps: { prep: 'Hazırlık: bench kararları · {done}/{total} hesap', starting: 'Başlıyor', opening: '{name} açılıyor', scouting: '{name} Scout · {candidates} uygun · {attempts} hak', signing: '{name}: {player} alınıyor ({price} TK)', callback: '{name}: Call back', converting: 'Main: {count} oyuncu karta çevriliyor', trading: '{side} ile takas · Main {give} verir, {take} alır · {tk} TK', waitingScout: '{name} Scout yenilenmesini bekliyor', cardScan: 'Main hesabında kart taraması yapılıyor', leftovers: 'Durmadan önce: {cheap} ucuz oyuncu, {count} harcayıcı', friendSync: 'Arkadaş ağı kontrol ediliyor', listing: '{name}: {count} oyuncu pazara konuyor', done: 'Bitti', stopped: 'Durduruldu' }
   },
   en: {
     title: 'Auto Trade', subtitle: 'Scout · star cards · main ↔ side trades',
@@ -131,13 +140,26 @@ const TEXT = {
     spenderPricesMoved: 'Spender sale prices are now in the “Auto Pricing” tab (per player).',
     roleModal: '{name} · a player with roles both ways', roleModalHint: 'This player\'s roles ({roles}) point both to cards and to Satılabilir. What should happen? Your choice counts for this player for the rest of the run.', roleMain: 'Turn into a card', roleSide: 'Satılabilir (keep on the side)', roleLeave: 'Leave it', fireOnly: 'Cannot be traded (salary 1)', fireOnlyHint: 'This 1-salary player cannot be traded; it can only be fired or left as it is.', listingModal: '{name} roster is full', listingModalHint: 'It is full of players it keeps. Choose for every player: List (put on the market at the price you enter), Fire (removed from the team, cannot be undone) or Hold (stays in the roster and shows in “List on market” under the page). When every player has a choice, OK does the work and Auto Trade goes on.', actList2: 'List', actFire2: 'Fire', actHold: 'Hold', allAs: 'All:', chooseAll: '{n} player(s) have no choice yet', fireWarn: '{n} player(s) will be fired · cannot be undone', okGo: 'OK', priceShort: 'Price', listAndGo: 'List and continue', skipList: 'Do not list, finish this account',
     errorTitle: 'Auto Trade stopped', errorHint: 'Fix it in the game and press "Continue". The accounts are opened again and the run goes on from there.',
-    cycle: 'Cycle {n}', waitScout: '{name} waits for its Scout · {time}',
-    steps: { starting: 'Starting', opening: 'Opening {name}', scouting: '{name} Scout · {candidates} eligible · {attempts} callbacks', signing: '{name}: signing {player} ({price} TK)', callback: '{name}: Call back', converting: 'Main: converting {count} player(s)', trading: 'Trade with {side} · main gives {give}, gets {take} · {tk} TK', waitingScout: '{name} waits for its Scout refresh', cardScan: 'Scanning the cards of the main account', leftovers: 'Before stopping, {count} spender(s) list their players', friendSync: 'Checking the friend network', listing: '{name}: listing {count} player(s)', done: 'Done', stopped: 'Stopped' }
+    cycle: 'Cycle {n}',
+    parallel: 'Accounts at the same time', parallelHint: 'Sides scan their Scouts at the same time; trades with main still go one by one. 1–6 (3 recommended).',
+    activeTime: 'Active time', cycleProgress: 'This cycle: {done}/{total} accounts · {active} at once', cycleEta: 'cycle ends in ~{t}',
+    wrapStop: 'Stopping: {cheap} cheap player(s) go to main (fired if its TK is not enough), the spenders list their players',
+    wrapPause: 'Paused: the spenders list their players (cheap players are left alone)',
+    wrapLeft: '{done}/{total} steps · ~{t} left',
+    prepBtn: 'Only prepare', prepHint: 'Applies the bench decisions (list / fire / include in trade) now without starting Auto Trade. Started within an hour, these accounts are not checked again.',
+    prepRunning: 'Preparing · {done}/{total} accounts', prepStop: 'Stop preparing', prepDone: 'Prepared ({time}) · {n} accounts are not checked again', prepClear: 'Forget the preparation',
+    prepared: 'Prepared ({time}) · not checked again', prepFailed: 'Preparation stopped: {error}',
+    waitScout: '{name} waits for its Scout · {time}',
+    steps: { prep: 'Preparing: bench decisions · {done}/{total} accounts', starting: 'Starting', opening: 'Opening {name}', scouting: '{name} Scout · {candidates} eligible · {attempts} callbacks', signing: '{name}: signing {player} ({price} TK)', callback: '{name}: Call back', converting: 'Main: converting {count} player(s)', trading: 'Trade with {side} · main gives {give}, gets {take} · {tk} TK', waitingScout: '{name} waits for its Scout refresh', cardScan: 'Scanning the cards of the main account', leftovers: 'Before stopping: {cheap} cheap player(s), {count} spender(s)', friendSync: 'Checking the friend network', listing: '{name}: listing {count} player(s)', done: 'Done', stopped: 'Stopped' }
   },
   get fil() { return filOf(this.en); }
 };
 const fill = (s, p = {}) => String(s || '').replace(/\{(\w+)\}/g, (_, k) => p[k] ?? '');
 const num = v => v == null || v === '' ? '—' : Number(v).toLocaleString();
+// the time Auto Trade really worked: stops and pauses are not counted
+const activeSec = run => ((run.activeMs || 0) + (run.runningSince ? Date.now() - Date.parse(run.runningSince) : 0)) / 1000;
+// a countdown: mm:ss
+const clock = ms => { const s = Math.max(0, Math.ceil(ms / 1000)); return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`; };
 const dur = s => { s = Math.max(0, Math.floor(s || 0)); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60; return h ? `${h}sa ${m}dk` : m ? `${m}dk ${x}sn` : `${x}sn`; };
 const STATUS_TONE = { bought: 'muted', existing: 'muted', toTrade: 'warn', trading: 'warn', keep: 'ok', toConvert: 'warn', converting: 'warn', converted: 'ok', listed: 'ok', none: 'muted', fired: 'bad' };
 
@@ -157,7 +179,7 @@ export default function AutoTradePage({ state, t, toast, msgText, Modal, refresh
   const accounts = state.accounts || [];
   const realMain = state.accountProfile?.mainAccountId || null;
   const running = run && ['running', 'paused', 'stopping', 'awaitingListing', 'awaitingRole'].includes(run.status);
-  useTick(running);
+  useTick(running || Boolean(run?.wrapUp));
 
   const roleIdByName = n => roles.find(r => String(r.name).toLocaleLowerCase('tr-TR') === n)?.id;
   const [form, setForm] = useState(() => ({
@@ -178,6 +200,7 @@ export default function AutoTradePage({ state, t, toast, msgText, Modal, refresh
     spenderStockCurrency: last.spenderStockCurrency || 'TIX',
     spenderMinTk: String(last.spenderMinTk || 0),
     spendersPerSide: String(last.spendersPerSide || 5),
+    parallelSides: String(last.parallelSides || 3),
     roleRules: last.roleRules || {}
   }));
   const set = patch => setForm(f => ({ ...f, ...patch }));
@@ -225,10 +248,18 @@ export default function AutoTradePage({ state, t, toast, msgText, Modal, refresh
   // players marked "Fire" are listed once more before the start (FIRE cannot be undone)
   const firing = () => (pre?.accounts || []).flatMap(a => a.bench.filter(p => decisions[a.id]?.[p.id]?.action === 'fire').map(p => ({ ...p, account: a.name })));
   const startChecked = stopConflicts => { const list = firing(); if (list.length) setFireAsk({ list, stopConflicts }); else startNow(stopConflicts); };
+  const prep = at.prep;
+  const prepRunning = prep?.status === 'running';
+  useTick(prepRunning);
+  const prepareNow = stopConflicts => run_(async () => {
+    await api.autoTrade.prepare({ ...form, maxPrice: priceNum, parallelSides: Number(form.parallelSides) || 3, accountIds: selected, benchDecisions: decisions, stopConflicts });
+    setPre(null);
+    await refresh();
+  });
   const startNow = stopConflicts => run_(async () => {
     setStarting(true);
     try {
-    await api.autoTrade.start({ ...form, maxPrice: priceNum, loopCount: Number(form.loopCount) || 1, accountIds: selected, actingMainId: mainSelected ? undefined : form.actingMainId, roomPassword: form.roomPassword || undefined, benchDecisions: decisions, stopConflicts });
+    await api.autoTrade.start({ ...form, maxPrice: priceNum, loopCount: Number(form.loopCount) || 1, parallelSides: Number(form.parallelSides) || 3, accountIds: selected, actingMainId: mainSelected ? undefined : form.actingMainId, roomPassword: form.roomPassword || undefined, benchDecisions: decisions, stopConflicts });
     setPre(null);
     await refresh();
     } finally { setStarting(false); }
@@ -239,8 +270,8 @@ export default function AutoTradePage({ state, t, toast, msgText, Modal, refresh
   // Harcayıcılar used by the run are shown after the run's own accounts
   const accRows = run ? [...run.config.accountIds.map(id => run.accounts[id]), ...Object.values(run.accounts).filter(a => a?.role === 'spender' && !run.config.accountIds.includes(a.id))].filter(Boolean) : [];
   const mainAcc = run ? run.accounts[run.config.mainId] : null;
-  const activeSide = run ? run.accounts[run.currentSideId || (run.activeId !== run.config.mainId ? run.activeId : '')] : null;
-  const others = accRows.filter(a => a !== mainAcc && a !== activeSide);
+  const activeSides = run ? (run.activeSides?.length ? run.activeSides : [run.currentSideId || (run.activeId !== run.config.mainId ? run.activeId : '')]).map(id => run.accounts[id]).filter(Boolean) : [];
+  const others = accRows.filter(a => a !== mainAcc && !activeSides.includes(a));
 
   return <div className="page autotrade2">
     <div className="page-title"><div><h1>{x.title}</h1><span className="subtitle">{x.subtitle}</span></div>
@@ -256,11 +287,24 @@ export default function AutoTradePage({ state, t, toast, msgText, Modal, refresh
 
     <div className="dp-tabs">{Object.keys(x.tabs).map(id => <button key={id} className={tab === id ? 'active' : ''} onClick={() => chooseTab(id)}>{x.tabs[id]}{id === 'pricing' && missingPrices > 0 && <i className="so-count">{missingPrices}</i>}</button>)}</div>
 
+    {prep && !running && (prepRunning || prep.fresh || ['error', 'stopped'].includes(prep.status)) && <div className="panel at2-prep">
+      {prepRunning ? <><span className="pill warn"><i />{fill(x.prepRunning, { done: prep.done, total: prep.total })}</span><button className="btn ghost small" onClick={() => run_(() => api.autoTrade.stopPrepare())}>{x.prepStop}</button></>
+        : prep.fresh ? <><span className="pill ok"><i />{fill(x.prepDone, { time: new Date(prep.at).toLocaleTimeString(), n: prep.accountIds.length })}</span><button className="btn ghost small" onClick={() => run_(() => api.autoTrade.clearPrepare())}>{x.prepClear}</button></>
+        : <span className="pill bad"><i />{fill(x.prepFailed, { error: prep.error || x.status.stopped })}</span>}
+    </div>}
+
     {run && <div className="at2-status panel">
       <span className={`pill ${statusKey === 'error' ? 'bad' : running ? (statusKey === 'paused' ? 'warn' : 'ok') : 'muted'}`}><i />{x.status[statusKey] || statusKey}</span>
       {run.config.loopMode !== 'off' && <span className="pill muted"><i />{fill(x.cycle, { n: run.cycle })}{run.config.loopMode === 'count' ? ` / ${run.config.loopCount}` : ' / ∞'}</span>}
       <span className="at2-step">{stepText}</span>
       {run.nextAt && <span className="muted-text">{new Date(run.nextAt).toLocaleTimeString()}</span>}
+      <span className="pill muted" title={x.activeTime}><i />{x.activeTime}: {dur(activeSec(run))}</span>
+      {run.stage === 'sides' && run.cycleInfo && <span className="muted-text at2-cycle">{fill(x.cycleProgress, { done: run.cycleInfo.finished, total: run.cycleInfo.total, active: run.cycleInfo.active })}{run.cycleInfo.etaSeconds != null && running && run.status === 'running' ? ' · ' + fill(x.cycleEta, { t: dur(run.cycleInfo.etaSeconds) }) : ''}</span>}
+    </div>}
+    {run?.wrapUp && <div className="panel at2-wrap">
+      <span className="pill warn"><i />{run.wrapUp.kind === 'pause' ? x.status.paused : x.status.stopping}</span>
+      <span>{fill(run.wrapUp.kind === 'pause' ? x.wrapPause : x.wrapStop, { cheap: run.wrapUp.cheap })}</span>
+      <b>{fill(x.wrapLeft, { done: run.wrapUp.done, total: run.wrapUp.total, t: clock(Date.parse(run.wrapUp.endsAt) - Date.now()) })}</b>
     </div>}
 
     {run?.status === 'error' && <div className="panel at2-error"><b>{x.errorTitle}</b><span>{msgText(t, run.error?.code || 'at2.failed', { ...(run.error?.params || {}), error: run.error?.message }, run.error?.message)}</span><small>{x.errorHint}</small></div>}
@@ -275,7 +319,7 @@ export default function AutoTradePage({ state, t, toast, msgText, Modal, refresh
       <h3 className="section-title">{x.live}</h3>
       <div className="at2-top">
         {mainAcc && <AccountBoard acc={mainAcc} x={x} highlight playerIndex={playerIndex} />}
-        {activeSide ? <AccountBoard acc={activeSide} x={x} highlight playerIndex={playerIndex} /> : <div className="panel at2-board at2-empty">{x.accStatus.waiting}</div>}
+        {activeSides.length ? activeSides.map(a => <AccountBoard key={a.id} acc={a} x={x} highlight playerIndex={playerIndex} />) : <div className="panel at2-board at2-empty">{x.accStatus.waiting}</div>}
       </div>
       {others.length > 0 && <div className="at2-grid">{others.map(a => <AccountBoard key={a.id} acc={a} x={x} playerIndex={playerIndex} />)}</div>}
       <Summary run={run} x={x} />
@@ -286,7 +330,7 @@ export default function AutoTradePage({ state, t, toast, msgText, Modal, refresh
     </>}
 
     {pre && <Modal title={x.preTitle} onClose={() => setPre(null)} width={1040}>
-      {pre.loading ? <p>{x.checking}</p> : <Preflight pre={pre} x={x} decisions={decisions} setDecisions={setDecisions} onCancel={() => setPre(null)} onStart={startChecked} playerIndex={playerIndex} starting={starting} />}
+      {pre.loading ? <p>{x.checking}</p> : <Preflight pre={pre} x={x} decisions={decisions} setDecisions={setDecisions} onCancel={() => setPre(null)} onStart={startChecked} onPrepare={prepareNow} playerIndex={playerIndex} starting={starting} />}
       {fireAsk && <Modal title={x.fireTitle} onClose={() => setFireAsk(null)} width={520}>
         <p className="bad-text">{x.fireAsk}</p>
         <ul className="fire-list">{fireAsk.list.map(p => <li key={p.account + p.id}><b>{p.name}</b><InjuryMark name={p.name} /> <span className="muted-text">{p.position} · {p.account}</span></li>)}</ul>
@@ -324,6 +368,7 @@ function ConfigPanel({ state, x, form, set, accounts, realMain, selected, mainSe
     <section className="at2-row">
       <label><span>{x.loop}</span><select value={form.loopMode} onChange={e => set({ loopMode: e.target.value })}><option value="off">{x.loopOff}</option><option value="count">{x.loopCount}</option><option value="infinite">{x.loopInfinite}</option></select></label>
       {form.loopMode === 'count' && <label><span>{x.loopTimes}</span><input type="number" min="1" max="999" value={form.loopCount} onChange={e => set({ loopCount: e.target.value.replace(/[^\d]/g, '') })} /></label>}
+      <label title={x.parallelHint}><span>{x.parallel}</span><input type="number" min="1" max="6" value={form.parallelSides} onChange={e => set({ parallelSides: e.target.value.replace(/[^\d]/g, '').slice(0, 1) })} onBlur={() => set({ parallelSides: String(Math.max(1, Math.min(6, Number(form.parallelSides) || 3))) })} /></label>
       <small className="at2-loop-hint">{x.loopHint}</small>
     </section>
     <section className="at2-options">
@@ -468,11 +513,14 @@ function RoleRules({ state, x, form, set, selected, roles }) {
   </section>;
 }
 
-function Preflight({ pre, x, decisions, setDecisions, onCancel, onStart, playerIndex, starting = false }) {
+function Preflight({ pre, x, decisions, setDecisions, onCancel, onStart, onPrepare, playerIndex, starting = false }) {
   const withBench = pre.accounts.filter(a => a.bench.length);
+  const prepared = pre.accounts.filter(a => a.prepared);
+  const anyDecision = Object.values(decisions || {}).some(d => Object.values(d || {}).some(v => v?.action && v.action !== 'none'));
   const setD = (aid, pid, patch) => setDecisions(d => ({ ...d, [aid]: { ...d[aid], [pid]: { ...d[aid][pid], ...patch } } }));
   return <div className="at2-pre">
     {pre.conflicts.length > 0 && <div className="at2-conflicts"><b>{x.conflictsTitle}</b><ul>{pre.conflicts.map((c, i) => <li key={i}>{x.conflict[c.kind] || c.kind}{c.name ? ` · ${c.name}` : ''}{c.accounts ? ` · ${c.accounts.join(', ')}` : ''}{c.startAt ? ` · ${new Date(c.startAt).toLocaleString()}` : ''}</li>)}</ul></div>}
+    {prepared.length > 0 && <p className="muted-text at2-prepared">{fill(x.prepared, { time: new Date(prepared[0].prepared).toLocaleTimeString() })} · {prepared.map(a => a.name).join(', ')}</p>}
     {withBench.length ? <><b>{x.benchTitle}</b><small className="muted-text">{x.benchHint}</small>
       {withBench.map(a => <div key={a.id} className="at2-bench"><h5>{a.name} · {num(a.funds)} TK</h5>
         <SortTable className="at2-bench-table"><colgroup><col className="c-name" /><col className="c-num" /><col className="c-num" /><col className="c-num" /><col className="c-role" /><col className="c-dir" /><col className="c-act" /></colgroup><tbody>{a.bench.map(p => {
@@ -486,6 +534,7 @@ function Preflight({ pre, x, decisions, setDecisions, onCancel, onStart, playerI
         })}</tbody></SortTable></div>)}</> : <p className="muted-text">{x.noBench}</p>}
     <div className="modal-actions">
       <button className="btn ghost" onClick={onCancel}>{x.cancel}</button>
+      {!starting && anyDecision && <button className="btn ghost" title={x.prepHint} onClick={() => onPrepare(pre.conflicts.length > 0)}>{x.prepBtn}</button>}
       {starting ? <span className="pill warn"><i />{x.starting}</span> : pre.conflicts.length ? <button className="btn danger-soft" onClick={() => onStart(true)}>{x.stopAndStart}</button> : <button className="btn primary" onClick={() => onStart(false)}>{x.startNow}</button>}
     </div>
   </div>;

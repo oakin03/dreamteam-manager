@@ -196,6 +196,9 @@ contextBridge.exposeInMainWorld('dreamteam', {
   },
   autoTrade: {
     preflight: (options) => ipcRenderer.invoke('auto-trade:preflight', options),
+    prepare: (options) => ipcRenderer.invoke('auto-trade:prepare', options),
+    stopPrepare: () => ipcRenderer.invoke('auto-trade:stop-prepare'),
+    clearPrepare: () => ipcRenderer.invoke('auto-trade:clear-prepare'),
     start: (options) => ipcRenderer.invoke('auto-trade:start', options),
     pause: () => ipcRenderer.invoke('auto-trade:pause'),
     resume: () => ipcRenderer.invoke('auto-trade:resume'),

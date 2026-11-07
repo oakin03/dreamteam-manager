@@ -3,6 +3,7 @@ const { isNetError } = require('./game-health.cjs');
 const { TradeGameAccount, sleep, abortError } = require('./trade-game-client.cjs');
 const { OwnedSwap } = require('./owned-swap.cjs');
 const R = require('./trade-rules.cjs');
+const { AsyncLocalStorage } = require('node:async_hooks');
 
 const TRADE_MIN_LEVEL = 10; // the game opens trading at level 10
 
@@ -24,6 +25,30 @@ const DEFAULTS = {
 const LIST_DEFAULTS = { sellable: { price: 20, currency: 'APK' }, stock: { price: 99999, currency: 'TIX' } };
 const MAX_TRADE_ROUNDS = 12;
 const SPENDER_PRICE = 999999; // a Harcayıcı lists its overflow at this price by default (TIX)
+
+// Sides scout at the same time (user 2026-11-07: 141 accounts one by one = 4+ hours a cycle);
+// trades with main stay one at a time.
+const PARALLEL_DEFAULT = 3;
+const PARALLEL_MAX = 6;
+// Below this main cannot take even one cheap player: the run stops (user 2026-11-07: sides kept
+// buying for an hour while main had 9 TK; the players waited on them, over the salary cap).
+const MAIN_TK_FLOOR = 50;
+// A Hazırlık (bench decisions only) is remembered this long for the next start.
+const PREP_VALID_MS = 60 * 60 * 1000;
+// Rough durations of the wrap-up steps (live 2026-11-07), for the countdown.
+const EST = { open: 6000, list: 2500, fire: 1500, trade: 6000, convert: 3000 };
+
+// One at a time; the same chain may take it again (nested calls run straight through).
+class Lock {
+  constructor() { this.tail = Promise.resolve(); this.als = new AsyncLocalStorage(); }
+  async run(fn) {
+    if (this.als.getStore()) return fn();
+    const prev = this.tail;
+    let release;
+    this.tail = new Promise(r => { release = r; });
+    try { await prev; return await this.als.run(true, fn); } finally { release(); }
+  }
+}
 
 const ACCEPT_WAIT_MS = 7000;
 const ACCEPT_TRIES = 3;
@@ -58,7 +83,20 @@ class AutoTradeEngine {
     this.pauseGate = null;
     this.listingWaiter = null;
     this.roleWaiter = null;
+    // main's connection, the spenders and the user's pop-ups are used one at a time by the
+    // parallel sides; the wrap-up after a stop / pause runs past the pause gate
+    this._mainLock = new Lock();
+    this._spLock = new Lock();
+    this._askLock = new Lock();
+    this._claimLock = new Lock();
+    this._bypass = new AsyncLocalStorage();
+    this._opening = new Map();
+    for (const m of ['_tradeWithMain', '_convertMain', '_unloadMain', '_mainToSpenders']) { const f = this[m].bind(this); this[m] = (...a) => this._mainLock.run(() => f(...a)); }
+    for (const m of ['_spenderBuy', '_spenderRoom', '_flushSpenders', '_sideToSpender', '_helperSign', '_tradePair']) { const f = this[m].bind(this); this[m] = (...a) => this._spLock.run(() => f(...a)); }
+    for (const m of ['_askListing', '_askRole']) { const f = this[m].bind(this); this[m] = (...a) => this._askLock.run(() => f(...a)); }
     const saved = this.store.getAutoTrade2();
+    this.prep = saved?.prep || null;
+    if (this.prep?.status === 'running') this.prep.status = 'stopped';
     this.state = saved?.run || null;
     this.cardTotals = saved?.cardTotals || {};
     this.lastConfig = saved?.lastConfig || null;
@@ -73,7 +111,7 @@ class AutoTradeEngine {
 
   // ---------- state ----------
   _save() {
-    this.store.saveAutoTrade2({ version: 2, run: this.state, cardTotals: this.cardTotals, lastConfig: this.lastConfig, pricing: this.pricing });
+    this.store.saveAutoTrade2({ version: 2, run: this.state, cardTotals: this.cardTotals, lastConfig: this.lastConfig, pricing: this.pricing, prep: this.prep });
     this.onChanged?.();
   }
 
@@ -87,6 +125,15 @@ class AutoTradeEngine {
         acc.connected = this.conns.has(id);
       }
       delete run.config.roomPasswordEncrypted;
+      // the time Auto Trade really worked (stops and pauses left out)
+      run.activeSeconds = Math.round(((run.activeMs || 0) + (run.runningSince ? now - Date.parse(run.runningSince) : 0)) / 1000);
+      const total = run.config.accountIds.length - 1;
+      const finished = (run.sidesDone || []).length + (run.sidesSkipped || []).length;
+      const active = (run.activeSides || []).length;
+      const avg = run.turns ? run.turnMs / run.turns : null;
+      const par = Math.max(1, Math.min(PARALLEL_MAX, Number(run.config.parallelSides) || PARALLEL_DEFAULT));
+      run.cycleInfo = { total, finished, active, parallel: par, avgTurnSeconds: avg ? Math.round(avg / 1000) : null,
+        etaSeconds: run.stage === 'sides' && avg ? Math.round((Math.max(0, total - finished - active) * avg / par + (active ? avg / 2 : 0)) / 1000) : null };
     }
     const last = this.lastConfig ? { ...this.lastConfig } : null;
     if (last) {
@@ -95,7 +142,8 @@ class AutoTradeEngine {
       try { last.roomPassword = last.roomPasswordEncrypted ? this.credentials.decryptSecret(last.roomPasswordEncrypted) : null; } catch { last.roomPassword = null; }
       delete last.roomPasswordEncrypted;
     }
-    return { run, friendSetup: this.friendNet?.snapshotSetup?.() || null, cardTotals: JSON.parse(JSON.stringify(this.cardTotals)), lastConfig: last, pricing: JSON.parse(JSON.stringify(this.pricing)), defaults: { ...DEFAULTS, roomPassword: undefined }, listDefaults: LIST_DEFAULTS };
+    const prep = this.prep ? { status: this.prep.status, at: this.prep.at, startedAt: this.prep.startedAt, total: this.prep.total, done: this.prep.done, error: this.prep.error || null, fresh: Boolean(this._freshPrep()), accountIds: Object.keys(this.prep.accounts || {}) } : null;
+    return { run, prep, friendSetup: this.friendNet?.snapshotSetup?.() || null, cardTotals: JSON.parse(JSON.stringify(this.cardTotals)), lastConfig: last, pricing: JSON.parse(JSON.stringify(this.pricing)), defaults: { ...DEFAULTS, roomPassword: undefined }, listDefaults: LIST_DEFAULTS };
   }
 
   _acc(id) { return this.state.accounts[id]; }
@@ -152,10 +200,13 @@ class AutoTradeEngine {
     const roleNames = this._roleNames();
     const cfg = this._config(config);
     const out = [];
+    const prep = this._freshPrep();
     let anon = null;
     try {
       anon = await GameSocket.open({ createSocket: this.createSocket });
       for (const account of accounts) {
+        // prepared a moment ago (Hazırlık): its bench decisions are done, nothing is asked again
+        if (prep?.accounts?.[account.id]) { out.push({ id: account.id, name: account.name, prepared: prep.at, funds: null, total: null, starters: null, bench: [] }); continue; }
         let userId = this._userIdOf(account.id);
         if (!userId) userId = (await this.sessions.get(account, { owner: 'auto-trade' })).userId;
         const roster = R.rosterOf(await anon.ack('getTeamOptimized', { userId }));
@@ -298,6 +349,7 @@ class AutoTradeEngine {
       spenderStockPrice: Math.max(1, Math.floor(Number(cfg.spenderStockPrice) || Number(cfg.spenderPrice) || SPENDER_PRICE)),
       spenderStockCurrency: (cfg.spenderStockCurrency || cfg.spenderCurrency) === 'APK' ? 'APK' : 'TIX',
       spenderMinTk: Math.max(0, Math.floor(Number(cfg.spenderMinTk) || 0)),
+      parallelSides: Math.max(1, Math.min(PARALLEL_MAX, Math.floor(Number(cfg.parallelSides) || PARALLEL_DEFAULT))),
       benchDecisions: options.benchDecisions || {}
     };
     // The form remembers these for next time (not the account selection's one-off main).
@@ -309,9 +361,12 @@ class AutoTradeEngine {
     this.state = {
       id: `run-${this.now()}`, startedAt: new Date(this.now()).toISOString(), finishedAt: null,
       status: 'running', message: null, error: null, step: 'starting', stepParams: {}, activeId: null,
-      config, accounts, cycle: 1, stage: 'main', sidesDone: [], sidesSkipped: [], currentSideId: null,
-      excluded: {}, listingRequest: null, cardCounts: {}, nextAt: null
+      config, accounts, cycle: 1, stage: 'prep', sidesDone: [], sidesSkipped: [], currentSideId: null, activeSides: [],
+      excluded: {}, listingRequest: null, cardCounts: {}, nextAt: null, activeMs: 0, runningSince: null, turnMs: 0, turns: 0, wrapUp: null
     };
+    // rows of a fresh Hazırlık are taken over by the prep stage
+    const prep = this._freshPrep();
+    if (prep) { this.state.prepFrom = { at: prep.at, accounts: prep.accounts }; this.prep.usedBy = this.state.id; }
     this._log('info', 'at2.started', { accounts: accountIds.length, main: this._name(mainId) }, `Auto Trade started · ${accountIds.length} accounts · main ${this._name(mainId)}`);
     this._save();
     this._launch();
@@ -335,14 +390,18 @@ class AutoTradeEngine {
     let release;
     this.pauseGate = { promise: new Promise(r => { release = r; }), release };
     this.state.status = 'paused';
+    this._clockOff();
     this._log('warning', 'at2.paused', {}, 'Auto Trade paused');
     this._save();
+    // paused: what the spenders hold goes to the market; the cheap players stay (user 2026-11-07)
+    this._wrapUp('pause').catch(() => {});
     return this.snapshot();
   }
 
   resume() {
     if (this.state?.status !== 'paused') return this.snapshot();
     this.state.status = 'running';
+    this._clockOn();
     const gate = this.pauseGate;
     this.pauseGate = null;
     gate?.release();
@@ -392,7 +451,15 @@ class AutoTradeEngine {
 
   async shutdown() { if (this.controller) { this.controller.abort(); await this.done?.catch(() => {}); } this._closeAll(); }
 
+  _clockOn() { if (this.state && !this.state.runningSince) this.state.runningSince = new Date(this.now()).toISOString(); }
+  _clockOff() {
+    if (!this.state?.runningSince) return;
+    this.state.activeMs = (this.state.activeMs || 0) + Math.max(0, this.now() - Date.parse(this.state.runningSince));
+    this.state.runningSince = null;
+  }
+
   _launch() {
+    this._clockOn();
     this.controller = new AbortController();
     const signal = this.controller.signal;
     this.done = this._run(signal).then(() => {
@@ -405,7 +472,7 @@ class AutoTradeEngine {
       // Stopped (by hand or by another task such as a PVP schedule) or failed: the spenders
       // that got players first put them on the market, or their salary cap stays full and
       // they miss tournaments (user 2026-11-06). Not when the game itself is unreachable.
-      if (!(this.gameHealth && isNetError(error))) await this._listLeftovers();
+      if (!(this.gameHealth && isNetError(error))) await this._wrapUp('stop');
       if (error?.name === 'AbortError') {
         this.state.status = 'stopped';
         this.state.step = 'stopped';
@@ -425,6 +492,7 @@ class AutoTradeEngine {
         this.onAttention?.('error', error.message);
       }
     }).finally(() => {
+      this._clockOff();
       this._closeAll();
       this.controller = null;
       this.pauseGate = null;
@@ -439,12 +507,21 @@ class AutoTradeEngine {
 
   async _gate(signal) {
     if (signal.aborted) throw abortError();
+    if (this._bypass.getStore() || this._spLock.als.getStore()) return;
     while (this.pauseGate) { await this.pauseGate.promise; if (signal.aborted) throw abortError(); }
   }
 
   // ---------- connections ----------
   async _open(id, signal) {
     if (this.conns.has(id)) { this._parked?.delete(id); return this.conns.get(id); }
+    const pending = this._opening.get(id);
+    if (pending) return pending;
+    const p = this._openNow(id, signal);
+    this._opening.set(id, p);
+    try { return await p; } finally { this._opening.delete(id); }
+  }
+
+  async _openNow(id, signal) {
     while (this._held?.get(id)) await sleep(500, signal); // the user's hand work on it first
     const account = this.store.getAccounts().find(a => a.id === id);
     if (!account) throw new Error('Account not found.');
@@ -464,6 +541,7 @@ class AutoTradeEngine {
     acc.funds = await conn.funds().catch(() => acc.funds);
     if (acc.fundsStart == null) acc.fundsStart = acc.funds;
     this._log('info', 'at2.opened', { name: account.name }, `${account.name} opened`, id);
+    this._tick('open');
     this._save();
     return conn;
   }
@@ -482,7 +560,7 @@ class AutoTradeEngine {
   // A Harcayıcı connection is kept for a while instead of closed: the next listing or trade on
   // it needs no sign-in (~10 s each). At most 4 are kept; one unused for 3 minutes is closed.
   _park(id) {
-    if (this.state?.config?.accountIds?.includes(id) || id === this.state?.currentSideId) return this._close(id);
+    if (this.state?.config?.accountIds?.includes(id) || this._busy(id)) return this._close(id);
     const parked = (this._parked ||= new Map());
     parked.set(id, this.now());
     for (const [pid, at] of [...parked]) {
@@ -493,7 +571,8 @@ class AutoTradeEngine {
 
   // An account the user works on by hand (a listing, a fire): Auto Trade does not open it until
   // the hand work is done, and goes on with the others (no stop / continue of the whole run).
-  usesAccount(id) { return this.conns.has(id) || this.state?.currentSideId === id; }
+  usesAccount(id) { return this.conns.has(id) || this._busy(id); }
+  _busy(id) { return Boolean(this.state?.activeSides?.includes(id) || this.state?.currentSideId === id); }
   holdAccounts(ids) {
     const held = (this._held ||= new Map());
     for (const id of ids) held.set(id, (held.get(id) || 0) + 1);
@@ -510,6 +589,11 @@ class AutoTradeEngine {
     const maxCycles = cfg.loopMode === 'infinite' ? Infinity : cfg.loopMode === 'count' ? cfg.loopCount : 1;
     while (this.state.cycle <= maxCycles) {
       await this._gate(signal);
+      if (this.state.stage === 'prep') {
+        await this._prepStage(signal);
+        this.state.stage = 'main';
+        this._save();
+      }
       if (this.state.stage === 'main') {
         await this._friendSync(signal);
         if (this.state.cycle === 1) await this._spenderSweep(signal);
@@ -518,28 +602,10 @@ class AutoTradeEngine {
         this.state.stage = 'sides';
         this._save();
       }
-      if (this.state.stage === 'sides') {
-        for (;;) {
-          await this._gate(signal);
-          const next = this.state.currentSideId || await this._nextSide();
-          if (!next) break;
-          this.state.currentSideId = next;
-          this._save();
-          if (this.state.cycle > 1) await this._waitScout(next, signal);
-          const result = await this._sideTurn(next, signal);
-          this._acc(next).status = result?.skipped ? 'skipped' : 'done';
-          (result?.skipped ? this.state.sidesSkipped : this.state.sidesDone).push(next);
-          this.state.currentSideId = null;
-          this._close(next);
-          this._save();
-          // what the spenders got in this turn goes to the market now, not only at the end of
-          // the cycle (user 2026-11-07: a cycle of 100+ accounts takes hours, nothing was listed)
-          await this._flushSpenders(signal);
-        }
-      }
+      if (this.state.stage === 'sides') await this._sidesStage(signal);
       // Whatever came to main last is turned into cards before the cycle ends.
       if (this.conns.has(cfg.mainId)) { await this._convertMain(signal); await this._mainToSpenders(signal); }
-      await this._flushSpenders(signal);
+      await this._flushSpenders(signal, { skipBusy: false });
       await this._restoreParked(cfg.mainId, signal);
       this._acc(cfg.mainId).status = 'done';
       this._close(cfg.mainId);
@@ -554,6 +620,180 @@ class AutoTradeEngine {
       this._save();
     }
   }
+
+  // `n` workers take items until none is left; the first real error stops the others.
+  async _pool(n, signal, worker) {
+    const inner = new AbortController();
+    const sig = AbortSignal.any([signal, inner.signal]);
+    let first = null;
+    await Promise.all(Array.from({ length: Math.max(1, n) }, () => worker(sig).catch(error => {
+      if (!first || (first.name === 'AbortError' && error?.name !== 'AbortError')) first = error;
+      inner.abort();
+    })));
+    if (signal.aborted) throw abortError();
+    if (first) throw first;
+  }
+  _parallel() { return Math.max(1, Math.min(PARALLEL_MAX, Number(this.state?.config?.parallelSides) || PARALLEL_DEFAULT)); }
+
+  // Sides run a few at a time; each takes the next one (highest TK first) when it is done.
+  // A stopped run continues the sides that were in their turn.
+  async _sidesStage(signal) {
+    const s = this.state;
+    s.activeSides ||= [];
+    if (s.currentSideId && !s.activeSides.includes(s.currentSideId)) s.activeSides.push(s.currentSideId);
+    const resume = [...s.activeSides];
+    const claim = () => this._claimLock.run(async () => {
+      const next = resume.shift() || await this._nextSide();
+      if (next && !s.activeSides.includes(next)) s.activeSides.push(next);
+      s.currentSideId = s.activeSides[0] || null;
+      this._save();
+      return next;
+    });
+    await this._pool(this._parallel(), signal, async sig => {
+      for (;;) {
+        await this._gate(sig);
+        const next = await claim();
+        if (!next) return;
+        if (s.cycle > 1) await this._waitScout(next, sig);
+        const t0 = this.now();
+        const result = await this._sideTurn(next, sig);
+        this._acc(next).status = result?.skipped ? 'skipped' : 'done';
+        (result?.skipped ? s.sidesSkipped : s.sidesDone).push(next);
+        s.activeSides = s.activeSides.filter(id => id !== next);
+        s.currentSideId = s.activeSides[0] || null;
+        s.turnMs = (s.turnMs || 0) + (this.now() - t0);
+        s.turns = (s.turns || 0) + 1;
+        this._close(next);
+        this._save();
+        // what the spenders got in this turn goes to the market now, not only at the end of
+        // the cycle (user 2026-11-07: a cycle of 100+ accounts takes hours, nothing was listed)
+        await this._flushSpenders(sig);
+      }
+    });
+  }
+
+  // ---------- Hazırlık: the bench decisions of every account before any Scout ----------
+  _freshPrep() {
+    const p = this.prep;
+    return p && p.status === 'done' && p.at && !p.usedBy && this.now() - Date.parse(p.at) < PREP_VALID_MS ? p : null;
+  }
+
+  // One account: list / fire what the user chose (a sign-in only when needed); trade / card
+  // decisions become rows of the run. A player that appears later is left alone.
+  async _prepAccount(id, decisions, signal, cfg) {
+    const out = { rows: {}, listed: 0, fired: 0 };
+    const account = this.store.getAccounts().find(a => a.id === id);
+    if (!account) return out;
+    let userId = this._userIdOf(id);
+    if (!userId) userId = (await this.sessions.get(account, { owner: 'auto-trade' })).userId;
+    const anon = await GameSocket.open({ createSocket: this.createSocket, signal });
+    let roster;
+    try { roster = R.rosterOf(await anon.ack('getTeamOptimized', { userId })); } finally { anon.close(); }
+    const acts = roster.bench.map(p => [p, decisions?.[p.id]])
+      .filter(([p, d]) => d && d.action && d.action !== 'none' && !(R.fireOnly(p) ? d.action !== 'fire' : R.tradeBlock(p)));
+    let conn = this.conns.get(id) || null;
+    let own = false;
+    try {
+      if (!conn && acts.some(([, d]) => d.action === 'list' || d.action === 'fire')) {
+        conn = await TradeGameAccount.open({ account, sessions: this.sessions, createSocket: this.createSocket, signal });
+        own = true;
+      }
+      for (const [p, d] of acts) {
+        if (signal.aborted) throw abortError();
+        if (d.action === 'list') {
+          const r = await conn.sell(p.id, d.price, d.currency);
+          this._log(r?.success ? 'success' : 'warning', r?.success ? 'at2.listed' : 'at2.listFailed', { name: p.name, price: d.price, currency: d.currency, error: r?.message || '' }, `${p.name} listed · ${d.price} ${d.currency}`, id);
+          if (r?.success) out.listed += 1;
+        } else if (d.action === 'fire') {
+          // confirmed by the user before
+          const r = await conn.fire(p.id);
+          this._log(r?.success ? 'success' : 'warning', r?.success ? 'at2.fired' : 'at2.fireFailed', { name: p.name, error: r?.error || r?.message || '' }, r?.success ? `${p.name} fired` : `${p.name} could not be fired: ${r?.error || r?.message || ''}`, id);
+          if (r?.success) out.fired += 1;
+        } else {
+          // 'card': to main and into a star card whatever its roles say
+          const row = this._row(p, cfg, undefined, undefined, { status: 'existing' });
+          if (d.action === 'card') row.dir = 'main';
+          if (row.dir) out.rows[p.id] = { ...row, preexisting: true };
+        }
+      }
+    } finally { if (own) conn.close(); }
+    return out;
+  }
+
+  _takeRows(id, rows) {
+    const acc = this._acc(id);
+    for (const [pid, row] of Object.entries(rows || {})) if (!acc.players[pid]) acc.players[pid] = { ...row, status: this._statusFor(row.dir, acc.role) };
+  }
+
+  // Before main's turn: every account's bench decisions in one go, a few accounts at a time.
+  async _prepStage(signal) {
+    const s = this.state;
+    const decisions = s.config.benchDecisions || {};
+    const remembered = s.prepFrom?.accounts || {};
+    for (const id of s.config.accountIds) if (remembered[id]) { this._takeRows(id, remembered[id].rows); this._acc(id).benchApplied = true; }
+    const todo = s.config.accountIds.filter(id => !this._acc(id).benchApplied && Object.values(decisions[id] || {}).some(d => d?.action && d.action !== 'none'));
+    if (todo.length) {
+      let i = 0, done = 0;
+      this._step('prep', { done, total: todo.length });
+      this._log('info', 'at2.prepStarted', { count: todo.length }, `Bench decisions of ${todo.length} account(s) first`);
+      await this._pool(this._parallel(), signal, async sig => {
+        for (;;) {
+          await this._gate(sig);
+          const id = todo[i++];
+          if (!id) return;
+          const out = await this._prepAccount(id, decisions[id], sig, s.config);
+          this._takeRows(id, out.rows);
+          this._acc(id).listed += out.listed;
+          this._acc(id).benchApplied = true;
+          this._step('prep', { done: ++done, total: todo.length });
+          this._save();
+        }
+      });
+      this._log('success', 'at2.prepDone', { count: todo.length }, `Bench decisions done · ${todo.length} account(s)`);
+    }
+    for (const id of s.config.accountIds) this._acc(id).benchApplied = true;
+    s.prepFrom = null;
+  }
+
+  // Hazırlık without a run: the same bench work; a start within the hour does not ask again.
+  async prepare(options = {}) {
+    if (this.controller) throw new Error('Auto Trade is running.');
+    if (this._preparing) throw new Error('Hazırlık is already running.');
+    const all = this.store.getAccounts();
+    const ids = (options.accountIds || []).filter(id => all.some(a => a.id === id) && !this._tradeLocked(id));
+    const decisions = options.benchDecisions || {};
+    const cfg = this._config(options);
+    const todo = ids.filter(id => Object.values(decisions[id] || {}).some(d => d?.action && d.action !== 'none'));
+    const ctrl = new AbortController();
+    this._prepCtrl = ctrl;
+    this.prep = { status: 'running', startedAt: new Date(this.now()).toISOString(), at: null, total: todo.length, done: 0, accounts: {}, error: null };
+    this._log('info', 'at2.prepStarted', { count: todo.length }, `Bench decisions of ${todo.length} account(s) first`);
+    this._save();
+    let i = 0;
+    const n = Math.max(1, Math.min(PARALLEL_MAX, Math.floor(Number(options.parallelSides) || PARALLEL_DEFAULT)));
+    this._preparing = this._pool(n, ctrl.signal, async sig => {
+      for (;;) {
+        const id = todo[i++];
+        if (!id) return;
+        const out = await this._prepAccount(id, decisions[id], sig, cfg);
+        this.prep.accounts[id] = { rows: out.rows };
+        this.prep.done += 1;
+        this._save();
+      }
+    }).then(() => {
+      for (const id of ids) this.prep.accounts[id] ||= { rows: {} };
+      this.prep.status = 'done';
+      this.prep.at = new Date(this.now()).toISOString();
+      this._log('success', 'at2.prepDone', { count: todo.length }, `Bench decisions done · ${todo.length} account(s)`);
+    }, error => {
+      this.prep.status = error?.name === 'AbortError' ? 'stopped' : 'error';
+      this.prep.error = error?.name === 'AbortError' ? null : error.message;
+      this._log('warning', 'at2.prepFailed', { error: error?.message || '' }, `Hazırlık stopped: ${error?.message || ''}`);
+    }).finally(() => { this._preparing = null; this._prepCtrl = null; this._save(); });
+    return this.snapshot();
+  }
+  stopPrepare() { this._prepCtrl?.abort(); return this.snapshot(); }
+  clearPrepare() { if (!this._preparing) { this.prep = null; this._save(); } return this.snapshot(); }
 
   // After all sides (each cycle in a loop): the Cards page scans main, so card counts
   // and stars are current. A failed scan is logged; it never stops Auto Trade.
@@ -592,7 +832,7 @@ class AutoTradeEngine {
 
   async _nextSide() {
     const s = this.state;
-    const left = s.config.accountIds.filter(id => id !== s.config.mainId && !s.sidesDone.includes(id) && !s.sidesSkipped.includes(id));
+    const left = s.config.accountIds.filter(id => id !== s.config.mainId && !s.sidesDone.includes(id) && !s.sidesSkipped.includes(id) && !(s.activeSides || []).includes(id));
     if (!left.length) return null;
     await this._refreshFunds(left);
     return R.sideOrder(left.map(id => ({ id, funds: this._acc(id).funds })))[0].id;
@@ -647,7 +887,7 @@ class AutoTradeEngine {
     } finally {
       if (!signal.aborted) {
         await this._restoreParked(id, signal).catch(error => this._log('error', 'os.restoreFailed', { name: this._name(id), error: error.message }, error.message, id));
-        await this._restoreParked(this.state.config.mainId, signal).catch(() => {});
+        await this._mainLock.run(() => this._restoreParked(this.state.config.mainId, signal)).catch(() => {});
       }
     }
   }
@@ -732,20 +972,10 @@ class AutoTradeEngine {
     const cfg = R.configFor(this.state.config, rule);
     const roleMap = this._roleMap();
     const roleNames = this._roleNames();
-    // A side buys main-bound players only as far as main's TK pays for them in the trade
-    // (user 2026-11-06: the side bought, then main could not pay and the run stopped).
-    // What this side already holds for main counts against it.
-    let mainLeft = Infinity;
-    if (role === 'side') {
-      const mainId = this.state.config.mainId;
-      const mainConn = this.conns.get(mainId);
-      const mainFunds = mainConn ? await mainConn.funds().catch(() => this._acc(mainId).funds) : this._acc(mainId).funds;
-      if (Number.isFinite(mainFunds)) {
-        this._acc(mainId).funds = mainFunds;
-        const pending = Object.values(acc.players).filter(r => r.dir === 'main' && r.status === 'toTrade').reduce((n, r) => n + (Number(r.signedSalary) || Number(r.salary) || 0), 0);
-        mainLeft = mainFunds - pending;
-      }
-    }
+    // A side buys main-bound players only as far as main's TK pays for them (`_mainLeft`:
+    // what every side already holds for main counts against it).
+    // its own callbacks change its board: friends read it again
+    this._boardSeen?.delete(conn.userId);
     const team = this._teamPlayers();
     let budgetNoted = false;
     for (let round = 0; round < 50; round++) {
@@ -790,11 +1020,7 @@ class AutoTradeEngine {
           return { skipped: true };
         }
         // main-bound (or "ask") on a side: main must be able to pay it in the trade
-        if (role === 'side' && R.classify(agent, cfg, roleMap, team) !== 'side' && price > mainLeft) {
-          if (!budgetNoted) this._log('warning', 'at2.mainBudget', { main: this._name(this.state.config.mainId), left: Math.max(0, Math.floor(mainLeft)), need: price, player: agent.name }, `Main has TK for ${Math.max(0, Math.floor(mainLeft))} more · ${agent.name} (${price} TK) is not bought for it`, id);
-          budgetNoted = true;
-          continue;
-        }
+        if (role === 'side' && R.classify(agent, cfg, roleMap, team) !== 'side' && !this._mainPays(price, agent.name, id, budgetNoted)) { budgetNoted = true; continue; }
         // Already in the roster: park our copy (equipment, skill, lineup remembered) so the
         // Scout one can be signed; ours comes back once the new one has left the roster.
         if (roster.ids.has(agent.id)) {
@@ -829,7 +1055,6 @@ class AutoTradeEngine {
         acc.bought += 1;
         acc.spent += salary; // a discount (Lv30+) lowers what is paid too: paid = salary (user 2026-11-05)
         acc.funds = Number.isFinite(acc.funds) ? acc.funds - salary : acc.funds;
-        if (role === 'side' && row.dir === 'main') mainLeft -= salary;
         roster.total += 1;
         roster.ids.add(agent.id);
         this._log('success', 'at2.signed', { player: agent.name, price: salary, dir: row.dir }, `${agent.name} signed · ${salary} TK`, id);
@@ -872,6 +1097,33 @@ class AutoTradeEngine {
     const price = Number(agent.baseSalary) || 0;
     return !Number.isFinite(funds) || funds - price >= (s.config.spenderMinTk || 0);
   }
+  // What main can still pay for: its TK minus what every side holds for it.
+  _mainLeft() {
+    const mainId = this.state.config.mainId;
+    const funds = this._acc(mainId)?.funds;
+    if (!Number.isFinite(funds)) return Infinity;
+    let pending = 0;
+    for (const [id, acc] of Object.entries(this.state.accounts)) {
+      if (id === mainId) continue;
+      for (const r of Object.values(acc.players || {})) if (r.dir === 'main' && ['toTrade', 'trading'].includes(r.status)) pending += Number(r.signedSalary) || Number(r.salary) || 0;
+    }
+    return funds - pending;
+  }
+  // true: main pays this one. false: skipped. Main's TK at its end: the run stops (choice of
+  // the user 2026-11-07: a notice and a stop, then the stop's wrap-up).
+  _mainPays(price, player, id, noted = false) {
+    const left = this._mainLeft();
+    if (price <= left) return true;
+    if (left < MAIN_TK_FLOOR) throw this._outOfTk();
+    if (!noted) this._log('warning', 'at2.mainBudget', { main: this._name(this.state.config.mainId), left: Math.max(0, Math.floor(left)), need: price, player }, `Main has TK for ${Math.max(0, Math.floor(left))} more · ${player} (${price} TK) is not bought for it`, id);
+    return false;
+  }
+  _outOfTk() {
+    const mainId = this.state.config.mainId;
+    const funds = Math.floor(Number(this._acc(mainId)?.funds) || 0);
+    return new UserFixError(`${this._name(mainId)} has ${funds} TK · not enough for the cheap players, Auto Trade stops`, 'at2.mainOutOfTk', { main: this._name(mainId), funds });
+  }
+
   _isStok(agent, roleMap = this._roleMap()) {
     const stok = (this.store.getCardRoles?.() || []).filter(r => /^stok|^stock/i.test(String(r.name).trim())).map(r => r.id);
     return (roleMap.get(agent.id) || []).some(r => stok.includes(r));
@@ -904,7 +1156,7 @@ class AutoTradeEngine {
     const floor = this.state.config.spenderMinTk || 0;
     if (R.classify(agent, this.state.config, roleMap) !== 'side') return null;
     // only spenders whose row in the role table allows this player (user 2026-11-05)
-    const spenders = this._spenderIds().filter(id => !this._blocked(id) && this._userIdOf(id) !== ownerUserId && this._mayTake(id, agent, roleMap));
+    const spenders = this._spenderIds().filter(id => !this._blocked(id) && !this._busy(id) && this._userIdOf(id) !== ownerUserId && this._mayTake(id, agent, roleMap));
     spenders.forEach(id => this._ensureAcc(id));
     await this._refreshFunds(spenders.filter(id => this.state.accounts[id].funds == null));
     let order = R.sideOrder(spenders.map(id => ({ id, funds: this.state.accounts[id].funds }))).map(x => x.id);
@@ -926,7 +1178,7 @@ class AutoTradeEngine {
     const mainId = this.state.config.mainId;
     const ownerAcc = this.friendNet.accountOfUser?.(ownerUserId) || null;
     const tempOk = Boolean(ownerAcc) && ownerAcc !== mainId;
-    const ok = id => id !== mainId && !this._blocked(id) && this._userIdOf(id) && this._userIdOf(id) !== ownerUserId && this._level(id) >= 30 && this._mayTake(id, agent, roleMap);
+    const ok = id => id !== mainId && !this._blocked(id) && !this._busy(id) && this._userIdOf(id) && this._userIdOf(id) !== ownerUserId && this._level(id) >= 30 && this._mayTake(id, agent, roleMap);
     const spenders = this._spenderIds().filter(ok);
     spenders.forEach(id => this._ensureAcc(id));
     await this._refreshFunds(spenders.filter(id => this.state.accounts[id].funds == null));
@@ -1110,11 +1362,13 @@ class AutoTradeEngine {
           const f = await conn.fire(p.id).catch(error => ({ success: false, message: error.message }));
           this._log(f?.success ? 'success' : 'warning', f?.success ? 'at2.firedNoDisc' : 'at2.fireFailed', { name: p.name, error: f?.error || f?.message || '' }, f?.success ? `${p.name} was not signed 5% off · fired` : `${p.name} could not be fired: ${f?.error || f?.message || ''}`, sp);
           if (f?.success && acc.players[p.id]) acc.players[p.id].status = 'fired';
+          this._tick('fire');
           if (!f?.success && !all) return false;
           continue;
         }
         const r = await conn.sell(p.id, price, currency);
         this._log(r?.success ? 'success' : 'warning', r?.success ? 'at2.listed' : 'at2.listFailed', { name: p.name, price, currency, error: r?.message || '' }, `${p.name} listed · ${price} ${currency}`, sp);
+        this._tick('list');
         if (!r?.success) { if (all) continue; return false; }
         acc.listed += 1;
         if (acc.players[p.id]) acc.players[p.id].status = 'listed';
@@ -1123,15 +1377,16 @@ class AutoTradeEngine {
       this._save();
       return true;
     } finally {
-      if (!wasOpen && sp !== this.state.currentSideId) this._park(sp);
+      if (!wasOpen && !this._busy(sp)) this._park(sp);
     }
   }
 
   // The spenders that got players in this turn put every Satılabilir / Stok on the market at
   // their default price (user 2026-11-06: bought players were left on the bench, unlisted).
-  async _flushSpenders(signal) {
+  async _flushSpenders(signal, { skipBusy = true } = {}) {
     if (!this._friendsOn()) return;
     for (const h of [...this._stokHolders]) {
+      if (skipBusy && this._busy(h)) continue;
       this._stokHolders.delete(h);
       if (h === this.state.config.mainId) continue;
       const wasOpen = this.conns.has(h);
@@ -1139,10 +1394,10 @@ class AutoTradeEngine {
       catch (error) {
         if (error?.name === 'AbortError') throw error;
         this._log('warning', 'at2.spenderTradeFailed', { name: this._name(h), error: error.message }, `${this._name(h)}: ${error.message}`, h);
-      } finally { if (!wasOpen && h !== this.state.currentSideId) this._close(h); }
+      } finally { if (!wasOpen && !this._busy(h)) this._close(h); }
     }
-    const ids = [...this._spenderTodo];
-    this._spenderTodo.clear();
+    const ids = [...this._spenderTodo].filter(sp => !(skipBusy && this._busy(sp)));
+    for (const sp of ids) this._spenderTodo.delete(sp);
     for (const sp of ids) {
       await this._gate(signal);
       try { await this._spenderRoom(sp, [], 0, signal, { all: true }); }
@@ -1153,28 +1408,105 @@ class AutoTradeEngine {
     }
   }
 
-  // The run ends early (stop, another task, an error): the spenders and Stok holders that got
-  // players in this turn hand them on / list them before the connections close. At most
-  // 3 minutes; a second Stop ends it at once.
-  async _listLeftovers() {
-    if (!this.state || !this._friendsOn()) return;
-    const count = this._spenderTodo.size + this._stokHolders.size;
-    if (!count) return;
+  // The run ends early (Stop, another task, an error) → 'stop': the cheap players waiting on
+  // sides go to main as far as its TK pays, the rest are fired; the spenders and Stok holders
+  // list / hand on what they got. Pause → 'pause': only the listing (user 2026-11-07). A
+  // countdown is kept in state.wrapUp; a second Stop ends it at once.
+  _listLeftovers() { return this._wrapUp('stop'); }
+  _wrapUp(kind) {
+    const run = (this._wrapChain || Promise.resolve()).then(() => this._wrapUpNow(kind));
+    this._wrapChain = run.catch(() => {});
+    return run;
+  }
+  _waitingCheap() {
+    const mainId = this.state.config.mainId;
+    return Object.entries(this.state.accounts).filter(([id]) => id !== mainId)
+      .map(([id, acc]) => ({ id, count: Object.values(acc.players || {}).filter(r => r.dir === 'main' && ['toTrade', 'trading'].includes(r.status)).length }))
+      .filter(x => x.count);
+  }
+  _wrapEstimate(sides) {
+    let ms = 0, count = 0;
+    if (sides.length) ms += EST.open + EST.convert;
+    for (const s of sides) { ms += (this.conns.has(s.id) ? 0 : EST.open) + Math.ceil(s.count / R.TRADE_MAX) * EST.trade; count += s.count; }
+    for (const sp of this._spenderTodo) {
+      const n = Object.values(this.state.accounts[sp]?.players || {}).filter(r => r.dir === 'side' && r.status === 'keep').length || 1;
+      ms += (this.conns.has(sp) ? 0 : EST.open) + n * EST.list;
+      count += n;
+    }
+    for (const h of this._stokHolders) { ms += 2 * EST.open + EST.trade; count += 1; } // eslint-disable-line no-unused-vars
+    return { ms, count };
+  }
+  // one step of the wrap-up done: the countdown moves
+  _tick(kind) {
+    const w = this.state?.wrapUp;
+    if (!w) return;
+    w.done = Math.min(w.total, w.done + (kind === 'open' || kind === 'convert' ? 0 : 1));
+    w.remainingMs = Math.max(1000, w.remainingMs - (EST[kind] || 0));
+    w.endsAt = new Date(this.now() + w.remainingMs).toISOString();
+    this.onChanged?.();
+  }
+  async _wrapUpNow(kind) {
+    if (!this.state) return;
+    const sides = kind === 'stop' ? this._waitingCheap() : [];
+    const spenders = this._friendsOn() ? this._spenderTodo.size + this._stokHolders.size : 0;
+    if (!sides.length && !spenders) return;
+    // after a stop the connections still belong to the stopped run (its signal): new ones
+    if (kind === 'stop') for (const id of [...this.conns.keys()]) this._close(id);
     const ctrl = new AbortController();
     this._leftoverCtrl = ctrl;
-    this.pauseGate = null; // a paused run lists too
-    const timer = setTimeout(() => ctrl.abort(), 3 * 60 * 1000);
-    this._step('leftovers', { count });
-    this._log('info', 'at2.leftovers', { count }, `Auto Trade is stopping · ${count} spender(s) list their players first`);
+    const timer = setTimeout(() => ctrl.abort(), 20 * 60 * 1000);
+    const est = this._wrapEstimate(sides);
+    const cheap = sides.reduce((n, s) => n + s.count, 0);
+    this.state.wrapUp = { kind, total: est.count, done: 0, cheap, spenders, remainingMs: est.ms, endsAt: new Date(this.now() + est.ms).toISOString() };
+    this._step('leftovers', { count: spenders, cheap });
+    this._log('info', 'at2.leftovers', { count: spenders, cheap, seconds: Math.round(est.ms / 1000) }, `Auto Trade is ${kind === 'pause' ? 'pausing' : 'stopping'} · ${cheap} cheap player(s) on sides are settled, ${spenders} spender(s) list their players first`);
+    this._save();
     try {
-      await this._flushSpenders(ctrl.signal);
-      this._log('success', 'at2.leftoversDone', { count }, 'Spender players listed before the stop');
+      await this._bypass.run(true, async () => {
+        if (sides.length) await this._settleCheap(sides, ctrl.signal);
+        await this._flushSpenders(ctrl.signal, { skipBusy: kind === 'pause' });
+      });
+      this._log('success', 'at2.leftoversDone', { count: spenders, cheap }, kind === 'pause' ? 'Spender players listed (paused)' : 'Players settled and listed before the stop');
     } catch (error) {
       this._log('warning', 'at2.leftoversFailed', { error: error?.name === 'AbortError' ? 'stopped' : error.message }, `Spender listing before the stop did not finish: ${error?.name === 'AbortError' ? 'stopped' : error.message}`);
     } finally {
       clearTimeout(timer);
       this._leftoverCtrl = null;
+      if (this.state) this.state.wrapUp = null;
+      this._save();
     }
+  }
+  // Cheap players waiting on sides: to main as far as its TK pays; what it cannot pay is fired
+  // (choice of the user 2026-11-07). Players the user had on the bench before are never fired.
+  async _settleCheap(sides, signal) {
+    const mainId = this.state.config.mainId;
+    await this._open(mainId, signal);
+    for (const { id } of sides) {
+      if (signal.aborted) throw abortError();
+      const wasOpen = this.conns.has(id);
+      try {
+        await this._open(id, signal);
+        const r = await this._tradeWithMain(id, signal, { settle: true });
+        const acc = this._acc(id);
+        const conn = this.conns.get(id);
+        const onRoster = R.rosterOf(await conn.roster()).ids;
+        for (const pid of r?.waiting || []) {
+          const row = acc.players[pid];
+          if (!row || row.preexisting || !onRoster.has(pid)) continue;
+          const f = await conn.fire(pid).catch(error => ({ success: false, message: error.message }));
+          if (f?.success) row.status = 'fired';
+          this._tick('fire');
+          this._log(f?.success ? 'success' : 'warning', f?.success ? 'at2.firedNoTk' : 'at2.fireFailed', { name: row.name, error: f?.error || f?.message || '' }, f?.success ? `${row.name} fired · main has no TK for it` : `${row.name} could not be fired: ${f?.error || f?.message || ''}`, id);
+        }
+        this._save();
+      } catch (error) {
+        if (error?.name === 'AbortError') throw error;
+        this._log('warning', 'at2.settleFailed', { name: this._name(id), error: error.message }, `${this._name(id)}: cheap players could not be settled · ${error.message}`, id);
+      } finally {
+        if (!wasOpen) this._close(id);
+      }
+    }
+    await this._convertMain(signal).catch(error => { if (error?.name === 'AbortError') throw error; });
   }
 
   // Start of a run: the spenders' benches are read without logging in; those holding
@@ -1221,6 +1553,7 @@ class AutoTradeEngine {
     const roleMap = this._roleMap();
     for (const sp of spenders) {
       await this._gate(signal);
+      if (this._busy(sp)) continue;
       const all = this._ours(mainId, R.rosterOf(await main.roster()), 'side');
       if (!all.length) return;
       const no = all.filter(p => !this._mayTake(sp, p, roleMap)).map(p => p.id);
@@ -1264,7 +1597,7 @@ class AutoTradeEngine {
       const floor = this.state.config.spenderMinTk || 0;
       let give = [];
       const sp = (await this._spendersByTk()).find(id => {
-        if (id === sideId) return false;
+        if (id === sideId || this._busy(id)) return false;
         give = kept.filter(p => this._mayTake(id, p, roleMap) && !(this.state.excluded[id] || []).includes(p.id)).slice(0, R.TRADE_MAX);
         const funds = this.state.accounts[id].funds;
         return give.length && (!Number.isFinite(funds) || funds - give.reduce((n, p) => n + R.salaryOf(p), 0) >= floor);
@@ -1308,6 +1641,7 @@ class AutoTradeEngine {
     h.tkReceived += plan.tk; g.tkPaid += plan.tk;
     g.funds = Number.isFinite(g.funds) ? g.funds - plan.tk : g.funds;
     h.funds = Number.isFinite(h.funds) ? h.funds + plan.tk : h.funds;
+    this._tick('trade');
     this._log('success', 'at2.spenderTraded', { from: h.name, name: g.name, count: plan.sideGives.length, tk: plan.tk }, `${h.name} gave ${plan.sideGives.length} player(s) to ${g.name} · ${plan.tk} TK`, guestId);
     this._save();
     return true;
@@ -1328,9 +1662,10 @@ class AutoTradeEngine {
     catch (error) { if (error?.name === 'AbortError') throw error; this._log('warning', 'at2.friendsFailed', { name: this._name(id), error: error.message }, `${this._name(id)}: friend list could not be read`, id); return; }
     const mainFriends = role === 'main' ? friends : await this.friendNet.friendsOf(mainId, { signal }).catch(() => null);
     const seen = (this._boardSeen ||= new Map());
-    // a board already gone through in the last 10 minutes has nothing new (refreshes every 30)
-    const owners = [...friends.ids].filter(u => u !== mainUser && this.now() - (seen.get(u) || 0) >= 10 * 60 * 1000);
-    owners.forEach(u => seen.set(u, this.now()));
+    // a board is read again after its own refresh (every 30 min); one with something left on it
+    // after 10 minutes (user 2026-11-07: the same boards were read over and over)
+    const owners = [...friends.ids].filter(u => u !== mainUser && (seen.get(u) || 0) <= this.now());
+    owners.forEach(u => seen.set(u, this.now() + 10 * 60 * 1000));
     // the boards are read 4 at a time (one round trip each); signing stays one by one
     const boards = new Map();
     const read = async u => { try { boards.set(u, await this.friendNet.board(id, u, signal)); } catch (error) { if (error?.name === 'AbortError') throw error; } };
@@ -1341,32 +1676,41 @@ class AutoTradeEngine {
     for (const ownerUser of owners) {
       await this._gate(signal);
       const board = boards.get(ownerUser);
-      if (!board || !board.freeAgents.some(a => !a.isSigned && R.classify(a, this.state.config, roleMap))) continue;
+      if (!board) continue;
+      const untilRefresh = () => { if (board.refreshesIn > 0) seen.set(ownerUser, this.now() + board.refreshesIn * 1000); };
+      if (!board.freeAgents.some(a => !a.isSigned && R.classify(a, this.state.config, roleMap))) { untilRefresh(); continue; }
       const ownerName = friends.names.get(ownerUser) || '?';
+      const done = new Set();
       for (const agent of board.freeAgents) {
         await this._gate(signal);
         if (agent.isSigned) continue;
         const base = R.classify(agent, this.state.config, roleMap);
         if (base === 'side' && this._ownSpenderTakes(ownerUser, agent, roleMap)) {
           this._log('info', 'at2.leftForSpender', { player: agent.name, owner: ownerName }, `${agent.name} is left on ${ownerName}'s Scout · that Harcayıcı signs it in its own turn`, id);
+          done.add(agent.id);
           continue;
         }
         if (base === 'side' && this._needsLv30(agent, roleMap)) {
-          if (await this._stokBuy(ownerUser, agent, signal, id) === 'self') await this._friendSign(id, role, ownerUser, ownerName, agent, roleMap, roleNames, signal);
+          const r = await this._stokBuy(ownerUser, agent, signal, id);
+          if (r === 'done' || (r === 'self' && await this._friendSign(id, role, ownerUser, ownerName, agent, roleMap, roleNames, signal))) done.add(agent.id);
           continue;
         }
         if (base === 'side') {
           const sp = await this._spenderFor(ownerUser, agent, signal, id);
-          if (sp && await this._spenderBuy(sp, ownerUser, agent, signal)) continue;
+          if (sp && await this._spenderBuy(sp, ownerUser, agent, signal)) { done.add(agent.id); continue; }
           // nobody else can: main (all its friends' boards) or the side signs it and hands it
           // to a Harcayıcı by trade later
-          await this._friendSign(id, role, ownerUser, ownerName, agent, roleMap, roleNames, signal);
+          if (await this._friendSign(id, role, ownerUser, ownerName, agent, roleMap, roleNames, signal)) done.add(agent.id);
           continue;
         }
         if (base !== 'main') continue;
         const viaMain = role === 'main' || Boolean(mainFriends?.ids?.has(ownerUser));
-        await this._friendSign(viaMain ? mainId : id, viaMain ? 'main' : role, ownerUser, ownerName, agent, roleMap, roleNames, signal);
+        const ok = viaMain
+          ? await this._mainLock.run(() => this._friendSign(mainId, 'main', ownerUser, ownerName, agent, roleMap, roleNames, signal))
+          : await this._friendSign(id, role, ownerUser, ownerName, agent, roleMap, roleNames, signal);
+        if (ok) done.add(agent.id);
       }
+      if (!board.freeAgents.some(a => !a.isSigned && !done.has(a.id) && R.classify(a, this.state.config, roleMap))) untilRefresh();
     }
   }
 
@@ -1379,6 +1723,8 @@ class AutoTradeEngine {
     const cfg = R.configFor(this.state.config, rule);
     const dir = R.classify(agent, cfg, roleMap);
     if (!dir || dir === 'ask' || !R.accountAllows(rule, R.signReason(agent, cfg, roleMap), agent, roleMap, cfg)) return false;
+    // a side signing for main off a friend's board: the same budget as its own Scout (user 2026-11-07)
+    if (role !== 'main' && dir === 'main' && !this._mainPays(Number(agent.baseSalary) || 0, agent.name, buyerId, true)) return false;
     const acc = this._acc(buyerId) || this._ensureAcc(buyerId);
     const conn = this.conns.get(buyerId) || await this._open(buyerId, signal);
     let roster = R.rosterOf(await conn.roster());
@@ -1478,6 +1824,7 @@ class AutoTradeEngine {
       this.cardTotals[p.id] = { name, count: (this.cardTotals[p.id]?.count || 0) + 1 };
     }
     acc.converted += list.length;
+    this._tick('convert');
     this._log('success', 'at2.converted', { count: list.length, names: list.map(p => p.name).join(', ') }, `${list.length} player(s) turned into star cards`, id);
     this._save();
     await sleep(this.timing.stepMs, signal);
@@ -1489,7 +1836,7 @@ class AutoTradeEngine {
   async _unloadMain(signal) {
     const s = this.state;
     const mainId = s.config.mainId;
-    const sides = s.config.accountIds.filter(id => id !== mainId && !s.sidesSkipped.includes(id));
+    const sides = s.config.accountIds.filter(id => id !== mainId && !s.sidesSkipped.includes(id) && !this._busy(id));
     await this._refreshFunds(sides);
     for (const side of R.sideOrder(sides.map(id => ({ id, funds: this._acc(id).funds }))).map(x => x.id)) {
       await this._gate(signal);
@@ -1497,7 +1844,7 @@ class AutoTradeEngine {
       await this._open(side, signal);
       this._log('info', 'at2.unload', { name: this._name(side) }, `Main is full · giving players to ${this._name(side)}`, side);
       await this._tradeWithMain(side, signal, { unload: true });
-      if (!wasOpen && side !== s.currentSideId) this._close(side);
+      if (!wasOpen && !this._busy(side)) this._close(side);
       const roster = R.rosterOf(await this.conns.get(mainId).roster());
       if (roster.total < R.ROSTER_MAX) return true;
     }
@@ -1505,7 +1852,7 @@ class AutoTradeEngine {
   }
 
   // Trades between main (guest) and one side (host) until nothing more can move.
-  async _tradeWithMain(sideId, signal, { unload = false } = {}) {
+  async _tradeWithMain(sideId, signal, { unload = false, settle = false } = {}) {
     const mainId = this.state.config.mainId;
     const main = this.conns.get(mainId) || await this._open(mainId, signal);
     const side = this.conns.get(sideId) || await this._open(sideId, signal);
@@ -1545,13 +1892,17 @@ class AutoTradeEngine {
         for (const p of plan.sideGives) { if (cost + R.salaryOf(p) - mainGets <= mainFunds) { afford.push(p); cost += R.salaryOf(p); } }
         const waiting = plan.sideGives.filter(p => !afford.includes(p));
         this._log('warning', 'at2.mainFundsWait', { main: this._name(mainId), funds: mainFunds, side: this._name(sideId), names: waiting.map(p => p.name).join(', ') }, `${this._name(mainId)} has ${mainFunds} TK · ${waiting.map(p => p.name).join(', ')} wait on ${this._name(sideId)}`, sideId);
-        if (!afford.length && !plan.mainGives.length) return {};
+        if (!afford.length && !plan.mainGives.length) { if (settle) return { waiting: waiting.map(p => p.id) }; if ((Number(mainFunds) || 0) < MAIN_TK_FLOOR) throw this._outOfTk(); return {}; }
+        // in the run: main's TK at its end stops it (user 2026-11-07); one big player it cannot
+        // pay while it still has TK waits, like before
+        const stopOrWait = () => { if (settle) return { waiting: waiting.map(p => p.id) }; if ((Number(this._acc(mainId).funds) || 0) < MAIN_TK_FLOOR) throw this._outOfTk(); return {}; };
         const small = R.planTrade({ mainRoster, sideRoster, mainGive: plan.mainGives, sideGive: afford, mainFunds, sideFunds });
-        if (small.empty || !small.mainCanPay || !small.sideCanPay) return {};
+        if (small.empty || !small.mainCanPay || !small.sideCanPay) return stopOrWait();
         const res = await this._executeTrade(sideId, small, signal);
-        if (res.success) { this._afterTrade(sideId, small); if (small.sideGives.length) await this._convertMain(signal); }
+        if (res.success) { this._afterTrade(sideId, small); this._tick('trade'); if (small.sideGives.length) await this._convertMain(signal); }
         else this._log('warning', 'at2.tradeFailed', { side: this._name(sideId), error: res.message }, `Trade with ${this._name(sideId)} failed: ${res.message}`, sideId);
-        return {};
+        // the stop's wrap-up fires what main cannot pay
+        return stopOrWait();
       }
       if (!plan.sideCanPay) {
         this._log('warning', 'at2.sideFunds', { name: this._name(sideId), funds: sideFunds, need: -plan.tk }, `${this._name(sideId)}: not enough TK for the trade, account skipped`, sideId);
@@ -1560,6 +1911,7 @@ class AutoTradeEngine {
       const result = await this._executeTrade(sideId, plan, signal);
       if (result.success) {
         this._afterTrade(sideId, plan);
+        this._tick('trade');
         failRetry = 0;
         if (plan.sideGives.length) await this._convertMain(signal);
         continue;

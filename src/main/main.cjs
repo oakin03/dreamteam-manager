@@ -982,6 +982,14 @@ function registerIpc() {
     if (options.stopConflicts) await stopAutoTradeConflicts(options.accountIds || []);
     return autoTrade.start(options);
   });
+  // Hazırlık: only the bench decisions, no run. Auto Play steps aside on the accounts that are
+  // signed in for a listing or a fire.
+  ipcMain.handle('auto-trade:prepare', async (_event, options) => {
+    if (options.stopConflicts) await stopAutoTradeConflicts(Object.entries(options.benchDecisions || {}).filter(([, d]) => Object.values(d || {}).some(v => v?.action === 'list' || v?.action === 'fire')).map(([id]) => id));
+    return autoTrade.prepare(options);
+  });
+  ipcMain.handle('auto-trade:stop-prepare', async () => autoTrade.stopPrepare());
+  ipcMain.handle('auto-trade:clear-prepare', async () => autoTrade.clearPrepare());
   ipcMain.handle('auto-trade:pause', async () => autoTrade.pause());
   ipcMain.handle('auto-trade:resume', async () => autoTrade.resume());
   ipcMain.handle('auto-trade:stop', async () => autoTrade.stop());

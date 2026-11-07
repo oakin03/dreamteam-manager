@@ -52,6 +52,7 @@ function createWorld(users) {
       case 'getFriendFreeAgents': {
         const owner = world.users[p.friendId];
         if (!u.friends.has(p.friendId)) return reply({ success: false, error: 'Not friends' });
+        (world.boardReads ||= []).push([uid, p.friendId]);
         return reply({ success: true, freeAgents: (owner.lists[0] || []).map(a => ({ ...a, isSigned: owner.signed.has(a.id) })), refreshesIn: 1800 });
       }
       case 'signFriendFreeAgent': {

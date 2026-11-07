@@ -297,6 +297,11 @@ tr.row-dragging .row-handle{background:var(--bg-fff1e7);color:var(--fg-b94d08);b
 .pill.gift{background:var(--bg-fff4e5);color:var(--fg-b25e00);font-weight:800}
 
 /* Auto Trade (socket) */
+.at2-wrap { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; border-left: 3px solid var(--warn, #d97706); }
+.at2-wrap b { margin-left: auto; font-variant-numeric: tabular-nums; }
+.at2-prep { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.at2-prepared { margin: 0 0 8px; }
+.at2-cycle { font-variant-numeric: tabular-nums; }
 .at2-status{display:flex;gap:10px;align-items:center;padding:10px 14px;margin-bottom:12px;flex-wrap:wrap}.at2-step{font-weight:700;color:var(--fg-344054);font-size:12px}
 .at2-error{display:grid;gap:4px;padding:12px 14px;margin-bottom:12px;border-color:var(--bd-f2d0cc);background:var(--bg-fff7f5);color:var(--fg-8f3128)}.at2-error small{color:var(--fg-667085)}
 .at2-config{display:grid;gap:14px;padding:14px;margin-bottom:12px}.at2-config h4{margin:0 0 8px;font-size:12px;color:var(--fg-344054);text-transform:uppercase;letter-spacing:.04em}
