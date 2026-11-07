@@ -48,6 +48,32 @@ function mergeMessages(old = [], fresh = [], from) {
 }
 
 const unclaimedMails = mails => (mails || []).filter(m => !m.isClaimed && Array.isArray(m.items) && m.items.length);
+// A friend request in either shape: before 2026-11-05 {id: friendshipId, from|sender|friend|receiver: {user}},
+// since then flat {friendshipId, id: the other user's id, teamName, avatarUrl, ...}. Always gives
+// friendshipId (for accept / decline / cancel) and user {id, teamName, avatarUrl}.
+function normRequest(r) {
+  if (!r || typeof r !== 'object') return null;
+  const nested = [r.from, r.user, r.sender, r.friend, r.receiver, r.to].find(x => x && typeof x === 'object') || null;
+  const u = nested || r;
+  return {
+    ...r,
+    friendshipId: r.friendshipId || r.id,
+    user: { id: u.id ?? r.userId ?? r.senderId ?? r.receiverId ?? null, teamName: u.teamName || r.teamName || null, avatarUrl: u.avatarUrl || r.avatarUrl || null, level: u.level ?? r.level ?? null }
+  };
+}
+const normRequests = list => (Array.isArray(list) ? list : []).map(normRequest).filter(Boolean);
+// Unread counts from getFriendsBootstrap / unreadMessageCounts: [{senderId, unreadCount}] or {friendId: n}.
+function parseUnread(counts, total) {
+  const by = {};
+  if (Array.isArray(counts)) {
+    for (const u of counts) { const k = u?.senderId || u?.friendId || u?.userId; if (k) by[k] = Number(u.unreadCount ?? u.count) || 0; }
+  } else if (counts && typeof counts === 'object') {
+    for (const [k, v] of Object.entries(counts)) by[k] = Number(v) || 0;
+  }
+  const sum = Object.values(by).reduce((a, b) => a + b, 0);
+  return { total: Number(total) || sum, by };
+}
+const POLL_PARALLEL = 6;
 const itemName = it => it?.itemDetail?.name || it?.metadata?.name || it?.item?.name || it?.itemName || it?.name || it?.itemType || '?';
 
 class SocialService {
@@ -60,7 +86,8 @@ class SocialService {
     this.seen = {};         // accountId -> { requests:Set, unread:{friendId:n} } to spot new ones
     this.views = {};        // accountId -> last full view (friends, requests, sent, blocked, mails)
     this.writers = new Map(); // accountId -> { gs, timer } cookie sockets for writes
-    this.anon = null;
+    this.socks = {};        // plain read sockets: ui (the page), bg (badges), sweep (archive); the page never waits behind the background
+    this.running = {};
     this.polledAt = null;
     this.timers = [];
   }
@@ -73,11 +100,20 @@ class SocialService {
     this.activity.add({ level, accountId: id || 'social', accountName: id ? (this._account(id)?.name || '') : '', taskName: 'Social', code, params, message });
   }
 
-  async _read() {
-    if (this.anon?.socket?.connected) return this.anon;
-    try { this.anon?.close(); } catch {}
-    this.anon = await GameSocket.open({ createSocket: this.createSocket });
-    return this.anon;
+  async _read(kind = 'ui') {
+    const held = this.socks[kind];
+    if (held?.then) return held;
+    if (held?.socket?.connected) return held;
+    try { held?.close?.(); } catch {}
+    const opening = GameSocket.open({ createSocket: this.createSocket });
+    this.socks[kind] = opening;
+    try { return (this.socks[kind] = await opening); } catch (e) { delete this.socks[kind]; throw e; }
+  }
+  // One background job of a kind at a time (a slow round must not pile up on the next one).
+  _once(kind, fn) {
+    if (this.running[kind]) return this.running[kind];
+    this.running[kind] = (async () => { try { return await fn(); } finally { this.running[kind] = null; } })();
+    return this.running[kind];
   }
 
   // A user id for any account: from the profile, or one sign-in that also gives the cookie.
@@ -135,9 +171,15 @@ class SocialService {
   }
   async _unread(gs, userId) {
     const r = await gs.call('getUnreadMessageCounts', { userId }, 'unreadMessageCounts', { timeoutMs: TIMEOUT_MS });
-    const by = {};
-    for (const u of r?.unreadCounts || []) if (u?.senderId) by[u.senderId] = Number(u.unreadCount) || 0;
-    return { total: Number(r?.totalUnread) || Object.values(by).reduce((a, b) => a + b, 0), by };
+    return parseUnread(r?.unreadCounts, r?.totalUnread);
+  }
+  // Unread counts that came with the bootstrap; the old event when they are missing or do not add up.
+  async _unreadOf(boot, gs, userId) {
+    if (boot && boot.unreadCounts && typeof boot.unreadCounts === 'object') {
+      const u = parseUnread(boot.unreadCounts, boot.totalUnread);
+      if (!u.total || Object.keys(u.by).length) return u;
+    }
+    return this._unread(gs, userId);
   }
   async _mails(gs, userId) {
     const r = await gs.ack('getUserMails', { userId }, { timeoutMs: TIMEOUT_MS });
@@ -152,15 +194,17 @@ class SocialService {
   // Everything the page shows for one account.
   async view(id) {
     const userId = await this._uid(id);
-    const gs = await this._read();
+    const gs = await this._read('ui');
+    const mailsP = this._mails(gs, userId);
+    mailsP.catch(() => {});
     let boot = await this._bootstrap(gs, userId).catch(() => null);
     if (!boot) boot = await this._writer(id).then(w => this._bootstrap(w.gs, w.userId)).catch(() => null);
     const [friends, requests, unread, mails, sent, blocked] = boot ? [
-      boot.friends || [], boot.requests || [], await this._unread(gs, userId), await this._mails(gs, userId),
-      boot.sent || [], (boot.blocked || []).map(x => x?.blocked || x).filter(Boolean)
+      boot.friends || [], normRequests(boot.requests), await this._unreadOf(boot, gs, userId), await mailsP,
+      normRequests(boot.sent), (boot.blocked || []).map(x => x?.blocked || x).filter(Boolean)
     ] : [
-      await this._friends(gs, userId), await this._requests(gs, userId), await this._unread(gs, userId), await this._mails(gs, userId),
-      await this._rest(userId, 'sent').then(b => b.sentRequests || []).catch(() => null),
+      await this._friends(gs, userId), normRequests(await this._requests(gs, userId)), await this._unread(gs, userId), await mailsP,
+      await this._rest(userId, 'sent').then(b => normRequests(b.sentRequests)).catch(() => null),
       await this._rest(userId, 'blocked').then(b => (b.blockedUsers || []).map(x => x?.blocked || x).filter(Boolean)).catch(() => null)
     ];
     const archive = this._archive().accounts?.[id] || {};
@@ -177,7 +221,7 @@ class SocialService {
   // One conversation: the game's copy merged with the app's archive (older than the wipe).
   async conversation(id, friendId) {
     const userId = await this._uid(id);
-    const fresh = await this._history(await this._read(), userId, friendId);
+    const fresh = await this._history(await this._read('ui'), userId, friendId);
     const friend = this.views[id]?.friends?.find(f => f.id === friendId);
     const messages = this._remember(id, friendId, fresh, friend?.teamName);
     // Opening a chat reads it, as in the game.
@@ -233,7 +277,7 @@ class SocialService {
     const userId = await this._uid(id);
     const v = this.views[id] || {};
     const friendIds = new Set((v.friends || []).map(f => f.id));
-    const pendingIds = new Set([...(v.sent || []), ...(v.requests || [])].map(x => x?.receiver?.id || x?.receiverId || x?.sender?.id || x?.senderId || x?.id).filter(Boolean));
+    const pendingIds = new Set([...(v.sent || []), ...(v.requests || [])].map(x => x?.user?.id || x?.receiver?.id || x?.receiverId || x?.sender?.id || x?.senderId || x?.id).filter(Boolean));
     const out = [];
     for (const a of this._accounts()) {
       if (a.id === id || !String(a.name || '').toLowerCase().includes(q)) continue;
@@ -318,13 +362,15 @@ class SocialService {
   }
 
   // Copies every conversation of every account into the archive (no sign-in).
-  async sweep() {
-    const gs = await this._read();
+  sweep() { return this._once('sweep', () => this._sweep()); }
+  async _sweep() {
+    const gs = await this._read('sweep');
     for (const a of this._accounts()) {
       const userId = this._userId(a.id);
       if (!userId) continue;
       try {
-        for (const f of await this._friends(gs, userId)) {
+        const boot = await this._bootstrap(gs, userId).catch(() => null);
+        for (const f of boot ? (boot.friends || []) : await this._friends(gs, userId)) {
           const fresh = await this._history(gs, userId, f.id);
           if (fresh.length) this._remember(a.id, f.id, fresh, f.teamName);
         }
@@ -339,19 +385,24 @@ class SocialService {
     this.onChanged();
   }
 
-  async poll() {
-    const gs = await this._read();
-    for (const a of this._accounts()) {
+  // Badges of every account: one bootstrap + the mail box each (both acks, so a few accounts at once).
+  poll() { return this._once('poll', () => this._poll()); }
+  async _poll() {
+    const gs = await this._read('bg');
+    const queue = this._accounts().filter(a => this._userId(a.id));
+    const one = async a => {
       const userId = this._userId(a.id);
-      if (!userId) continue;
       try {
-        const [requests, unread, mails] = [await this._requests(gs, userId), await this._unread(gs, userId), await this._mails(gs, userId)];
+        const [boot, mails] = await Promise.all([this._bootstrap(gs, userId).catch(() => null), this._mails(gs, userId)]);
+        const requests = boot ? normRequests(boot.requests) : normRequests(await this._requests(gs, userId));
+        const unread = await this._unreadOf(boot, gs, userId);
         this._notice(a, requests, unread);
         this.badges[a.id] = { requests: requests.length, unread: unread.total, mail: unclaimedMails(mails).length, unreadBy: unread.by };
         // New messages go to the archive at once, before a wipe can take them.
         for (const [friendId, n] of Object.entries(unread.by)) if (n > 0) this._remember(a.id, friendId, await this._history(gs, userId, friendId));
       } catch {}
-    }
+    };
+    await Promise.all(Array.from({ length: Math.min(POLL_PARALLEL, queue.length) }, async () => { while (queue.length) await one(queue.shift()); }));
     this.polledAt = new Date(this.now()).toISOString();
     this.onChanged();
   }
@@ -361,11 +412,11 @@ class SocialService {
     // The first look after the app starts counts everything still waiting as new, so a
     // message that came while the app was closed is announced too.
     const before = this.seen[account.id] || { requests: new Set(), unread: {} };
-    const ids = new Set(requests.map(r => r.id || r.friendshipId));
+    const ids = new Set(requests.map(r => r.friendshipId || r.id));
     {
       for (const r of requests) {
-        if (before.requests.has(r.id || r.friendshipId)) continue;
-        const from = r.from?.teamName || r.user?.teamName || r.sender?.teamName || r.teamName || '?';
+        if (before.requests.has(r.friendshipId || r.id)) continue;
+        const from = r.user?.teamName || r.from?.teamName || r.user?.teamName || r.sender?.teamName || r.teamName || '?';
         this._log(account.id, 'info', 'so.newRequest', { from }, `New friend request from ${from}`);
       }
       for (const [friendId, n] of Object.entries(unread.by)) {
@@ -402,10 +453,11 @@ class SocialService {
   stop() {
     for (const t of this.timers) { clearInterval(t); clearTimeout(t); }
     this.timers = [];
-    try { this.anon?.close(); } catch {}
+    for (const s of Object.values(this.socks)) { try { s?.close?.(); } catch {} }
+    this.socks = {};
     for (const c of this.writers.values()) { clearTimeout(c.timer); try { c.gs.close(); } catch {} }
     this.writers.clear();
   }
 }
 
-module.exports = { SocialService, chatDayStart, keepFrom, mergeMessages, unclaimedMails };
+module.exports = { SocialService, chatDayStart, keepFrom, mergeMessages, unclaimedMails, normRequest, parseUnread };

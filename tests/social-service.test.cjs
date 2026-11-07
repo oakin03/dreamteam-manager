@@ -119,3 +119,33 @@ test('Polling spots new requests and messages once, and actions and mail claims 
   assert.deepEqual(logs.find(l => l.code === 'ml.claimed').params, { count: 1, items: '10 Refine Ore' });
   s.stop();
 });
+
+test('Friend requests in the 2026-11-05 flat shape show the team name and accept with the friendshipId', async () => {
+  const game = fakeGame();
+  const { s, logs } = service(game);
+  game.state.requests = [{ friendshipId: 'fs8', id: 'f8', teamName: 'Pipelne7', avatarUrl: 'a.png', level: 12 }];
+  const v = await s.view('a1');
+  assert.equal(v.requests[0].friendshipId, 'fs8');
+  assert.deepEqual(v.requests[0].user, { id: 'f8', teamName: 'Pipelne7', avatarUrl: 'a.png', level: 12 });
+  await s.poll();
+  assert.ok(logs.some(l => l.code === 'so.newRequest' && l.params.from === 'Pipelne7'));
+  await s.act('a1', 'accept', 'fs8');
+  assert.equal(game.state.writes.find(w => w.event === 'acceptFriendRequest').p.friendshipId, 'fs8');
+  assert.ok(logs.some(l => l.code === 'so.accept' && l.params.name === 'Pipelne7'));
+  s.stop();
+});
+
+test('The page reads on its own connection, not behind the background badge round', async () => {
+  const game = fakeGame();
+  const { s } = service(game);
+  await s.view('a1');
+  const bg = await s._read('bg');
+  bg.queue = new Promise(() => {}); // a background round that never ends
+  const t0 = Date.now();
+  const v = await s.view('a1');
+  assert.equal(v.friends.length, 2);
+  assert.ok(Date.now() - t0 < 2000);
+  const p1 = s.poll(), p2 = s.poll();
+  assert.equal(p1, p2, 'a second round waits for the running one instead of starting again');
+  s.stop();
+});

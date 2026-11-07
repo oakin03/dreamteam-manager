@@ -130,8 +130,10 @@ export default function SocialPage({ state, t, toast }) {
   };
   const friends = view?.friends || [];
   const friend = friends.find(f => f.id === friendId);
-  const incoming = (view?.requests || []).map(r => ({ id: r.id, user: r.from || r.user || r.sender || {} }));
-  const outgoing = (view?.sent || []).map(r => ({ id: r.id, user: r.friend || r.receiver || r.to || {} }));
+  // requests come normalised from the service: friendshipId + user {id, teamName, avatarUrl}
+  const reqRow = r => ({ id: r.friendshipId || r.id, user: r.user || r.from || r.sender || r.friend || r.receiver || r.to || r });
+  const incoming = (view?.requests || []).map(reqRow);
+  const outgoing = (view?.sent || []).map(reqRow);
   const mails = view?.mails || [];
   const withRewards = rewardMails(mails);
   const b = badges[accountId] || {};
