@@ -661,3 +661,48 @@ test('start: a 1-salary player that cannot be traded may be fired or left; nothi
   assert.equal((await finish(engine)).status, 'done');
   assert.deepEqual(world.users.A.bench.map(p => p.id), ['keep']);
 });
+
+test("a Satılabilir on the Scout of a Harcayıcı whose turn is still to come is left for it: it signs it itself, no side takes it and trades it back", async () => {
+  const { world, engine, logs } = setup({
+    M: { funds: 50000, lists: [[]], friends: [] },
+    A: { funds: 90000, lists: [[]], friends: ['S'] },
+    S: { funds: 9000, lists: [[player('ss1', 600)]], friends: ['A'] }
+  }, { accounts: ['M', 'A', 'S'], accountRoles: { S: 'spender' }, roles: { ss1: 'sellable' }, friends: true });
+  await engine.start({ accountIds: ['M', 'A', 'S'], mainToSideRoleIds: ['sellable'], sideToMainRoleIds: ['card'], maxPrice: 100 });
+  const run = await finish(engine);
+  assert.equal(run.status, 'done', JSON.stringify(run.error));
+  assert.ok(!(world.friendSigns || []).some(([b, , pid]) => b === 'A' && pid === 'ss1'), 'the side (earlier turn) did not take it off S');
+  assert.ok(logs.some(l => l.code === 'at2.leftForSpender'));
+  assert.ok(holds(world.users.S, 'ss1'), 'the Harcayıcı signed it from its own Scout');
+  assert.ok(!world.users.A.bench.some(p => p.id === 'ss1'));
+});
+
+test('what a Harcayıcı signs in a side turn is listed right after that turn, not only at the end of the cycle', async () => {
+  const { engine, logs } = setup({
+    M: { funds: 50000, lists: [[]], friends: [] },
+    A: { funds: 90000, lists: [[player('ss1', 600)]], friends: ['S'] },
+    B: { funds: 80000, lists: [[]], friends: [] },
+    S: { funds: 9000, friends: ['A'] }
+  }, { accounts: ['M', 'A', 'B', 'S'], accountRoles: { S: 'spender' }, roles: { ss1: 'sellable' }, friends: true });
+  await engine.start({ accountIds: ['M', 'A', 'B'], mainToSideRoleIds: ['sellable'], sideToMainRoleIds: ['card'], maxPrice: 100 });
+  assert.equal((await finish(engine)).status, 'done');
+  const listed = logs.findIndex(l => l.code === 'at2.listed');
+  const bTurn = logs.findIndex(l => l.code === 'at2.sideTurn' && l.params?.name === 'B');
+  assert.ok(logs.some(l => l.code === 'at2.spenderSigned'), 'S signed it off A');
+  assert.ok(listed >= 0 && bTurn >= 0 && listed < bTurn, `listed (${listed}) before B's turn (${bTurn})`);
+});
+
+test("a stop asked by another task never cuts the spenders' last listing; the user's second Stop does", async () => {
+  const { engine } = setup({ M: { funds: 1, lists: [[]] } });
+  for (const hard of [false, true]) {
+    engine.controller = new AbortController();
+    engine.state = { status: 'stopping' };
+    engine._save = () => {};
+    engine.snapshot = () => null;
+    engine.done = Promise.resolve();
+    const ctrl = new AbortController();
+    engine._leftoverCtrl = ctrl;
+    await engine.stop({ hard });
+    assert.equal(ctrl.signal.aborted, hard);
+  }
+});

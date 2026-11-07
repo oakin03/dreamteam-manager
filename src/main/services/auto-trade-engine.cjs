@@ -351,10 +351,12 @@ class AutoTradeEngine {
     return this.snapshot();
   }
 
-  async stop() {
+  // `hard: false`: another task asks (a listing by hand…) — the spenders' last listing is never
+  // cut by it (user 2026-11-07: a second stop from a hand listing cut it after 2 s).
+  async stop({ hard = true } = {}) {
     if (!this.controller) return this.snapshot();
-    // a second Stop while the spenders list their players: stop that too
-    if (this.state.status === 'stopping' && this._leftoverCtrl) this._leftoverCtrl.abort();
+    // a second Stop (the user's) while the spenders list their players: stop that too
+    if (hard && this.state.status === 'stopping' && this._leftoverCtrl) this._leftoverCtrl.abort();
     this.state.status = 'stopping';
     this._save();
     this.controller.abort();
@@ -530,6 +532,9 @@ class AutoTradeEngine {
           this.state.currentSideId = null;
           this._close(next);
           this._save();
+          // what the spenders got in this turn goes to the market now, not only at the end of
+          // the cycle (user 2026-11-07: a cycle of 100+ accounts takes hours, nothing was listed)
+          await this._flushSpenders(signal);
         }
       }
       // Whatever came to main last is turned into cards before the cycle ends.
@@ -754,6 +759,7 @@ class AutoTradeEngine {
       if (this._friendsOn()) {
         for (const agent of (fa?.freeAgents || []).filter(a => !a.isSigned && R.classify(a, this.state.config, roleMap) === 'side')) {
           await this._gate(signal);
+          if (role === 'side' && this._ownSpenderTakes(conn.userId, agent, roleMap)) continue; // a Harcayıcı's own Scout: it signs it below
           let handled = false;
           if (this._needsLv30(agent, roleMap)) handled = await this._stokBuy(conn.userId, agent, signal, id) === 'done';
           else { const sp = await this._spenderFor(conn.userId, agent, signal, id); handled = Boolean(sp && await this._spenderBuy(sp, conn.userId, agent, signal)); }
@@ -851,6 +857,21 @@ class AutoTradeEngine {
     return this.store.getAccounts().filter(a => a.role === 'spender' && a.id !== this.state.config.mainId && this._userIdOf(a.id)).map(a => a.id);
   }
   _level(id) { return Number(this.store.getAccountProfile?.()?.accounts?.[id]?.level) || 0; }
+  // A Satılabilir / Stok player on the Scout of a Harcayıcı of this run whose turn is still to
+  // come (or running): that Harcayıcı signs it itself from its own Scout, so another account
+  // does not take it off the board and trade it back (user 2026-11-07: sides with an earlier
+  // turn emptied the spenders' Scouts).
+  _ownSpenderTakes(ownerUserId, agent, roleMap = this._roleMap()) {
+    const owner = this.friendNet?.accountOfUser?.(ownerUserId);
+    const s = this.state;
+    if (!owner || owner === s.config.mainId || this._accountRoleId(owner) !== 'spender') return false;
+    if (!s.config.accountIds.includes(owner) || s.sidesDone.includes(owner) || s.sidesSkipped.includes(owner)) return false;
+    if (this._level(owner) < 30 && this._needsLv30(agent, roleMap)) return false;
+    if (!this._mayTake(owner, agent, roleMap)) return false;
+    const funds = this._acc(owner)?.funds;
+    const price = Number(agent.baseSalary) || 0;
+    return !Number.isFinite(funds) || funds - price >= (s.config.spenderMinTk || 0);
+  }
   _isStok(agent, roleMap = this._roleMap()) {
     const stok = (this.store.getCardRoles?.() || []).filter(r => /^stok|^stock/i.test(String(r.name).trim())).map(r => r.id);
     return (roleMap.get(agent.id) || []).some(r => stok.includes(r));
@@ -1326,6 +1347,10 @@ class AutoTradeEngine {
         await this._gate(signal);
         if (agent.isSigned) continue;
         const base = R.classify(agent, this.state.config, roleMap);
+        if (base === 'side' && this._ownSpenderTakes(ownerUser, agent, roleMap)) {
+          this._log('info', 'at2.leftForSpender', { player: agent.name, owner: ownerName }, `${agent.name} is left on ${ownerName}'s Scout · that Harcayıcı signs it in its own turn`, id);
+          continue;
+        }
         if (base === 'side' && this._needsLv30(agent, roleMap)) {
           if (await this._stokBuy(ownerUser, agent, signal, id) === 'self') await this._friendSign(id, role, ownerUser, ownerName, agent, roleMap, roleNames, signal);
           continue;

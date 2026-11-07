@@ -347,7 +347,7 @@ async function pauseServicesFor(accountIds, taskName, { prefix = 'sc', logTask =
       const release = autoTrade.holdAccounts([...ids]);
       resume.push(['Auto Trade', async () => release()]);
     } else {
-      await autoTrade.stop();
+      await autoTrade.stop({ hard: false });
       resume.push(['Auto Trade', () => autoTrade.continue()]);
     }
   }
