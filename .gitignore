@@ -19,4 +19,6 @@ release.zip
 
 # Claude Code (local paths / per-account MCP servers)
 .mcp.json
+.mcp-accounts.json
+.mcp.json.yedek-*
 .claude/settings.local.json
