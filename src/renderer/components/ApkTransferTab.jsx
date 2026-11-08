@@ -30,7 +30,7 @@ const TEXT = {
     skip: { belowMin: 'en az {min} gerekli ({have})', rosterFull: 'kadro dolu', noBalance: 'bakiye okunamadı' },
     st: { queued: 'Sırada', login: 'Giriş', ready: 'Hazır', claiming: 'Satışlar toplanıyor', notEligible: 'Uygun değil', buying: 'Satın alıyor', done: 'Bitti', error: 'Hata' },
     tr: { planned: 'Planlandı', listing: 'Listeleniyor', listed: 'Listelendi', buying: 'Alınıyor', bought: 'Alındı', claimed: 'Tamam', noPlayer: 'Oyuncu bulunamadı', listFailed: 'Listelenemedi', buyFailed: 'Alınamadı', claimFailed: 'Toplanamadı' },
-    step: { starting: 'Başlıyor', claiming: 'Satışlar toplanıyor ve bakiyeler okunuyor ({n} hesap)', finding: '{side} için oyuncu bulunuyor ve listeleniyor ({currency}, {n}/{of})', trading: '{spender} → main takası ({n} oyuncu)', buying: 'Hesaplar ilanlarını aynı anda alıyor ({n})', mainClaim: 'Main satışları topluyor' },
+    step: { starting: 'Başlıyor', claiming: 'Satışlar toplanıyor ve bakiyeler okunuyor ({n} hesap)', finding: '{side} için oyuncu bulunuyor ve listeleniyor ({currency}, {n}/{of})', trading: '{spender} → main takası ({n} oyuncu)', scanning: 'Ucuz oyuncu aranıyor · {where}', buying: 'Hesaplar ilanlarını aynı anda alıyor ({n})', mainClaim: 'Main satışları topluyor' },
     reason: { done: 'Bitti', partial: 'Eksiklerle bitti', nothingEligible: 'Uygun hesap yoktu', noPlayers: 'Oyuncu bulunamadı', stopped: 'Durduruldu', error: 'Hata' },
     how: 'Nasıl çalışır?',
     howLines: [
@@ -66,7 +66,7 @@ const TEXT = {
     skip: { belowMin: 'needs at least {min} ({have})', rosterFull: 'roster full', noBalance: 'balance not read' },
     st: { queued: 'Queued', login: 'Signing in', ready: 'Ready', claiming: 'Claiming sales', notEligible: 'Not eligible', buying: 'Buying', done: 'Done', error: 'Error' },
     tr: { planned: 'Planned', listing: 'Listing', listed: 'Listed', buying: 'Buying', bought: 'Bought', claimed: 'Done', noPlayer: 'No player found', listFailed: 'Not listed', buyFailed: 'Not bought', claimFailed: 'Not claimed' },
-    step: { starting: 'Starting', claiming: 'Claiming sales and reading balances ({n} accounts)', finding: 'Finding and listing a player for {side} ({currency}, {n}/{of})', trading: '{spender} → main trade ({n} players)', buying: 'The accounts buy their listings at the same time ({n})', mainClaim: 'Main claims the sales' },
+    step: { starting: 'Starting', claiming: 'Claiming sales and reading balances ({n} accounts)', finding: 'Finding and listing a player for {side} ({currency}, {n}/{of})', trading: '{spender} → main trade ({n} players)', scanning: 'Looking for a cheap player · {where}', buying: 'The accounts buy their listings at the same time ({n})', mainClaim: 'Main claims the sales' },
     reason: { done: 'Finished', partial: 'Finished with gaps', nothingEligible: 'No eligible account', noPlayers: 'No player found', stopped: 'Stopped', error: 'Error' },
     how: 'How it works',
     howLines: [

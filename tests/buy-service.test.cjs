@@ -1,7 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
-const { BuyService, rowReady, matchingTickets, pickAccount, affordableCurrencies, PARK_PRICE } = require('../src/main/services/buy-service.cjs');
+const { BuyService, makeCooldownMs, rowReady, matchingTickets, pickAccount, affordableCurrencies, PARK_PRICE } = require('../src/main/services/buy-service.cjs');
 
 // Fake market: listings, per-user balances, purchases, my listings; writes need register.
 function fakeGame({ users, listings }) {
@@ -22,6 +22,7 @@ function fakeGame({ users, listings }) {
     s.registered = null;
     s.timeout = () => ({ emit: (event, p, cb) => {
       calls.push({ event, payload: p });
+      if (event === 'starcard:makeStarCards' && st.makeFails > 0) { st.makeFails--; return setTimeout(() => cb(null, { success: false, message: 'Please wait 1 second before trying again.' }), 1); }
       if (event === 'updatePlayerPositions') { const u = st.users[s.registered]; u.slots = Object.fromEntries(p.starters.map(x => [x.playerId, x.slot])); (st.lineups ||= []).push(p); }
       setTimeout(() => cb(null, { success: true }), 1);
     } });
@@ -345,3 +346,35 @@ test('salary ranges: a second row for the same player starts above the first ran
   assert.deepEqual(game.st.listings.filter(l => l.status === 'SOLD').map(l => l.id).sort(), ['t1', 't3']);
   assert.equal(searches.length, 1, 'one search in the scan for both ranges, not one per range');
 }, { timeout: 10000 });
+
+test('Trading Hall bulk buy: one by one on the chosen account, stops at the first it cannot pay; with "card" each is made a card after its buy', async () => {
+  const game = fakeGame({ users: { 'u-a': { apk: 350, tix: 0 } }, listings: [L('t1', 'p1', 'Jay Huff', 100, 60), L('t2', 'p2', 'Ben Sheppard', 200, 30), L('t3', 'p3', 'Cam Spencer', 100, 30), L('t4', 'p4', 'Last One', 10, 30)] });
+  const { svc, logs, data } = service(game, [['a', 'Trophy3']], 'a');
+  const T = (id, pid, name, price) => ({ id, playerId: pid, name, price, currency: 'APK', salary: 30 });
+  await svc.bulkBuy('a', [T('t1', 'p1', 'Jay Huff', 100), T('t2', 'p2', 'Ben Sheppard', 200), T('t3', 'p3', 'Cam Spencer', 100), T('t4', 'p4', 'Last One', 10)], { convert: true });
+  await assert.rejects(svc.bulkBuy('a', [T('t4', 'p4', 'Last One', 10)]), /already running/);
+  while (svc.snapshot().bulk.status === 'running') await new Promise(r => setTimeout(r, 20));
+  const b = svc.snapshot().bulk;
+  assert.deepEqual([b.bought, b.converted, b.stopReason], [2, 2, 'funds'], '350 APK: 100 + 200, the third (100) is not affordable: it stops, the cheaper fourth is not bought');
+  assert.equal(game.st.users['u-a'].apk, 50);
+  const seq = game.calls.filter(c => ['market:buyPlayer', 'starcard:makeStarCards'].includes(c.event)).map(c => c.event === 'market:buyPlayer' ? 'buy' : 'card');
+  assert.deepEqual(seq, ['buy', 'card', 'buy', 'card']);
+  assert.ok(data().bought.every(e => e.state === 'converted'));
+  assert.ok(logs.some(l => l.code === 'by.bulkNoFunds') && logs.some(l => l.code === 'by.bulkDone'));
+});
+
+test('Turn into card waits out the game cooldown ("Please wait N seconds") and tries again', async () => {
+  assert.equal(makeCooldownMs({ success: false, message: 'Please wait 2 seconds before trying again.' }), 2700);
+  assert.equal(makeCooldownMs({ success: false, message: 'One or more players are not in your team' }), null);
+  const game = fakeGame({ users: { 'u-a': { apk: 500, tix: 0 } }, listings: [L('t1', 'p1', 'Jay Huff', 100, 60), L('t2', 'p2', 'Ben Sheppard', 100, 30)] });
+  game.st.makeFails = 2;
+  const { svc, logs, data } = service(game, [['a', 'Trophy3']], 'a');
+  const T = (id, playerId, name, price) => ({ id, playerId, name, price, currency: 'APK', salary: 40 });
+  await svc.bulkBuy('a', [T('t1', 'p1', 'Jay Huff', 100), T('t2', 'p2', 'Ben Sheppard', 100)], { convert: true });
+  while (svc.snapshot().bulk.status === 'running') await new Promise(r => setTimeout(r, 20));
+  const b = svc.snapshot().bulk;
+  assert.equal(b.converted, 2, JSON.stringify(b));
+  assert.equal(game.calls.filter(c => c.event === 'starcard:makeStarCards').length, 4, '2 cooldown answers, then success');
+  assert.ok(!logs.some(l => l.code === 'by.convertFailed'));
+  assert.ok(data().bought.every(e => e.state === 'converted'));
+});

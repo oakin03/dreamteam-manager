@@ -347,8 +347,10 @@ async function pauseServicesFor(accountIds, taskName, { prefix = 'sc', logTask =
       const release = autoTrade.holdAccounts([...ids]);
       resume.push(['Auto Trade', async () => release()]);
     } else {
+      // paused stays paused afterwards; a run the user stops meanwhile stays stopped (user 2026-11-08)
+      const wasPaused = at.status === 'paused';
       await autoTrade.stop({ hard: false });
-      resume.push(['Auto Trade', () => autoTrade.continue()]);
+      resume.push(['Auto Trade', () => autoTrade.resumeAfterTask({ paused: wasPaused })]);
     }
   }
   const ab = buy.snapshot();
@@ -982,10 +984,10 @@ function registerIpc() {
     if (options.stopConflicts) await stopAutoTradeConflicts(options.accountIds || []);
     return autoTrade.start(options);
   });
-  // Hazırlık: only the bench decisions, no run. Auto Play steps aside on the accounts that are
-  // signed in for a listing or a fire.
+  // Hazırlık: a run that only does the bench decisions (list, fire, trade / card to main).
+  // Auto Play steps aside on main and the accounts with a decision.
   ipcMain.handle('auto-trade:prepare', async (_event, options) => {
-    if (options.stopConflicts) await stopAutoTradeConflicts(Object.entries(options.benchDecisions || {}).filter(([, d]) => Object.values(d || {}).some(v => v?.action === 'list' || v?.action === 'fire')).map(([id]) => id));
+    if (options.stopConflicts) await stopAutoTradeConflicts(options.accountIds || []);
     return autoTrade.prepare(options);
   });
   ipcMain.handle('auto-trade:stop-prepare', async () => autoTrade.stopPrepare());
@@ -1107,6 +1109,9 @@ function registerIpc() {
   ipcMain.handle('buy:cheapest', async (_event, query) => buy.cheapest(query || {}));
   ipcMain.handle('buy:sell', async (_event, { entryId, price, currency }) => buy.sell(entryId, price, currency));
   ipcMain.handle('buy:remove-bought', async (_event, ids) => buy.removeBought(ids || []));
+  ipcMain.handle('buy:bulk-buy', async (_event, { accountId, tickets, convert }) => buy.bulkBuy(accountId, tickets || [], { convert: Boolean(convert) }));
+  ipcMain.handle('buy:stop-bulk', async () => buy.stopBulk());
+  ipcMain.handle('buy:clear-bulk', async () => buy.clearBulk());
   ipcMain.handle('buy:convert', async (_event, entryId) => buy.convert(entryId));
   ipcMain.handle('buy:fire', async (_event, ids) => buy.fire(ids || []));
   ipcMain.handle('buy:add-watch', async (_event, players) => buy.addWatch(players || []));

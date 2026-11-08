@@ -223,7 +223,7 @@ export const GUIDE_TR = {
         "Harcayıcı kullanacaksan “Arkadaş Scout'larını kullan”ı aç ve TK tabanını ayarla. Satış fiyatlarını “Otomatik Fiyatlandırma” sekmesinde gir.",
         "“Başlat”a bas. Başka bir sistem bu hesapları kullanıyorsa uyarılırsın; “Durdur ve başlat” ile devam edebilirsin.",
         "Bench'inde önceden oyuncu olan hesaplar için her oyuncuya karar ver: Pazarda listele, Trade'e dahil et, Karta çevir, Kov ya da Hiçbir şey yapma. Maaşı 1 olan takas edilemez oyuncular için yalnız Kov ve Hiçbir şey yapma vardır. Bu kararlar Scout taramasından önce, bütün hesaplarda toplu olarak uygulanır; sonradan bench'e gelen oyuncuya dokunulmaz.",
-        "Sadece hazırlık yap: aynı pencerede bu düğmeyle bench kararlarını Auto Trade'i başlatmadan uygulayabilirsin. 1 saat içinde Auto Trade başlatırsan bu hesaplar tekrar kontrol edilmez.",
+        "Hazırlık: Başlat'ın yanındaki Hazırlık düğmesiyle (ya da başlatma penceresindeki Sadece hazırlık yap ile) bench kararlarını Auto Trade'i başlatmadan yaptırırsın: pazara koyulacaklar listelenir, kovulacaklar kovulur, Trade'e dahil et / Karta çevir oyuncuları hemen main'e verilir ve main karta çevirir, Satılabilir'ler harcayıcıya gider. Scout taranmaz. 1 saat içinde Auto Trade başlatırsan bu hesaplar tekrar kontrol edilmez.",
         "Çalışırken Canlı durum'dan hangi hesapta ne yapıldığını izle. Bitince yan hesaplarda kalanları “Pazara listele”den sat."
       ],
       buttons: [
@@ -254,6 +254,8 @@ export const GUIDE_TR = {
         "Main'in TK'sı bitmeye yakınsa iş durmaz: yan hesaplar main için ancak main'in takasta ödeyebileceği kadar oyuncu alır, gerisini almaz. Main'in kendi Scout'unda parası yetmeyen oyuncu atlanır, daha ucuzları alınmaya devam eder. Takasta main'in TK'sı yine de yetmezse ödeyebildiği kadarı geçer, kalanlar yan hesapta bekler ve Etkinlik'e yazılır.",
         "Auto Trade durdurulursa (elle, Tüm otomasyonları durdur ile ya da PVP gibi zamanlanmış bir görev yüzünden) ya da hata verip durursa, durmadan önce yan hesaplardaki ucuz oyuncular main'e verilir ya da kovulur, harcayıcılar da oyuncularını pazara koyar. Böylece maaş sınırları dolu kalmaz, turnuva gibi işleri kaçırmazlar. Acil durdurmak için Durdur'a ikinci kez bas.",
         "Main'in TK'sı bütün yan hesaplar için birlikte hesaplanır: yan hesaplar (kendi Scout'larında da, arkadaş Scout'larında da) main'in ödeyebileceğinden fazla oyuncu almaz. Main'in TK'sı ucuz oyunculara yetmeyecek kadar azalınca Auto Trade bildirim verip durur; main'e TK aktarıp Devam et'e bas.",
+        "5'erli çalışır: bir yan hesap main'e gidecek 5 oyuncu tuttuğu anda, 6.'yı almadan main ile takas eder; 5 Satılabilir / Stok biriktiğinde de onları harcayıcıya verir ve harcayıcı pazara koyar. Turun sonunda kalanlar da takas edilir.",
+        "Başka bir iş (Trading Hall'dan alım, zamanlanmış görev vb.) Auto Trade'in kullandığı bir hesaba girince Auto Trade kısa süre durur ve iş bitince kaldığı gibi döner: duraklatılmışsa duraklatılmış kalır, sen bu arada Durdur'a bastıysan tekrar başlamaz. Bu kısa durmada ucuz oyuncular takas edilmez, sadece harcayıcılar listeler.",
         "Yan hesaplar birkaç tane aynı anda çalışır (ayardaki sayı kadar); main ile takaslar yine sırayla yapılır. Canlı durum'da bu turun kaç hesabının bittiği ve tahmini tur sonu, ayrıca Auto Trade'in durmadan ve duraklamadan geçen aktif çalışma süresi görünür. Bir arkadaş Scout'u bir kez okunduktan sonra kendi yenilenmesine (30 dakika) kadar tekrar okunmaz.",
         "Base kuralı: değeri Base'inin altına düşmüş bir oyuncuda, maaşı değer × 0,95'e eşit ya da altındaysa Base sayılır. Maaşı değerine eşit olan oyuncu Base sayılmaz.",
         "Rolleri iki yönü gösteren bir oyuncu (ör. Satılabilir + Kart) gelirse Auto Trade durur ve sorar: karta çevir, satılabilir kalsın ya da dokunma.",
@@ -589,12 +591,13 @@ export const GUIDE_TR = {
     {
       id: "trade", icon: "🏛️", name: "Trading Hall",
       what: "Oyunun Trading Hall ilanlarını tarar ve fiyat, maaş, Base, değer ve değer değişimine göre süzmeni sağlar. Buradan oyuncu alabilir ve karta çevirebilirsin.",
-      steps: ["“Refresh Trading Hall” ile tara.", "Filtrelerle ya da hazır filtrelerle süz.", "İstediğin ilanda “Satın Al ▾”dan hesabı seç.", "Alınanları “Satın alınanlar”dan fiyat verip pazara koy ya da (Main ile alındıysa) karta çevir."],
+      steps: ["“Refresh Trading Hall” ile tara.", "Filtrelerle ya da hazır filtrelerle süz.", "İstediğin ilanda “Satın Al ▾”dan hesabı seç ya da soldaki kutularla birden çok ilan seçip “Hepsini al” / “Hepsini al ve karta çevir” de.", "Alınanları “Satın alınanlar”dan fiyat verip pazara koy ya da (Main ile alındıysa) karta çevir."],
       buttons: [
         ["Refresh Trading Hall / Stop at price", "Baştan tarar; belirtilen fiyata gelince durur."],
         ["Hazır filtreler ve filtre grupları", "Oyuncu, Maaş, Fiyat, Base ve Auto Buy başlıkları; Sıfırla hepsini temizler."],
         ["Satın Al ▾", "Hesaplar ilanın para birimine göre çoktan aza sıralanır; parası yetmeyen soluk görünür."],
-        ["Satın alınanlar", "Fiyat ve para birimi verip listele; pazardaysa fiyatı güncellenir."],
+        ["Satın alınanlar", "Fiyat ve para birimi verip listele; pazardaysa fiyatı güncellenir. Hepsini temizle, listedeki kayıtları siler (oyunculara dokunmaz)."],
+        ["Hepsini al / Hepsini al ve karta çevir", "Yalnızca seçili ilanlar için çalışır (seçim yokken görünmez). Basınca alacak hesabı seçersin; her hesabın kaç ilana yettiği yazar. İlanlar sırayla tek tek alınır; hesabın APK / TIX'i bir ilana yetmeyince orada durur. Karta çevir seçeneğinde her oyuncu alındıktan 1 saniye sonra yıldız karta çevrilir, sonra sıradaki alınır; oyun \"bekle\" derse söylediği süre kadar bekleyip yeniden dener. Durdur ile yarıda kesebilirsin."],
         ["Karta çevir", "Yalnızca Main ile alınanlarda; maaşı değerinin çok altındaysa ya da Base oyuncuysa önce uyarır."],
         ["Auto Buy etiketleri", "Şartı karşılayanlar, İzleniyor · maaş eşleşti, İzleniyor, İzlenmeyenler."]
       ],

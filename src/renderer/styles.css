@@ -1119,3 +1119,13 @@ td.good-text b,td.bad-text b{font-weight:800}
 .ds-prize.r-mythic{border-color:#ef4444;color:#dc2626}
 .at2-pricing-table .bought-price input:disabled{opacity:.5;font-style:italic}
 .ds-prize-btn{cursor:pointer;font-family:inherit}.ds-prize-btn:hover{filter:brightness(.95);text-decoration:underline dotted}
+
+/* Trading Hall bulk buy */
+.th-bulk { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 8px 12px; margin-bottom: 8px; }
+.th-bulk .sp { flex: 1; }
+.th-bulk-accounts { display: flex; flex-direction: column; gap: 4px; max-height: 340px; overflow: auto; margin: 8px 0; }
+.th-bulk-accounts button { display: flex; justify-content: space-between; gap: 12px; padding: 7px 10px; border: 1px solid var(--line, #3334); border-radius: 8px; background: transparent; color: inherit; cursor: pointer; text-align: left; }
+.th-bulk-accounts button:hover:not(:disabled) { background: var(--hover, #8881); }
+.th-bulk-accounts button.off { opacity: .45; cursor: not-allowed; }
+.th-bulk-accounts em { font-style: normal; opacity: .75; font-size: 12px; }
+.bought-clear { margin-left: 10px; }

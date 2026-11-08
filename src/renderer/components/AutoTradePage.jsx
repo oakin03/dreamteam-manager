@@ -52,7 +52,7 @@ const TEXT = {
     preTitle: 'Başlamadan önce', checking: 'Hesaplar kontrol ediliyor…', conflictsTitle: 'Bu hesaplar başka bir sistemde kullanılıyor',
     conflict: { autoplay: 'Auto Play çalışıyor', scout: 'Scout açık', equipment: 'Ekipman açık', market: 'Pazar işlemi sürüyor', tournament: 'Turnuva kaydı sürüyor', schedule: 'Zamanlayıcıda bekleyen görev' },
     stopAndStart: 'Durdur ve başlat', benchTitle: 'Bench\'te önceden oyuncu olan hesaplar', benchHint: 'Her oyuncu için seç: sadece "Trade\'e dahil et" seçilenler (ve rolü/fiyatı uyanlar) kullanılır.',
-    starting: 'Başlatılıyor · önce seçili hesaplardaki Auto Play durduruluyor…', actList: 'Pazarda listele', actTrade: 'Trade\'e dahil et', actCard: 'Karta çevir', actFire: 'Kov', actNone: 'Hiçbir şey yapma', fireTitle: 'Oyuncular kovulacak', fireAsk: 'Bu oyuncular takımdan kovulacak (oyundaki FIRE). Bu işlem geri alınamaz. Emin misin?', fireYes: 'Evet, kov ve başlat', cardHint: 'Rolüne bakılmadan Main\'e aktarılır ve karta çevrilir', blocked: { equipped: 'Ekipmanlı · taşınamaz', x: 'X oyuncu · taşınamaz', temporary: 'Süreli · taşınamaz', starter: 'Başlangıç beşi' },
+    starting: 'Başlatılıyor · önce seçili hesaplardaki Auto Play durduruluyor…', actList: 'Pazarda listele', actTrade: 'Trade\'e dahil et', actCard: 'Karta çevir', actFire: 'Kov', actNone: 'Hiçbir şey yapma', fireTitle: 'Oyuncular kovulacak', fireAsk: 'Bu oyuncular takımdan kovulacak (oyundaki FIRE). Bu işlem geri alınamaz. Emin misin?', fireYes: 'Evet, kov ve başlat', fireYesPrep: 'Evet, kov ve hazırla', cardHint: 'Rolüne bakılmadan Main\'e aktarılır ve karta çevrilir', blocked: { equipped: 'Ekipmanlı · taşınamaz', x: 'X oyuncu · taşınamaz', temporary: 'Süreli · taşınamaz', starter: 'Başlangıç beşi' },
     fitsMain: 'Main\'e gider', fitsSide: 'Side\'da kalır', fitsNone: 'Rol/fiyat uymuyor',
     noBench: 'Hiçbir hesabın bench\'inde oyuncu yok.', startNow: 'Başlat',
     live: 'Canlı durum', openTime: 'açık', visits: 'giriş', tk: 'TK', noPlayers: 'Henüz oyuncu yok',
@@ -75,11 +75,11 @@ const TEXT = {
     wrapStop: 'Durduruluyor: {cheap} ucuz oyuncu main\'e veriliyor (TK yetmezse kovuluyor), harcayıcılar oyuncularını pazara koyuyor',
     wrapPause: 'Duraklatıldı: harcayıcılar oyuncularını pazara koyuyor (ucuz oyunculara dokunulmuyor)',
     wrapLeft: '{done}/{total} işlem · kalan ~{t}',
-    prepBtn: 'Sadece hazırlık yap', prepHint: 'Bench kararlarını (pazara koy / kov / trade\'e dahil et) şimdi uygular, Auto Trade\'i başlatmaz. 1 saat içinde Auto Trade başlatırsan bu hesaplar tekrar kontrol edilmez.',
+    prepBtn: 'Sadece hazırlık yap', prepTop: 'Hazırlık', prepTopHint: 'Bench\'teki oyunculara karar verip sadece bunları yaptırır (Auto Trade başlamaz)', prepRun: 'Hazırlık', prepNoDecision: 'Önce en az bir oyuncu için karar seç.', prepHint: 'Bench kararlarını şimdi uygular: pazara koyulacaklar listelenir, kovulacaklar kovulur, Trade\'e dahil et / Karta çevir oyuncuları main\'e verilir (main karta çevirir), Satılabilir\'ler harcayıcıya gider. Auto Trade\'i başlatmaz. 1 saat içinde Auto Trade başlatırsan bu hesaplar tekrar kontrol edilmez.',
     prepRunning: 'Hazırlık sürüyor · {done}/{total} hesap', prepStop: 'Hazırlığı durdur', prepDone: 'Hazırlık yapıldı ({time}) · {n} hesap tekrar kontrol edilmeyecek', prepClear: 'Hazırlığı unut',
     prepared: 'Hazırlık yapıldı ({time}) · tekrar kontrol edilmedi', prepFailed: 'Hazırlık yarıda kaldı: {error}',
     waitScout: '{name} Scout yenilenmesini bekliyor · {time}',
-    steps: { prep: 'Hazırlık: bench kararları · {done}/{total} hesap', starting: 'Başlıyor', opening: '{name} açılıyor', scouting: '{name} Scout · {candidates} uygun · {attempts} hak', signing: '{name}: {player} alınıyor ({price} TK)', callback: '{name}: Call back', converting: 'Main: {count} oyuncu karta çevriliyor', trading: '{side} ile takas · Main {give} verir, {take} alır · {tk} TK', waitingScout: '{name} Scout yenilenmesini bekliyor', cardScan: 'Main hesabında kart taraması yapılıyor', leftovers: 'Durmadan önce: {cheap} ucuz oyuncu, {count} harcayıcı', friendSync: 'Arkadaş ağı kontrol ediliyor', listing: '{name}: {count} oyuncu pazara konuyor', done: 'Bitti', stopped: 'Durduruldu' }
+    steps: { prep: 'Hazırlık: bench kararları · {done}/{total} hesap', starting: 'Başlıyor', opening: '{name} açılıyor', scouting: '{name} Scout · {candidates} uygun · {attempts} hak', signing: '{name}: {player} alınıyor ({price} TK)', callback: '{name}: Call back', converting: 'Main: {count} oyuncu karta çevriliyor', trading: '{side} ile takas · Main {give} verir, {take} alır · {tk} TK', waitingScout: '{name} Scout yenilenmesini bekliyor', cardScan: 'Main hesabında kart taraması yapılıyor', leftovers: 'Durmadan önce: {cheap} ucuz oyuncu, {count} harcayıcı', prepDone: 'Hazırlık bitti · bench kararları uygulandı', friendSync: 'Arkadaş ağı kontrol ediliyor', friendBoard: "{name}: {owner} adlı arkadaşın Scout listesine bakılıyor", spenderSearch: '{name}: {player} ({owner}) için uygun harcayıcı aranıyor', listing: '{name}: {count} oyuncu pazara konuyor', done: 'Bitti', stopped: 'Durduruldu' }
   },
   en: {
     title: 'Auto Trade', subtitle: 'Scout · star cards · main ↔ side trades',
@@ -108,7 +108,7 @@ const TEXT = {
     preTitle: 'Before starting', checking: 'Checking accounts…', conflictsTitle: 'These accounts are used by another system',
     conflict: { autoplay: 'Auto Play running', scout: 'Scout open', equipment: 'Equipment open', market: 'Market job running', tournament: 'Tournament registration running', schedule: 'Scheduled task waiting' },
     stopAndStart: 'Stop and start', benchTitle: 'Accounts with players already on the bench', benchHint: 'Choose per player: only "Include in trade" players (that fit a role/price) are used.',
-    starting: 'Starting · Auto Play on the selected accounts is being stopped first…', actList: 'List on market', actTrade: 'Include in trade', actCard: 'Turn into a card', actFire: 'Fire', actNone: 'Do nothing', fireTitle: 'Players will be fired', fireAsk: 'These players will be fired from the team (the game\'s FIRE). This cannot be undone. Are you sure?', fireYes: 'Yes, fire and start', cardHint: 'Moved to Main and turned into a card whatever its roles', blocked: { equipped: 'Equipped · cannot move', x: 'X player · cannot move', temporary: 'Temporary · cannot move', starter: 'Starter' },
+    starting: 'Starting · Auto Play on the selected accounts is being stopped first…', actList: 'List on market', actTrade: 'Include in trade', actCard: 'Turn into a card', actFire: 'Fire', actNone: 'Do nothing', fireTitle: 'Players will be fired', fireAsk: 'These players will be fired from the team (the game\'s FIRE). This cannot be undone. Are you sure?', fireYes: 'Yes, fire and start', fireYesPrep: 'Yes, fire and prepare', cardHint: 'Moved to Main and turned into a card whatever its roles', blocked: { equipped: 'Equipped · cannot move', x: 'X player · cannot move', temporary: 'Temporary · cannot move', starter: 'Starter' },
     fitsMain: 'goes to main', fitsSide: 'stays on side', fitsNone: 'role/price does not fit',
     noBench: 'No account has players on the bench.', startNow: 'Start',
     live: 'Live', openTime: 'open', visits: 'visits', tk: 'TK', noPlayers: 'No players yet',
@@ -146,11 +146,11 @@ const TEXT = {
     wrapStop: 'Stopping: {cheap} cheap player(s) go to main (fired if its TK is not enough), the spenders list their players',
     wrapPause: 'Paused: the spenders list their players (cheap players are left alone)',
     wrapLeft: '{done}/{total} steps · ~{t} left',
-    prepBtn: 'Only prepare', prepHint: 'Applies the bench decisions (list / fire / include in trade) now without starting Auto Trade. Started within an hour, these accounts are not checked again.',
+    prepBtn: 'Only prepare', prepTop: 'Prepare', prepTopHint: 'Decide on the bench players and only carry that out (Auto Trade does not start)', prepRun: 'Preparation', prepNoDecision: 'Choose a decision for at least one player first.', prepHint: 'Carries out the bench decisions now: players to list are listed, players to fire are fired, Include in trade / Turn into card players go to main (main turns them into cards), Satılabilir go to a spender. Auto Trade does not start. Started within an hour, these accounts are not checked again.',
     prepRunning: 'Preparing · {done}/{total} accounts', prepStop: 'Stop preparing', prepDone: 'Prepared ({time}) · {n} accounts are not checked again', prepClear: 'Forget the preparation',
     prepared: 'Prepared ({time}) · not checked again', prepFailed: 'Preparation stopped: {error}',
     waitScout: '{name} waits for its Scout · {time}',
-    steps: { prep: 'Preparing: bench decisions · {done}/{total} accounts', starting: 'Starting', opening: 'Opening {name}', scouting: '{name} Scout · {candidates} eligible · {attempts} callbacks', signing: '{name}: signing {player} ({price} TK)', callback: '{name}: Call back', converting: 'Main: converting {count} player(s)', trading: 'Trade with {side} · main gives {give}, gets {take} · {tk} TK', waitingScout: '{name} waits for its Scout refresh', cardScan: 'Scanning the cards of the main account', leftovers: 'Before stopping: {cheap} cheap player(s), {count} spender(s)', friendSync: 'Checking the friend network', listing: '{name}: listing {count} player(s)', done: 'Done', stopped: 'Stopped' }
+    steps: { prep: 'Preparing: bench decisions · {done}/{total} accounts', starting: 'Starting', opening: 'Opening {name}', scouting: '{name} Scout · {candidates} eligible · {attempts} callbacks', signing: '{name}: signing {player} ({price} TK)', callback: '{name}: Call back', converting: 'Main: converting {count} player(s)', trading: 'Trade with {side} · main gives {give}, gets {take} · {tk} TK', waitingScout: '{name} waits for its Scout refresh', cardScan: 'Scanning the cards of the main account', leftovers: 'Before stopping: {cheap} cheap player(s), {count} spender(s)', prepDone: 'Preparation done · bench decisions carried out', friendSync: 'Checking the friend network', friendBoard: "{name}: going through {owner}'s Scout board", spenderSearch: '{name}: looking for a spender for {player} ({owner})', listing: '{name}: listing {count} player(s)', done: 'Done', stopped: 'Stopped' }
   },
   get fil() { return filOf(this.en); }
 };
@@ -232,8 +232,8 @@ export default function AutoTradePage({ state, t, toast, msgText, Modal, refresh
   const toggleAcc = id => set({ accountIds: form.accountIds.includes(id) ? form.accountIds.filter(v => v !== id) : [...form.accountIds, id] });
   const toggleRole = (key, id) => set({ [key]: form[key].includes(id) ? form[key].filter(v => v !== id) : [...form[key], id] });
 
-  const openPreflight = () => run_(async () => {
-    setPre({ loading: true });
+  const openPreflight = (mode = 'start') => run_(async () => {
+    setPre({ loading: true, mode });
     const res = await api.autoTrade.preflight({ accountIds: selected, config: { ...form, maxPrice: priceNum } });
     const d = {};
     for (const a of res.accounts) for (const p of a.bench) {
@@ -241,18 +241,19 @@ export default function AutoTradePage({ state, t, toast, msgText, Modal, refresh
       d[a.id][p.id] = { action: 'none', price: (p.roleIds || []).some(r => r !== 'sellable' && form.mainToSideRoleIds.includes(r)) ? 99999 : 20, currency: (p.roleIds || []).some(r => r !== 'sellable' && form.mainToSideRoleIds.includes(r)) ? 'TIX' : 'APK' };
     }
     setDecisions(d);
-    setPre(res);
+    setPre({ ...res, mode });
     if (res.conflicts.length || res.accounts.some(a => a.bench.length)) Promise.resolve(api.autoTrade.attention?.('conflict')).catch(() => {});
   });
   const [fireAsk, setFireAsk] = useState(null);
   // players marked "Fire" are listed once more before the start (FIRE cannot be undone)
   const firing = () => (pre?.accounts || []).flatMap(a => a.bench.filter(p => decisions[a.id]?.[p.id]?.action === 'fire').map(p => ({ ...p, account: a.name })));
   const startChecked = stopConflicts => { const list = firing(); if (list.length) setFireAsk({ list, stopConflicts }); else startNow(stopConflicts); };
+  const prepChecked = stopConflicts => { const list = firing(); if (list.length) setFireAsk({ list, stopConflicts, prep: true }); else prepareNow(stopConflicts); };
   const prep = at.prep;
   const prepRunning = prep?.status === 'running';
   useTick(prepRunning);
   const prepareNow = stopConflicts => run_(async () => {
-    await api.autoTrade.prepare({ ...form, maxPrice: priceNum, parallelSides: Number(form.parallelSides) || 3, accountIds: selected, benchDecisions: decisions, stopConflicts });
+    await api.autoTrade.prepare({ ...form, maxPrice: priceNum, parallelSides: Number(form.parallelSides) || 3, accountIds: selected, actingMainId: mainSelected ? undefined : form.actingMainId, roomPassword: form.roomPassword || undefined, benchDecisions: decisions, stopConflicts });
     setPre(null);
     await refresh();
   });
@@ -276,7 +277,8 @@ export default function AutoTradePage({ state, t, toast, msgText, Modal, refresh
   return <div className="page autotrade2">
     <div className="page-title"><div><h1>{x.title}</h1><span className="subtitle">{x.subtitle}</span></div>
       <div className="toolbar">
-        {!running && <button className="btn primary" disabled={!canStart} onClick={openPreflight}>{x.start}</button>}
+        {!running && <button className="btn ghost" disabled={!canStart} title={x.prepTopHint} onClick={() => openPreflight('prep')}>{x.prepTop}</button>}
+        {!running && <button className="btn primary" disabled={!canStart} onClick={() => openPreflight('start')}>{x.start}</button>}
         {run?.status === 'running' && <button className="btn ghost" onClick={() => run_(() => api.autoTrade.pause())}>{x.pause}</button>}
         {run?.status === 'paused' && <button className="btn success" onClick={() => run_(() => api.autoTrade.resume())}>{x.resume}</button>}
         {running && <button className="btn danger-soft" onClick={() => run_(() => api.autoTrade.stop())}>{x.stop}</button>}
@@ -296,6 +298,7 @@ export default function AutoTradePage({ state, t, toast, msgText, Modal, refresh
     {run && <div className="at2-status panel">
       <span className={`pill ${statusKey === 'error' ? 'bad' : running ? (statusKey === 'paused' ? 'warn' : 'ok') : 'muted'}`}><i />{x.status[statusKey] || statusKey}</span>
       {run.config.loopMode !== 'off' && <span className="pill muted"><i />{fill(x.cycle, { n: run.cycle })}{run.config.loopMode === 'count' ? ` / ${run.config.loopCount}` : ' / ∞'}</span>}
+      {run.config.prepOnly && <span className="pill muted"><i />{x.prepRun}</span>}
       <span className="at2-step">{stepText}</span>
       {run.nextAt && <span className="muted-text">{new Date(run.nextAt).toLocaleTimeString()}</span>}
       <span className="pill muted" title={x.activeTime}><i />{x.activeTime}: {dur(activeSec(run))}</span>
@@ -330,11 +333,11 @@ export default function AutoTradePage({ state, t, toast, msgText, Modal, refresh
     </>}
 
     {pre && <Modal title={x.preTitle} onClose={() => setPre(null)} width={1040}>
-      {pre.loading ? <p>{x.checking}</p> : <Preflight pre={pre} x={x} decisions={decisions} setDecisions={setDecisions} onCancel={() => setPre(null)} onStart={startChecked} onPrepare={prepareNow} playerIndex={playerIndex} starting={starting} />}
+      {pre.loading ? <p>{x.checking}</p> : <Preflight pre={pre} x={x} decisions={decisions} setDecisions={setDecisions} onCancel={() => setPre(null)} onStart={startChecked} onPrepare={prepChecked} playerIndex={playerIndex} starting={starting} />}
       {fireAsk && <Modal title={x.fireTitle} onClose={() => setFireAsk(null)} width={520}>
         <p className="bad-text">{x.fireAsk}</p>
         <ul className="fire-list">{fireAsk.list.map(p => <li key={p.account + p.id}><b>{p.name}</b><InjuryMark name={p.name} /> <span className="muted-text">{p.position} · {p.account}</span></li>)}</ul>
-        <div className="modal-actions"><button className="btn ghost" onClick={() => setFireAsk(null)}>{x.cancel}</button><button className="btn danger" onClick={() => { const a = fireAsk; setFireAsk(null); startNow(a.stopConflicts); }}>{x.fireYes}</button></div>
+        <div className="modal-actions"><button className="btn ghost" onClick={() => setFireAsk(null)}>{x.cancel}</button><button className="btn danger" onClick={() => { const a = fireAsk; setFireAsk(null); (a.prep ? prepareNow : startNow)(a.stopConflicts); }}>{fireAsk.prep ? x.fireYesPrep : x.fireYes}</button></div>
       </Modal>}
     </Modal>}
     {run?.status === 'awaitingListing' && run.listingRequest && <ListingModal req={run.listingRequest} x={x} Modal={Modal} playerIndex={playerIndex} />}
@@ -534,8 +537,13 @@ function Preflight({ pre, x, decisions, setDecisions, onCancel, onStart, onPrepa
         })}</tbody></SortTable></div>)}</> : <p className="muted-text">{x.noBench}</p>}
     <div className="modal-actions">
       <button className="btn ghost" onClick={onCancel}>{x.cancel}</button>
+      {pre.mode === 'prep' ? <>
+        {!anyDecision && <span className="muted-text">{x.prepNoDecision}</span>}
+        <button className={`btn ${pre.conflicts.length ? 'danger-soft' : 'primary'}`} disabled={!anyDecision} title={x.prepHint} onClick={() => onPrepare(pre.conflicts.length > 0)}>{x.prepTop}</button>
+      </> : <>
       {!starting && anyDecision && <button className="btn ghost" title={x.prepHint} onClick={() => onPrepare(pre.conflicts.length > 0)}>{x.prepBtn}</button>}
       {starting ? <span className="pill warn"><i />{x.starting}</span> : pre.conflicts.length ? <button className="btn danger-soft" onClick={() => onStart(true)}>{x.stopAndStart}</button> : <button className="btn primary" onClick={() => onStart(false)}>{x.startNow}</button>}
+      </>}
     </div>
   </div>;
 }

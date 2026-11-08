@@ -25,8 +25,20 @@ const DEFAULT_INTERVAL_SEC = 10;
 const OFFLINE_RETRY_SEC = 120;
 const OFFLINE_GIVE_UP_MS = 60 * 60 * 1000;
 const MAX_BOUGHT = 500;
+const CONVERT_WAIT_MS = 1000; // bulk "buy and turn into card": 1 s after the buy, then Make (user 2026-11-08)
 
 function abortError() { const e = new Error('Aborted'); e.name = 'AbortError'; return e; }
+// starcard:makeStarCards has a cooldown of a few seconds ("Please wait 2 seconds before trying
+// again."): wait what the game says (+0.7 s) and try again, up to MAKE_TRIES times.
+const MAKE_TRIES = 5;
+function makeCooldownMs(r) {
+  const text = String(r?.message || r?.error || '');
+  let secs = Number(r?.retryAfter ?? text.match(/(?:please wait|try again in)\s*(\d+)/i)?.[1]);
+  if (secs > 100) secs /= 1000; // retryAfter in ms
+  if (Number.isFinite(secs) && secs > 0) return Math.ceil(secs * 1000) + 700;
+  return /wait|too fast|cooldown/i.test(text) ? 2000 : null;
+}
+
 function sleep(ms, signal) {
   if (signal?.aborted) return Promise.reject(abortError());
   return new Promise((resolve, reject) => {
@@ -103,6 +115,8 @@ class BuyService {
     this.busy = {};              // ticketId / entryId -> true while working
     this.auto = { status: 'idle' };
     this.controller = null;
+    this.bulk = null;            // Trading Hall bulk buy: { status, accountId, convert, total, done, bought, converted, failed, stopReason }
+    this.bulkCtrl = null;
   }
 
   // ---------- data ----------
@@ -117,7 +131,7 @@ class BuyService {
 
   snapshot() {
     const d = this._data();
-    return { bought: d.bought, watch: d.watch, config: { intervalSec: DEFAULT_INTERVAL_SEC, ...d.config }, auto: { ...this.auto }, busy: { ...this.busy }, parkPrice: PARK_PRICE };
+    return { bought: d.bought, watch: d.watch, config: { intervalSec: DEFAULT_INTERVAL_SEC, ...d.config }, auto: { ...this.auto }, busy: { ...this.busy }, parkPrice: PARK_PRICE, bulk: this.bulk ? { ...this.bulk } : null };
   }
 
   // Every page of the name search (8 listings a page, cheapest first). A name search
@@ -245,46 +259,150 @@ class BuyService {
     try {
       return await this._queueBuy(() => this._withAccount(accountId, task, async () => {
         const conn = await this._conn(accountId, signal);
-        let r = await this._write(conn, 'market:buyPlayer', { userId: conn.userId, ticketId: t.id }, 'market:buyResult', signal);
-        // "Already own this player": park the roster copy (equipment, skill and lineup are
-        // remembered), buy, park the bought one, then bring the original back.
-        let swap = null;
-        if (!r?.success && isOwnedError(r?.message)) {
-          const os = new OwnedSwap({ gs: conn.socket, userId: conn.userId, onActivity: () => this._touch(accountId), log: (level, code, params, message) => this._log(level, code, params, `${t.name}: ${message}`, accountId, task) });
-          const prep = await os.prepare(t.playerId, t.name).catch(error => ({ ok: false, reason: 'failed', message: error.message }));
-          if (prep.ok) {
-            swap = { os, record: prep.record };
-            r = await this._write(conn, 'market:buyPlayer', { userId: conn.userId, ticketId: t.id }, 'market:buyResult', signal);
-            autoList = true; // the bought copy must leave the roster for the original to come back
-          } else if (prep.reason !== 'noListings' && prep.reason !== 'notInRoster') {
-            this._log('warning', 'os.failed', { name: t.name, error: prep.message || prep.reason }, `${t.name}: the already-owned workaround failed · ${prep.message || prep.reason}`, accountId, task);
-          }
-        }
-        try {
-        if (!r?.success) {
-          const message = r?.message || 'unknown reply';
-          this._log('warning', 'by.buyFailed', { name: t.name, price: t.price, currency: t.currency, error: message }, `${t.name} could not be bought · ${message}`, accountId, task);
-          return { ok: false, message };
-        }
-        const data = this._data();
-        const entry = { id: crypto.randomUUID(), accountId, playerId: t.playerId, name: t.name, position: t.position, grade: t.grade, salary: t.salary, base: t.base, boughtPrice: t.price, currency: t.currency, ticketId: t.id, source, boughtAt: new Date(this.now()).toISOString(), state: 'owned', listPrice: null, listCurrency: null };
-        data.bought = [entry, ...data.bought].slice(0, MAX_BOUGHT);
-        this._save(data);
-        this._log('success', 'by.bought', { name: t.name, price: t.price, currency: t.currency }, `${t.name} bought · ${t.price} ${t.currency}`, accountId, task);
-        await this._balance(accountId, conn, signal).catch(() => null);
-        if (autoList) await this._sell(conn, entry.id, PARK_PRICE, 'TIX', signal, task).catch(error => this._log('warning', 'by.parkFailed', { name: t.name, error: error.message }, `${t.name} could not be listed: ${error.message}`, accountId, task));
-        return { ok: true, entryId: entry.id };
-        } finally {
-          if (swap) {
-            const back = await swap.os.restore(swap.record).catch(error => ({ ok: false, message: error.message }));
-            if (!back.ok) this._log('error', 'os.restoreFailed', { name: t.name, error: back.message || back.reason }, `${t.name}: the original could not be brought back · ${back.message || back.reason}`, accountId, task);
-          }
-        }
+        return this._buyCore(conn, accountId, t, { source, autoList, signal, task });
       }));
     } finally {
       delete this.busy[t.id];
       this.onChanged();
     }
+  }
+
+  // One purchase on an open connection. { ok, entryId, swapped, balance } or { ok: false, message }.
+  async _buyCore(conn, accountId, t, { source = 'hall', autoList = false, signal = null, task = 'Trading Hall' } = {}) {
+    let r = await this._write(conn, 'market:buyPlayer', { userId: conn.userId, ticketId: t.id }, 'market:buyResult', signal);
+    // "Already own this player": park the roster copy (equipment, skill and lineup are
+    // remembered), buy, park the bought one, then bring the original back.
+    let swap = null;
+    if (!r?.success && isOwnedError(r?.message)) {
+      const os = new OwnedSwap({ gs: conn.socket, userId: conn.userId, onActivity: () => this._touch(accountId), log: (level, code, params, message) => this._log(level, code, params, `${t.name}: ${message}`, accountId, task) });
+      const prep = await os.prepare(t.playerId, t.name).catch(error => ({ ok: false, reason: 'failed', message: error.message }));
+      if (prep.ok) {
+        swap = { os, record: prep.record };
+        r = await this._write(conn, 'market:buyPlayer', { userId: conn.userId, ticketId: t.id }, 'market:buyResult', signal);
+        autoList = true; // the bought copy must leave the roster for the original to come back
+      } else if (prep.reason !== 'noListings' && prep.reason !== 'notInRoster') {
+        this._log('warning', 'os.failed', { name: t.name, error: prep.message || prep.reason }, `${t.name}: the already-owned workaround failed · ${prep.message || prep.reason}`, accountId, task);
+      }
+    }
+    try {
+    if (!r?.success) {
+      const message = r?.message || 'unknown reply';
+      this._log('warning', 'by.buyFailed', { name: t.name, price: t.price, currency: t.currency, error: message }, `${t.name} could not be bought · ${message}`, accountId, task);
+      return { ok: false, message };
+    }
+    const data = this._data();
+    const entry = { id: crypto.randomUUID(), accountId, playerId: t.playerId, name: t.name, position: t.position, grade: t.grade, salary: t.salary, base: t.base, boughtPrice: t.price, currency: t.currency, ticketId: t.id, source, boughtAt: new Date(this.now()).toISOString(), state: 'owned', listPrice: null, listCurrency: null };
+    data.bought = [entry, ...data.bought].slice(0, MAX_BOUGHT);
+    this._save(data);
+    this._log('success', 'by.bought', { name: t.name, price: t.price, currency: t.currency }, `${t.name} bought · ${t.price} ${t.currency}`, accountId, task);
+    const balance = await this._balance(accountId, conn, signal).catch(() => null);
+    if (autoList) await this._sell(conn, entry.id, PARK_PRICE, 'TIX', signal, task).catch(error => this._log('warning', 'by.parkFailed', { name: t.name, error: error.message }, `${t.name} could not be listed: ${error.message}`, accountId, task));
+    return { ok: true, entryId: entry.id, swapped: Boolean(swap), balance };
+    } finally {
+      if (swap) {
+        const back = await swap.os.restore(swap.record).catch(error => ({ ok: false, message: error.message }));
+        if (!back.ok) this._log('error', 'os.restoreFailed', { name: t.name, error: back.message || back.reason }, `${t.name}: the original could not be brought back · ${back.message || back.reason}`, accountId, task);
+      }
+    }
+  }
+
+  // Trading Hall bulk buy (user 2026-11-08): the selected listings one by one on one account,
+  // as far as its APK / TIX pays — at the first one it cannot pay it stops. With `convert`
+  // each bought player is turned into a star card 1 s after its purchase, before the next buy.
+  async bulkBuy(accountId, tickets, { convert = false } = {}) {
+    if (this.bulk?.status === 'running') throw new Error('A bulk buy is already running.');
+    if (!this._accounts().some(a => a.id === accountId)) throw new Error('Account not found.');
+    const seen = new Set();
+    const list = (tickets || []).map(normTicket).filter(x => x.id && x.playerId && !seen.has(x.id) && seen.add(x.id));
+    if (!list.length) throw new Error('Select players first.');
+    const task = 'Trading Hall';
+    const ctrl = new AbortController();
+    this.bulkCtrl = ctrl;
+    this.bulk = { status: 'running', accountId, convert: Boolean(convert), total: list.length, done: 0, bought: 0, converted: 0, failed: 0, stopReason: null, current: null, startedAt: new Date(this.now()).toISOString() };
+    this._log('info', 'by.bulkStarted', { count: list.length, account: this._name(accountId), convert: convert ? 1 : 0 }, `Bulk buy started · ${list.length} player(s) · ${this._name(accountId)}${convert ? ' · turned into cards' : ''}`, accountId, task);
+    this.onChanged();
+    const b = this.bulk;
+    const work = async () => {
+      await this._withAccount(accountId, task, async () => {
+        // the connection is asked for at every step: an idle one is closed by its timer
+        let bal = (await this._balance(accountId, await this._conn(accountId, ctrl.signal), ctrl.signal).catch(() => null)) || {};
+        for (const t of list) {
+          if (ctrl.signal.aborted) { b.stopReason = 'stopped'; break; }
+          const key = t.currency === 'TIX' ? 'tix' : 'apk';
+          if (Number.isFinite(bal[key]) && bal[key] < t.price) {
+            b.stopReason = 'funds';
+            this._log('warning', 'by.bulkNoFunds', { account: this._name(accountId), name: t.name, price: t.price, currency: t.currency, have: bal[key] }, `${this._name(accountId)} has ${bal[key]} ${t.currency} · ${t.name} costs ${t.price}: the bulk buy stops here`, accountId, task);
+            break;
+          }
+          b.current = t.name;
+          this.busy[t.id] = true;
+          this.onChanged();
+          try {
+            const r = await this._queueBuy(async () => this._buyCore(await this._conn(accountId, ctrl.signal), accountId, t, { source: 'hall', signal: ctrl.signal, task }))
+              .catch(error => ({ ok: false, message: error.message }));
+            if (r.ok) {
+              b.bought += 1;
+              bal = r.balance || { ...bal, [key]: (bal[key] ?? 0) - t.price };
+              if (convert) {
+                if (r.swapped) this._log('warning', 'by.bulkNoCard', { name: t.name }, `${t.name} is already in the roster: not turned into a card`, accountId, task);
+                else {
+                  await sleep(CONVERT_WAIT_MS);
+                  if (await this._makeCard(await this._conn(accountId, ctrl.signal), r.entryId, task)) b.converted += 1;
+                }
+              }
+            } else b.failed += 1;
+          } finally {
+            delete this.busy[t.id];
+            b.done += 1;
+            b.current = null;
+            this.onChanged();
+          }
+        }
+      });
+    };
+    work().catch(error => { b.stopReason = 'error'; b.error = error.message; })
+      .finally(() => {
+        b.status = 'done';
+        b.finishedAt = new Date(this.now()).toISOString();
+        this.bulkCtrl = null;
+        const params = { bought: b.bought, total: b.total, converted: b.converted, failed: b.failed, account: this._name(accountId), reason: b.stopReason || '' };
+        this._log(b.stopReason === 'error' ? 'error' : b.bought ? 'success' : 'warning', 'by.bulkDone', { ...params, error: b.error || '' }, `Bulk buy finished · ${b.bought}/${b.total} bought${convert ? ` · ${b.converted} turned into cards` : ''}${b.error ? ` · ${b.error}` : ''}`, accountId, task);
+        this.onChanged();
+      });
+    return this.snapshot();
+  }
+  stopBulk() { this.bulkCtrl?.abort(); return this.snapshot(); }
+  clearBulk() { if (this.bulk?.status !== 'running') { this.bulk = null; this.onChanged(); } return this.snapshot(); }
+
+  // starcard:makeStarCards, waiting out the game's cooldown between tries.
+  async _makeCall(conn, playerId) {
+    let r = null;
+    for (let i = 0; i < MAKE_TRIES; i++) {
+      this._touch(conn.accountId);
+      r = await conn.socket.ack('starcard:makeStarCards', { userId: conn.userId, playerIds: [playerId] }, { timeoutMs: 20000 }).catch(error => ({ success: false, message: error.message }));
+      if (r?.success) return r;
+      const wait = makeCooldownMs(r);
+      if (wait == null || i === MAKE_TRIES - 1) break;
+      await sleep(wait);
+    }
+    return r;
+  }
+
+  // Make on the account that holds the bought player.
+  async _makeCard(conn, entryId, task) {
+    const entry = this._data().bought.find(e => e.id === entryId);
+    if (!entry) return false;
+    const r = await this._makeCall(conn, entry.playerId);
+    if (!r?.success) {
+      const message = r?.message || r?.error || 'unknown reply';
+      this._log('error', 'by.convertFailed', { name: entry.name, error: message }, `${entry.name} could not be turned into a card · ${message}`, entry.accountId, task);
+      return false;
+    }
+    const data = this._data();
+    const e = data.bought.find(x => x.id === entryId);
+    if (e) { Object.assign(e, { state: 'converted', convertedAt: new Date(this.now()).toISOString() }); this._save(data); }
+    this._log('success', 'by.converted', { name: entry.name }, `${entry.name} turned into a star card`, entry.accountId, task);
+    return true;
   }
 
   // A Harcayıcı listed a player by itself (Auto Trade, roster full or a duplicate): it joins
@@ -376,8 +494,7 @@ class BuyService {
           const e = data.bought.find(x => x.id === entryId);
           if (e) { Object.assign(e, { state: 'owned', listPrice: null, listCurrency: null }); this._save(data); }
         }
-        this._touch(conn.accountId);
-        const r = await conn.socket.ack('starcard:makeStarCards', { userId: conn.userId, playerIds: [entry.playerId] }, { timeoutMs: 20000 }).catch(error => ({ success: false, message: error.message }));
+        const r = await this._makeCall(conn, entry.playerId);
         if (!r?.success) {
           const message = r?.message || r?.error || 'unknown reply';
           this._log('error', 'by.convertFailed', { name: entry.name, error: message }, `${entry.name} could not be turned into a card · ${message}`, entry.accountId, task);
@@ -714,4 +831,4 @@ function ticketFromMarket(t) {
   return { id: t.id, playerId: t.playerId || p.id, name: String(p.visualName || p.name || '').trim(), position: p.position || null, grade: p.rating || null, salary: Number(t.signedSalary), base: Number(p.newBaseSalary) || null, price: Number(t.price), currency: CURRENCY[t.paymentMode] };
 }
 
-module.exports = { BuyService, rowReady, rowDone, matchingTickets, pickAccount, affordableCurrencies, PARK_PRICE };
+module.exports = { makeCooldownMs, BuyService, rowReady, rowDone, matchingTickets, pickAccount, affordableCurrencies, PARK_PRICE };

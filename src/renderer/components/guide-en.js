@@ -223,7 +223,7 @@ export const GUIDE_EN = {
         "To use spenders turn on “Use friends' Scouts” and set the TK floor. Enter the sale prices in the “Auto Pricing” tab.",
         "Press “Start”. You are warned if another system uses these accounts; “Stop and start” goes on.",
         "For accounts that already have bench players, decide per player: List on market, Include in trade, Turn into card, Fire or Do nothing. Players with salary 1 that cannot be traded only have Fire and Do nothing. These decisions are done for all accounts together before any Scout; a player that comes to the bench later is left alone.",
-        "Only prepare: in the same window this button applies the bench decisions without starting Auto Trade. Started within an hour, these accounts are not checked again.",
+        "Hazırlık (Prepare): with the Prepare button next to Start (or Only prepare in the start window) the bench decisions are carried out without starting Auto Trade: players to list are listed, players to fire are fired, Include in trade / Turn into card players go to main at once and main turns them into cards, Satılabilir go to a spender. No Scout is read. Started within an hour, these accounts are not checked again.",
         "Follow the work in Live status. At the end sell what is left on the sides with “List on market”."
       ],
       buttons: [
@@ -254,6 +254,8 @@ export const GUIDE_EN = {
         "When Main is running out of TK the work does not stop: sides sign players for Main only as far as Main can pay for them in the trade. In Main's own Scout a player it cannot afford is skipped and cheaper ones are still signed. If Main still cannot pay a whole trade, the part it can pay goes through; the rest waits on the side and is written to Activity.",
         "When Auto Trade is stopped (by hand, by “Stop all automations” or by a scheduled task such as PVP) or stops with an error, the cheap players on the sides first go to main or are fired and the spenders list their players. So salary caps do not stay full and tournaments are not missed. Press Stop a second time to stop at once.",
         "Main's TK is counted for all sides together: the sides (on their own Scouts and on friends' Scouts) never buy more than main can pay. When main's TK is too low for the cheap players Auto Trade gives a notice and stops; send TK to main and press Continue.",
+        "It works 5 at a time: as soon as a side holds 5 players for main it trades with main before signing a 6th; when 5 Satılabilir / Stok are collected they go to a spender, who lists them. What is left at the end of the turn is traded too.",
+        "When another task (a Trading Hall buy, a scheduled task…) needs an account Auto Trade uses, Auto Trade stops for a moment and comes back as it was afterwards: paused stays paused, and if you pressed Stop meanwhile it does not start again. In this short stop the cheap players are not traded, only the spenders list.",
         "A few sides work at the same time (the number in the settings); trades with main still go one by one. Live status shows how many accounts of this cycle are done, when the cycle should end, and the active time of Auto Trade (stops and pauses not counted). A friend's Scout read once is not read again before its own refresh (30 minutes).",
         "Base rule: for a player whose value fell below its Base, the player counts as Base when its salary is at or below value × 0.95. A player whose salary equals its value is not Base.",
         "If a player's roles point both ways (e.g. Sellable + Card), Auto Trade stops and asks: turn into card, keep as sellable or leave it.",
@@ -589,12 +591,13 @@ export const GUIDE_EN = {
     {
       id: "trade", icon: "🏛️", name: "Trading Hall",
       what: "Scans the game's Trading Hall and lets you filter by price, salary, Base, value and value change. You can buy players here and turn them into cards.",
-      steps: ["Scan with “Refresh Trading Hall”.", "Filter with the filters or presets.", "On a listing choose the account in “Buy ▾”.", "In “Bought players” give a price and list them, or (if bought with Main) turn them into cards."],
+      steps: ["Scan with “Refresh Trading Hall”.", "Filter with the filters or presets.", "On a listing choose the account in “Buy ▾”, or tick several listings in the left column and press “Buy all” / “Buy all and turn into cards”.", "In “Bought players” give a price and list them, or (if bought with Main) turn them into cards."],
       buttons: [
         ["Refresh Trading Hall / Stop at price", "Scans from the start; stops at the given price."],
         ["Presets and filter groups", "Player, Salary, Price, Base and Auto Buy groups; Reset clears them all."],
         ["Buy ▾", "Accounts are sorted by the listing's currency, most first; those that cannot pay are greyed out."],
-        ["Bought players", "Give a price and currency and list; a listed player's price is updated."],
+        ["Bought players", "Give a price and currency and list; a listed player's price is updated. Clear all removes the rows of the list (the players are not touched)."],
+        ["Buy all / Buy all and turn into cards", "Works only for the selected listings (hidden with nothing selected). Then pick the account that buys; each account shows how many listings it can pay. The listings are bought one by one; it stops at the first one the account's APK / TIX cannot pay. With turn into cards each player becomes a star card 1 second after it is bought, then the next one is bought; when the game asks to wait it waits that long and tries again. Stop ends it half way."],
         ["Turn into card", "Only for players bought with Main; warns first if the salary is far under the value or it is a Base player."],
         ["Auto Buy labels", "Meets the conditions, Watched · salary matches, Watched, Not watched."]
       ],

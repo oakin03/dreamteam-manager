@@ -767,21 +767,24 @@ test('a friend board is read once until its refresh, not by every side again', a
   assert.ok(world.users.M.made.includes('f1'));
 });
 
-test('Hazırlık: bench decisions without a run; a start within the hour does not ask or list again, "trade" rows are kept', async () => {
-  const { world, engine } = setup({
-    M: { funds: 50000, lists: [[]] },
-    A: { funds: 90000, bench: [player('l1', 300), player('t1', 40), player('n1', 500)], lists: [[]] }
+test('Hazırlık does the bench work at once (list, fire, trade / card to main), no Scout; a start within the hour does not ask or list again', async () => {
+  const { world, engine, logs } = setup({
+    M: { funds: 50000, lists: [[player('mx', 40)]] },
+    A: { funds: 90000, bench: [player('l1', 300), player('t1', 40), player('c1', 900), player('n1', 500)], lists: [[player('ax', 40)]] }
   }, { roles: { l1: 'sellable', t1: 'card' }, accounts: ['M', 'A'] });
-  await engine.prepare({ accountIds: ['M', 'A'], benchDecisions: { A: { l1: { action: 'list', price: 30, currency: 'APK' }, t1: { action: 'trade' } } } });
-  await engine._preparing;
+  await engine.prepare({ accountIds: ['M', 'A'], mainToSideRoleIds: ['sellable'], sideToMainRoleIds: ['card'], maxPrice: 70, benchDecisions: { A: { l1: { action: 'list', price: 30, currency: 'APK' }, t1: { action: 'trade' }, c1: { action: 'card' } } } });
+  const prepRun = await finish(engine);
+  assert.equal(prepRun.status, 'done', JSON.stringify(prepRun.error));
+  assert.equal(prepRun.step, 'prepDone');
   assert.equal(engine.snapshot().prep.status, 'done');
   assert.deepEqual(world.users.A.listed.map(l => l.id), ['l1']);
+  assert.ok(['t1', 'c1'].every(id => world.users.M.made.includes(id)), 'trade / card players went to main and became cards during the Hazırlık');
+  assert.ok(!logs.some(l => ['at2.signed', 'at2.started', 'at2.done'].includes(l.code)), 'no Scout, no run of its own');
   const pre = await engine.preflight({ accountIds: ['M', 'A'] });
   assert.ok(pre.accounts.every(a => a.prepared && !a.bench.length), 'not read again');
   await engine.start({ accountIds: ['M', 'A'], mainToSideRoleIds: ['sellable'], sideToMainRoleIds: ['card'], maxPrice: 49, benchDecisions: {} });
   assert.equal((await finish(engine)).status, 'done');
   assert.equal(world.users.A.listed.length, 1, 'not listed twice');
-  assert.ok(world.users.M.made.includes('t1'), 'the "trade" decision of the Hazırlık reached main');
   assert.ok(world.users.A.bench.some(p => p.id === 'n1'), 'an undecided player is left alone');
   assert.equal(engine.snapshot().prep.fresh, false, 'used once');
 });
@@ -801,4 +804,52 @@ test('pause: the spenders list what they hold, the cheap players waiting on a si
   assert.deepEqual(world.users.S.listed.map(l => l.id), ['ss1'], 'listed while paused');
   assert.ok(world.users.A.bench.some(p => p.id === 'w1') && !world.users.M.made.includes('w1'), 'the cheap player stays');
   assert.equal(engine.state.wrapUp, null);
+});
+
+test('5 at a time: a side trades with main as soon as it holds 5 for main, before it signs the 6th', async () => {
+  const six = [1, 2, 3, 4, 5, 6].map(i => player('k' + i, 40 + i));
+  const { world, engine, logs } = setup({
+    M: { funds: 50000, lists: [[]] },
+    A: { funds: 90000, lists: [six] }
+  }, { accounts: ['M', 'A'] });
+  await engine.start({ accountIds: ['M', 'A'], mainToSideRoleIds: ['sellable'], sideToMainRoleIds: ['card'], maxPrice: 70, parallelSides: 1 });
+  const run = await finish(engine);
+  assert.equal(run.status, 'done', JSON.stringify(run.error));
+  const seq = logs.filter(l => ['at2.signed', 'at2.traded'].includes(l.code) && l.accountId === 'A').map(l => l.code === 'at2.traded' ? 'T' + l.params.take : 's');
+  assert.deepEqual(seq, ['s', 's', 's', 's', 's', 'T5', 's', 'T1']);
+  assert.deepEqual(world.users.M.made.sort(), six.map(p => p.id).sort());
+});
+
+test('another task stopping a paused run: it comes back paused; a run the user stopped meanwhile is not continued; a task stop only lists', async () => {
+  const { engine } = setup({
+    M: { funds: 50000, lists: [[]] },
+    A: { funds: 90000, lists: [[player('p1', 40)]] }
+  }, { accounts: ['M', 'A'] });
+  await engine.start({ accountIds: ['M', 'A'], mainToSideRoleIds: ['sellable'], sideToMainRoleIds: ['card'], maxPrice: 70, parallelSides: 1 });
+  engine.pause();
+  const kinds = [];
+  const wrap = engine._wrapUpNow.bind(engine);
+  engine._wrapUpNow = kind => { kinds.push(kind); return wrap(kind); };
+  await engine.stop({ hard: false });
+  assert.equal(engine.state.status, 'stopped');
+  assert.ok(kinds.includes('task') && !kinds.includes('stop'), 'a task stop does not settle the cheap players');
+  engine.resumeAfterTask({ paused: true });
+  assert.equal(engine.snapshot().run.status, 'paused', 'paused again, not running');
+  await engine.stop();
+  assert.equal(engine.state.stoppedBy, 'user');
+  engine.resumeAfterTask({ paused: false });
+  assert.equal(engine.snapshot().run.status, 'stopped', "the user's stop is final");
+});
+
+test('Hazırlık with decisions on main too: main is done first and stays open while the sides trade with it', async () => {
+  const { world, engine, logs } = setup({
+    M: { funds: 50000, bench: [player('mc', 900)], lists: [[]] },
+    A: { funds: 90000, bench: [player('t1', 40)], lists: [[]] },
+    B: { funds: 90000, bench: [player('t2', 40)], lists: [[]] }
+  }, { roles: { t1: 'card', t2: 'card' }, accounts: ['M', 'A', 'B'] });
+  await engine.prepare({ accountIds: ['M', 'A', 'B'], mainToSideRoleIds: ['sellable'], sideToMainRoleIds: ['card'], maxPrice: 70, parallelSides: 2, benchDecisions: { M: { mc: { action: 'card' } }, A: { t1: { action: 'trade' } }, B: { t2: { action: 'trade' } } } });
+  const run = await finish(engine);
+  assert.equal(run.status, 'done', JSON.stringify(run.error));
+  assert.ok(['mc', 't1', 't2'].every(id => world.users.M.made.includes(id)), JSON.stringify(world.users.M.made));
+  assert.ok(!logs.some(l => l.code === 'at2.traded' && l.accountId === 'M'), 'main does not trade with itself');
 });

@@ -314,6 +314,20 @@ class ApkTransferService {
     const take = (p, source) => { used.add(p.id); return { id: p.id, name: p.visualName || p.name, salary: Number(p.signedSalary || p.baseSalary) || null, source }; };
     let scoutDone = false, friendsDone = false, spendersDone = !config.useSpenders || !this.friendNet;
     let owners = null;
+    // a friend's Scout board is the same whoever reads it: one with nothing cheap on it is not
+    // read again in this run (2026-11-08: 60 spenders read the same empty boards for minutes)
+    const emptyOwners = new Set();
+    const where = name => this._step('scanning', { where: name });
+    const readBoards = async (viewerId, us) => {
+      const out = [];
+      for (let i = 0; i < us.length; i += 4) {
+        if (signal.aborted) throw abortError();
+        const part = us.slice(i, i + 4);
+        const boards = await Promise.all(part.map(u => this.friendNet.board(viewerId, u, signal).catch(() => null)));
+        part.forEach((u, k) => { if (!(boards[k]?.freeAgents || []).some(fits)) emptyOwners.add(u); else out.push([u, boards[k]]); });
+      }
+      return out;
+    };
     const spenderQueue = this.store.getAccounts().filter(a => a.role === 'spender' && a.id !== config.mainId && !config.sideIds.includes(a.id)).map(a => a.id);
     const fromScout = async () => {
       const fa = await main.freeAgents().catch(() => null);
@@ -332,7 +346,10 @@ class ApkTransferService {
       }
       while (owners.length) {
         const o = owners[0];
+        if (emptyOwners.has(o.u)) { owners.shift(); continue; }
+        where(o.name || '?');
         const board = await this.friendNet.board(config.mainId, o.u, signal).catch(() => null);
+        if (!(board?.freeAgents || []).some(fits)) emptyOwners.add(o.u);
         const cand = (board?.freeAgents || []).find(fits);
         if (!cand) { owners.shift(); continue; }
         const r = await this.friendNet.signFrom(config.mainId, o.u, cand.id, signal).catch(() => null);
@@ -363,6 +380,7 @@ class ApkTransferService {
       while (waiting.length) { const p = await tradeWaiting(); if (p) return p; if (waiting.length && !pool.length) break; }
       while (spenderQueue.length) {
         const sp = spenderQueue[0];
+        where(this._name(sp));
         const need = Math.max(1, Math.min(TRADE_BATCH, this.run.transfers.filter(t => t.status === 'planned').length - pool.length));
         let c;
         try { c = await this._conn(conns, sp, signal); } catch (error) { if (error?.name === 'AbortError') throw error; spenderQueue.shift(); continue; }
@@ -381,9 +399,9 @@ class ApkTransferService {
           }
           if (got.length < room && this.friendNet) {
             const f = await this.friendNet.friendsOf(sp, { signal }).catch(() => null);
-            for (const u of f ? [...f.ids] : []) {
+            const us = (f ? [...f.ids] : []).filter(u => !emptyOwners.has(u));
+            for (const [u, board] of await readBoards(sp, us)) {
               if (got.length >= room) break;
-              const board = await this.friendNet.board(sp, u, signal).catch(() => null);
               for (const a of (board?.freeAgents || []).filter(spFits)) {
                 if (got.length >= room) break;
                 const r = await this.friendNet.signFrom(sp, u, a.id, signal).catch(() => null);
