@@ -191,7 +191,7 @@ export default function HomePage({ state, t, go, msgText, toast = () => {} }) {
       <span className="cc-reset">{x.reset} <b className="num">{clock(resetSec)}</b></span>
     </div>
 
-    {main ? <div className="cc-main"><b>{x.main}: {main.name}</b><span className="num">{x.level} {stats(main.id).level ?? '—'}</span><span className="num">{x.tk} {num(stats(main.id).tk)}</span><span className="num">{x.apk} {num(stats(main.id).apk)}</span><span className="num">{x.tix} {num(stats(main.id).tix)}</span><span className="num cc-usable">{x.apk}/{x.tix}: {num(profile.totalUsableApk)} / {num(profile.totalUsableTix)}</span></div> : <div className="cc-main muted"><b>{x.noMain}</b></div>}
+    {main ? <div className="cc-main"><b>{x.main}: {main.name}</b><span className="num">{x.level} {stats(main.id).level ?? '—'}</span><span className="num">{x.tk} {num(stats(main.id).tk)}</span><span className="num">{x.apk} {num(stats(main.id).apk)}</span><span className="num">{x.tix} {num(stats(main.id).tix)}</span><span className="num cc-usable">{x.apk}: {num(profile.movableApk)}/{num(profile.totalUsableApk)} · {x.tix}: {num(profile.movableTix)}/{num(profile.totalUsableTix)}</span></div> : <div className="cc-main muted"><b>{x.noMain}</b></div>}
 
     <div className="cc-kpis">
       <button className="cc-kpi" onClick={() => go('autoplay')}><small>{x.kReward}</small><b className="num">{tierRows.length ? tiers : '—'}<em>{tierRows.length ? ` ${fill(x.kRewardSub, { n: tierRows.length * 6 })}` : ''}</em></b><span className="cc-bar"><span style={{ width: `${tierRows.length ? Math.round(tiers / (tierRows.length * 6) * 100) : 0}%`, background: 'var(--d-accent)' }} /></span></button>

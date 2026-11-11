@@ -142,6 +142,9 @@ test('APK and TIX use the 5% / minimum 3 cut',()=>{
   assert.deepEqual(snap.effectiveTix,{main:5,a:37,b:190});
   assert.equal(snap.totalUsableTix,232);
   assert.equal(snap.totalUsableApk,121); // 10 + (100-5) + (19-3)
+  // x/y (user 2026-11-11): accounts under 20 cannot send to main, main always counts
+  assert.equal(snap.movableApk,105); // 10 + 95, b (19 APK) left out
+  assert.equal(snap.movableTix,232); // a has 40, b 200: both count
 });
 
 test('Level comes from the game message when the Stadium text is missing',async()=>{

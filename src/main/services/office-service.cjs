@@ -1,4 +1,5 @@
 const { GameSocket } = require('./game-socket.cjs');
+const { WIDE, eachAtOnce, eachWithSocket } = require('./wide.cjs');
 const { ProvingBase } = require('./proving-service.cjs');
 const { matchStartSlot } = require('./match-start-gate.cjs');
 
@@ -142,7 +143,7 @@ class OfficeService {
   // Coach and Big Three of the accounts (signs nobody out unless the game asks for a register).
   async status(accountIds, { teamIds = {} } = {}) {
     const ids = (accountIds && accountIds.length ? accountIds : this._accounts().map(a => a.id)).filter(id => this._account(id));
-    for (const id of ids) await this._read(id, teamIds[id]).catch(() => null);
+    await eachAtOnce(ids, id => this._read(id, teamIds[id]).catch(() => null));
     this.onChanged();
     return this.snapshot();
   }
@@ -340,9 +341,11 @@ class OfficeService {
   async autoRun() {
     if (this.gameHealth?.isDown?.()) return;
     const { coach, big3, superBig3 } = this._auto();
-    for (const id of coach) if (this._account(id)) await this.coachTick(id).catch(e => this._log(id, 'warning', 'autoFailed', { error: e.message }, `Coach: ${e.message}`));
-    for (const [id, teamId] of Object.entries(big3)) if (this._account(id) && teamId) await this.big3Tick(id, teamId).catch(e => this._log(id, 'warning', 'autoFailed', { error: e.message }, `Big3: ${e.message}`));
-    for (const id of superBig3) if (this._account(id)) await this.superTick(id).catch(e => this._log(id, 'warning', 'autoFailed', { error: e.message }, `Super Big3: ${e.message}`));
+    await eachAtOnce(coach.filter(id => this._account(id)), id => this.coachTick(id).catch(e => this._log(id, 'warning', 'autoFailed', { error: e.message }, `Coach: ${e.message}`)));
+    // the Big 3 trainer (big3-auto.cjs) does Big3 / Super Big 3 for every account when it is on
+    if (this.big3AutoOn?.()) return;
+    await eachAtOnce(Object.entries(big3).filter(([id, teamId]) => this._account(id) && teamId), ([id, teamId]) => this.big3Tick(id, teamId).catch(e => this._log(id, 'warning', 'autoFailed', { error: e.message }, `Big3: ${e.message}`)));
+    await eachAtOnce(superBig3.filter(id => this._account(id)), id => this.superTick(id).catch(e => this._log(id, 'warning', 'autoFailed', { error: e.message }, `Super Big3: ${e.message}`)));
   }
   start() {
     if (this.timer) return;
@@ -397,14 +400,14 @@ class MagicTeamService extends ProvingBase {
   // Trios of every account (level, Magic status) with a short sign-in.
   async status(accountIds) {
     const ids = accountIds || this.store.getAccounts().map(a => a.id);
-    for (const id of ids) {
+    await eachAtOnce(ids, async id => {
       const account = this.store.getAccounts().find(a => a.id === id);
-      if (!account) continue;
+      if (!account) return;
       let c = null;
       try { c = await this._main(account); const teams = await this._teams(c); this.info[id] = { teams: teams.filter(t => t.level > 0 || t.status !== 'LOCKED'), readAt: new Date(this.now()).toISOString() }; }
       catch (e) { this.info[id] = { ...(this.info[id] || {}), error: e.message }; }
       finally { if (c?.own) { try { c.gs.close(); } catch {} } }
-    }
+    });
     this.onChanged();
     return this.snapshot();
   }

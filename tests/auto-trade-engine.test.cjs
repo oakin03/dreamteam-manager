@@ -20,6 +20,7 @@ function setup(users, opts = {}) {
     getCardRoles: () => ROLES,
     getCards: () => ({ players: Object.fromEntries((opts.teams || []).map(([pid, team]) => [`id:${pid}`, { playerId: pid, team, noTeam: team === 'No Team' }])) }),
     getSettings: () => settings, saveSettings: v => { settings = v; },
+    getPlayersData: () => opts.playersData || null,
     getAutoTrade2: () => mem.at, saveAutoTrade2: v => { mem.at = JSON.parse(JSON.stringify(v)); }
   };
   const attention = [];
@@ -852,4 +853,163 @@ test('Hazırlık with decisions on main too: main is done first and stays open w
   assert.equal(run.status, 'done', JSON.stringify(run.error));
   assert.ok(['mc', 't1', 't2'].every(id => world.users.M.made.includes(id)), JSON.stringify(world.users.M.made));
   assert.ok(!logs.some(l => l.code === 'at2.traded' && l.accountId === 'M'), 'main does not trade with itself');
+});
+
+test('only Satılabilir / Stok: Kart and cheap players are left on Scout, Satılabilir is signed', async () => {
+  const { world, engine, logs } = setup({
+    M: { funds: 50000, lists: [[]] },
+    A: { funds: 90000, lists: [[player('k1', 900), player('c1', 40), player('s1', 500)]] }
+  }, { roles: { k1: 'card', s1: 'sellable' }, accounts: ['M', 'A'] });
+  await engine.start({ accountIds: ['M', 'A'], mainToSideRoleIds: ['sellable'], sideToMainRoleIds: ['card'], maxPrice: 70, sideOnly: true });
+  const run = await finish(engine);
+  assert.equal(run.status, 'done', JSON.stringify(run.error));
+  const signed = logs.filter(l => l.code === 'at2.signed').map(l => l.params.player);
+  assert.deepEqual(signed.length, 1, JSON.stringify(signed));
+  assert.ok(!world.users.M.made.length, 'nothing turned into cards');
+});
+
+test('Make on main waits while Synthesis / Activate runs on main, then converts', async () => {
+  const { world, engine, logs } = setup({
+    M: { funds: 50000, lists: [[]] },
+    A: { funds: 90000, lists: [[player('k1', 40)]] }
+  }, { roles: {}, accounts: ['M', 'A'] });
+  let asked = 0;
+  engine.cardBusy = () => ++asked < 4; // busy for the first checks, then free
+  engine.timing.cardWaitMs = 5;
+  await engine.start({ accountIds: ['M', 'A'], mainToSideRoleIds: ['sellable'], sideToMainRoleIds: ['card'], maxPrice: 70 });
+  const run = await finish(engine);
+  assert.equal(run.status, 'done', JSON.stringify(run.error));
+  assert.ok(logs.some(l => l.code === 'at2.waitCards'));
+  assert.ok(world.users.M.made.includes('k1'));
+});
+
+test('a trade the game does not confirm but that went through counts as done: the players are made cards', async () => {
+  const { world, engine, logs } = setup({
+    M: { funds: 50000, lists: [[]] },
+    A: { funds: 90000, lists: [[player('k1', 40), player('k2', 41)]] }
+  }, { accounts: ['M', 'A'] });
+  const orig = engine._executeTrade.bind(engine);
+  let first = true;
+  engine._executeTrade = async (...a) => { const r = await orig(...a); if (first && r.success) { first = false; return { success: false, message: 'No tradeResult from the game.' }; } return r; };
+  await engine.start({ accountIds: ['M', 'A'], mainToSideRoleIds: ['sellable'], sideToMainRoleIds: ['card'], maxPrice: 70, parallelSides: 1 });
+  const run = await finish(engine);
+  assert.equal(run.status, 'done', JSON.stringify(run.error));
+  assert.ok(logs.some(l => l.code === 'at2.tradeLanded'));
+  assert.deepEqual(world.users.M.made.sort(), ['k1', 'k2']);
+});
+
+test('Stop: Satılabilir a side still holds is listed by the side when no spender takes it', async () => {
+  const { world, engine } = setup({
+    M: { funds: 50000, lists: [[]] },
+    A: { funds: 90000, lists: [[player('s1', 500)]] }
+  }, { roles: { s1: 'sellable' }, accounts: ['M', 'A'] });
+  let release;
+  const hold = new Promise(r => { release = r; });
+  const orig = engine._mainTurn.bind(engine);
+  engine._mainTurn = async signal => { await hold; return orig(signal); };
+  await engine.start({ accountIds: ['M', 'A'], mainToSideRoleIds: ['sellable'], sideToMainRoleIds: ['card'], maxPrice: 70, parallelSides: 1 });
+  await new Promise(r => setTimeout(r, 20));
+  // the side signed s1 and keeps it (no spender in this run)
+  const acc = engine._ensureAcc('A');
+  acc.players.s1 = { ...engine._row(player('s1', 500), engine.state.config, engine._roleMap(), engine._roleNames(), {}), dir: 'side', status: 'keep' };
+  world.users.A.bench.push(player('s1', 500));
+  const stopping = engine.stop();
+  release();
+  await stopping;
+  assert.deepEqual(world.users.A.listed.map(l => l.id), ['s1']);
+});
+
+test('only Satılabilir / Stok: main has its own turn and closes; the sides never open it, each hands to a spender of its own, which lists at once', async () => {
+  const { world, engine, logs } = setup({
+    M: { funds: 50000, lists: [[]] },
+    A: { funds: 90000, lists: [[player('a1', 500), player('a2', 510)]] },
+    B: { funds: 90000, lists: [[player('b1', 520), player('b2', 530)]] },
+    S: { funds: 90000, lists: [[]] },
+    T: { funds: 90000, lists: [[]] }
+  }, { accounts: ['M', 'A', 'B', 'S', 'T'], accountRoles: { S: 'spender', T: 'spender' }, roles: { a1: 'sellable', a2: 'sellable', b1: 'sellable', b2: 'sellable' } });
+  // the spenders are not sides of this run
+  await engine.start({ accountIds: ['M', 'A', 'B'], mainToSideRoleIds: ['sellable'], sideToMainRoleIds: ['card'], maxPrice: 70, sideOnly: true });
+  const run = await finish(engine);
+  assert.equal(run.status, 'done', JSON.stringify(run.error));
+  const opened = logs.filter(l => l.code === 'at2.opened' || l.code === 'at2.sideTurn').map(l => (l.code === 'at2.sideTurn' ? 'turn:' : '') + l.accountId);
+  assert.equal(opened.filter(x => x === 'M').length, 1, 'main opened once, for its own turn');
+  assert.ok(opened.indexOf('M') < opened.findIndex(x => x.startsWith('turn:')), 'main before the sides');
+  assert.ok(logs.some(l => l.code === 'at2.mainTurn'));
+  const traded = logs.filter(l => l.code === 'at2.spenderTraded').map(l => [l.params.from, l.params.name]);
+  assert.equal(traded.length, 2, JSON.stringify(traded));
+  assert.notEqual(traded[0][1], traded[1][1], 'two sides, two different spenders');
+  const listed = [...world.users.S.listed, ...world.users.T.listed].map(l => l.id).sort();
+  assert.deepEqual(listed, ['a1', 'a2', 'b1', 'b2']);
+  assert.equal(engine._parallel(), 10);
+});
+
+test('Stop: a step that never hears the stop is cut after the grace time (connections closed)', async () => {
+  const { engine, logs } = setup({
+    M: { funds: 50000, lists: [[]] },
+    A: { funds: 90000, lists: [[player('p1', 40)]] }
+  }, { accounts: ['M', 'A'] });
+  // a step stuck on something that ignores the signal, ended only when the connections close
+  let unblock;
+  const stuck = new Promise(r => { unblock = r; });
+  engine._mainTurn = async () => { await stuck; throw new Error('Game socket disconnected.'); };
+  const closeAll = engine._closeAll.bind(engine);
+  engine._closeAll = () => { unblock(); return closeAll(); };
+  await engine.start({ accountIds: ['M', 'A'], mainToSideRoleIds: ['sellable'], sideToMainRoleIds: ['card'], maxPrice: 70 });
+  await new Promise(r => setTimeout(r, 20));
+  const t0 = Date.now();
+  await engine.stop();
+  assert.ok(Date.now() - t0 < 15000);
+  assert.ok(logs.some(l => l.code === 'at2.stopForced'));
+  assert.ok(!engine.controller);
+});
+
+test('Stop: a step that never ends even with its connections closed is cut loose; the run is stopped and its late end changes nothing', async () => {
+  const { engine, logs } = setup({
+    M: { funds: 50000, lists: [[]] },
+    A: { funds: 90000, lists: [[player('p1', 40)]] }
+  }, { accounts: ['M', 'A'] });
+  let release;
+  const never = new Promise(r => { release = r; });
+  engine._mainTurn = async () => { await never; };
+  await engine.start({ accountIds: ['M', 'A'], mainToSideRoleIds: ['sellable'], sideToMainRoleIds: ['card'], maxPrice: 70 });
+  await new Promise(r => setTimeout(r, 20));
+  const t0 = Date.now();
+  await engine.stop();
+  assert.ok(Date.now() - t0 < 20000);
+  assert.equal(engine.state.status, 'stopped');
+  assert.ok(!engine.controller);
+  assert.ok(logs.some(l => l.code === 'at2.stopDetached'));
+  // the old run ends late: it must not turn the stopped run into 'done'
+  release();
+  await new Promise(r => setTimeout(r, 50));
+  assert.equal(engine.state.status, 'stopped');
+});
+
+test('secret players: the price names the player (signed for its role); a price that names nobody is signed and fired when it is of no use', async () => {
+  const known = { ...player('keegan', 1690, { name: 'Keegan Murray' }), secret: true };
+  const unknown = { ...player('nobody', 777, { name: 'Random Guy' }), secret: true };
+  const { world, engine, logs } = setup({
+    M: { funds: 50000, lists: [[]] },
+    A: { funds: 90000, lists: [[known, unknown]] }
+  }, { roles: { keegan: 'card' }, accounts: ['M', 'A'], playersData: { players: [{ id: 'keegan', name: 'Keegan Murray', value: 1690, base: 1200, rating: 'S' }] } });
+  await engine.start({ accountIds: ['M', 'A'], mainToSideRoleIds: ['sellable'], sideToMainRoleIds: ['card'], maxPrice: 70, parallelSides: 1 });
+  const run = await finish(engine);
+  assert.equal(run.status, 'done', JSON.stringify(run.error));
+  assert.ok(logs.some(l => l.code === 'at2.secretSigned' && l.params.player === 'Keegan Murray'), JSON.stringify(logs.map(l => l.code)));
+  assert.ok(world.users.M.made.includes('keegan'), 'the Kart secret went to main and became a card');
+  assert.ok(logs.some(l => l.code === 'at2.secretFired' && l.params.player === 'Random Guy'));
+  assert.ok((world.users.A.fired || []).includes('nobody'));
+});
+
+test('secret players: a Stok secret is signed by a level 15 account too (the secret cut comes on any level)', async () => {
+  const stokSecret = { ...player('jj', 1510, { name: 'Jaren Jackson Jr.' }), secret: true };
+  const { engine, logs } = setup({
+    M: { funds: 50000, lists: [[]] },
+    A: { funds: 90000, lists: [[stokSecret]] }
+  }, { roles: { jj: 'stok' }, levels: { A: 15 }, accounts: ['M', 'A'], playersData: { players: [{ id: 'jj', name: 'Jaren Jackson Jr.', value: 1510, base: 1100, rating: 'S-' }] } });
+  assert.equal(engine._needsLv30({ id: 'jj', secret: true }), false);
+  await engine.start({ accountIds: ['M', 'A'], mainToSideRoleIds: ['sellable', 'stok'], sideToMainRoleIds: ['card'], maxPrice: 70, parallelSides: 1 });
+  const run = await finish(engine);
+  assert.equal(run.status, 'done', JSON.stringify(run.error));
+  assert.ok(logs.some(l => l.code === 'at2.secretSigned' && l.accountId === 'A'), JSON.stringify(logs.map(l => l.code)));
 });

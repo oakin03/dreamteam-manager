@@ -116,7 +116,7 @@ export const GUIDE_EN = {
       ],
       rules: [
         "Passwords are stored encrypted on this computer.",
-        "Usable APK / TIX: what would be left if everything were moved to main. On side accounts the 5% cut is rounded up (at least 3); main has no cut.",
+        "Usable APK / TIX: what would be left if everything were moved to main, shown as x/y. y counts every account; x leaves out side accounts with less than 20 APK (TIX), because those cannot be sent to main. On side accounts the 5% cut is rounded up (at least 3); main has no cut.",
         "Create accounts: a temporary mail address is taken for each account, the account is opened in the game, the team name is prefix + number, the team is built and the logo chosen; the account is added to the daily routine and its Auto Play started.",
         "Accounts are opened 1, 5 or 10 at a time. Numbers continue from the highest one used with that prefix; names taken in the game are skipped.",
         "If the game or the mail site refuses, or 5 accounts in a row fail, it stops instead of forcing. If the app closes halfway, it continues on the next start."
@@ -154,7 +154,7 @@ export const GUIDE_EN = {
     },
     {
       id: "autoplay", icon: "▶️", name: "Auto Play",
-      what: "Plays matches on the selected accounts and does the daily routine every day: Daily Signin, 600-Day sign-in, daily tasks, a 100 TK donation on accounts in an alliance, one Friendly Match and collecting the task rewards.",
+      what: "Plays matches on the selected accounts and does the daily routine every day: Daily Signin, 600-Day sign-in, daily tasks, a 100 TK donation on accounts in an alliance, one Friendly Match, one Group Match (3v3 party) and collecting the task rewards.",
       steps: [
         "Tick accounts in the table (or pick a group / roles at the top).",
         "Press “Start selected”. For one account use ▶ on its row.",
@@ -175,6 +175,7 @@ export const GUIDE_EN = {
         ["Daily Reward switch", "When on, the Stadium's Daily Reward gift is collected when due even on accounts not running Auto Play."]
       ],
       rules: [
+        "Group Match: only parties led by one of our accounts are joined (we press Find match); with none open a new party is made. Strangers' parties are never joined, but strangers may join ours. In a full party a member not ready for a minute is put out. After the match the party is left (an account in a party cannot play Quick Play). An account over the salary cap cannot play Group Match.",
         "The daily routine runs on the first start after 19:10, or at 19:12 while running.",
         "Accounts search Quick Play one after another, so your own accounts do not meet each other. An opponent that is one of your accounts shows in orange.",
         "If the team goes over the salary cap, Auto Play stops on that account and warns you.",
@@ -231,6 +232,7 @@ export const GUIDE_EN = {
         ["Stop / Continue where it stopped", "Stops; before that the cheap players waiting for main on the sides go to main (fired when main's TK is not enough) and the spenders list their players. The steps left and a countdown are shown. You can continue from the same point later."],
         ["Reset progress", "Clears the saved progress; everything starts over."],
         ["Rules by account role", "For each account role other than Main, limits what is signed from Scout (Sellable / Card / Cheap) and gives the role its own price limit. The spender line counts too."],
+        ["Only sign Satılabilir and Stok players", "Off by default. When on, no Kart players and no cheap players under the price limit are signed; only Satılabilir and Stok. In this mode main scouts and reads its friends' boards in its own turn, hands what it got to the spenders and closes; then 10 sides work at once without ever opening main, each hands its players to a spender no other side is using at that moment, and the spender lists them right away (with no spender free the side lists them itself)."],
         ["Treat Base players as sellable", "Players in a team whose actually paid salary is at or below Base count as Sellable and are not turned into cards."],
         ["Use tomorrow's Base", "The salary is compared with tomorrow's Base (Base × 0.95): with Base 50 a 50-salary player is not Base, a 48-salary one is."],
         ["Use friends' Scouts (spender network)", "After their own Scout the accounts also look at their friends' Scouts. Auto Trade makes the friendships itself; Main's friend list is never touched. A Satılabilir / Stok player on the Scout of a spender whose turn in this run is still to come is left alone: that spender signs it itself in its turn (no trade back needed). What the spenders sign (Satılabilir / Stok) goes to the market as soon as each side's turn ends (not only at the end of the cycle). When Auto Trade stops for another task (e.g. a listing by hand) the spenders still list first; only your second Stop cuts that."],
@@ -343,8 +345,9 @@ export const GUIDE_EN = {
         ["Elite Ascent", "Each account plays the bot on its floor and moves up on a win; 2 free attempts a day."],
         ["Big 3 (Magic Team)", "A level 15 trio active in the Office beats the MIAMI and PHILADELPHIA bots and the prize is claimed by itself."],
         ["Props", "At halftime fills the stamina of the starting five with water bottles: a +30 at 75 or below, a +10 from 76 to 94; it stops at 95. Example: a player at 15 gets 3 × +30, one at 55 gets +30 then +10."],
+        ["Props · bulk", "Tick accounts on the left (or “Select all”); “Use on selected” starts props on all of them at once; “Stop selected” stops the running ones."],
         ["Daily Quiz", "Every account's quiz shows on its card at the same time; known questions are answered automatically, you answer new ones (random after 8–9 s)."],
-        ["Cheer", "If the chosen account is in a match, the other selected accounts cheer for its team."],
+        ["Cheer", "Pick one or more target accounts and the accounts that cheer. The cheering accounts take turns over the targets (one to this, one to that); each target gets cheers once the 2nd half (quarter 3) starts, and none once its morale reaches 200. One cheer per account per match, about 3 a day."],
         ["Chat", "Writes the message list in order to the global chat, each message by its own account, at least 11 s apart; a number of loops or endless."]
       ],
       rules: [
@@ -376,6 +379,9 @@ export const GUIDE_EN = {
         ["+Offense / +Defense", "Spends the bonus points of a level-up."],
         ["Activate / Turn off", "Turns the Big3 bonus on in matches; the trio must be active for Magic Team matches."],
         ["Super Big 3", "Pick 3 players from your roster to make your own trio. Changing the trio resets all its progress (it asks first)."]
+        ["Big 3 automatic · Scan teams / Activate", "An account with a league trio (a Big 3 fit for the Magic Team) gets that one; otherwise its existing Super Big 3 (never rebuilt); without one, a new Super Big 3 of its 3 best starters. Then it is activated. Only the selected accounts that are not ready are changed."],
+        ["Big 3 automatic · Train automatically", "On by default. While the app is open, on every account with an active Big 3 it claims the training when its time is over, puts the bonus point and starts a new one when one of the 3 free daily attempts is left; it stops at level 10 and waits for 19:10 when the attempts are used. Nothing else is paused."],
+        ["Big 3 automatic · Bonus", "Offense or Defense per account (Offense by default). Changing it resets the given points (free) and moves them to the new choice."],
       ],
       rules: [
         "The coach has 2 free trainings a day; more, intense training and finishing early need tickets, which the app never uses.",
@@ -415,6 +421,7 @@ export const GUIDE_EN = {
       what: "Registers the selected accounts to the day's tournament for their level. When today's registration is closed it waits for the next one.",
       steps: ["Select the accounts.", "Press “Join Tournaments”.", "The last run report shows who registered and why the others did not."],
       buttons: [["Join Tournaments", "Starts registration."], ["Reload list", "Reads the tournaments again."],
+        ["Level check tab", "Shows with a warning the accounts whose level went past the tournament they registered for (they lose 25-0 when it starts). When an account of ours fits that tournament and is not in it, the wrong one leaves and the fitting one registers at once; with too few fitting accounts the rest stay registered. “Check” only shows; “Check and swap” and the automatic check (every 30 minutes, on by default) also swap."],
         ["Last run report", "A one-row table: Total accounts · Already in all · Registered · Tournament full · Level too low (and Other when there was an error or a stop). Click a number that is not zero to see those accounts in a small window; click anywhere else or Close to close it."],
         ["Tournaments joined", "Under the report every tournament is listed with how many accounts registered; click the number to see the accounts."]],
       rules: [
@@ -472,6 +479,7 @@ export const GUIDE_EN = {
       steps: ["Choose the account and press “Open Scout”.", "Look through the list and press “Sign” on the player you want."],
       buttons: [["Open / Close Scout", "Loads or closes the list."], ["Call Back", "Refreshes the list (limited per day)."], ["Sign", "Signs the player to the account."]],
       rules: [
+        "Secret player: the game shows only its price. With the values of the day that price names one player (all values over 1000 TK are different); the app treats the secret as that player, signs it by its role and the card shows “Secret · by its price”. When the price names nobody, Auto Trade signs it anyway and fires it when the revealed player is of no use. The 5% salary cut on a secret comes by chance on any level (seen on a level 16 account), so the account that sees a secret signs it itself, even a Stok one, whatever its level.",
         "The list is read without signing in. Sign and Call Back connect as the account; if it is open elsewhere it is signed out there.",
         "Cards and roles match by the game's player id, not by similar names.",
         "The counter at the top right shows when Scout refreshes by itself."
@@ -487,6 +495,7 @@ export const GUIDE_EN = {
         ["Filters", "Name, team, position, role, rating and distance from Base."],
         ["Edit roles", "Gives roles like Card / Sellable / Stock."],
         ["Refresh", "Reads the list now."]
+        ,["My rosters tab", "Shows the starters and bench of every account in one list. “Read rosters” reads them without signing in (game tabs are not touched). Filter by account, account role, Starting 5 / Bench, team, position, rating, value, Base, role, health and kind (normal / X / temporary)."]
       ],
       rules: [
         "Values change every day at 11:00; the list is renewed at 11:05 (or right away when the game says the update is done). A scan by hand during the day keeps the day's rises and falls.",
@@ -517,8 +526,8 @@ export const GUIDE_EN = {
       id: "draft", icon: "🎯", name: "Draft",
       what: "Watches the live draft rooms and shows which account can join which room; you make the picks. Every pool player shows price, salary, Base, roles and card status.",
       steps: ["Press “Join” next to the account in a room it may join.", "When it is your turn the app comes to the front; pick with “Pick for …” (within 30 seconds).", "After the draft put the drafted players on the market with “List selected”."],
-      buttons: [["Join", "Puts the account into that room."], ["Pick for …", "Picks the player when it is that account's turn."], ["Price / Roles header", "Sorts the pool by price or by role."], ["List selected", "Puts drafted players on the market."]],
-      rules: ["Once in a room you stay until the draft ends; attempts are read again afterwards.", "A player put on the market leaves the list."],
+      buttons: [["Join", "Puts the account into that room."], ["Pick for …", "Picks the player when it is that account's turn."], ["Price / Roles header", "Sorts the pool by price or by role."], ["List selected", "Puts drafted players on the market."], ["Fire / Fire all", "Fires the player (or all of that account's listed ones) in the game; you are asked first."], ["To cards / Selected to cards", "Gives the players to the main account in a trade room (main gives nothing back), then turns them into star cards on main. A draft of main itself is only turned into cards."]],
+      rules: ["Once in a room you stay until the draft ends; attempts are read again afterwards.", "A player put on the market leaves the list.", "A fired player or one turned into a card leaves the list too. While Auto Trade is using the account or main, Fire / To cards is refused at once; try again when it is done."],
       tips: [], problems: []
     },
     {
@@ -537,6 +546,8 @@ export const GUIDE_EN = {
         ["Players with a role that are not in the list", "Players not seen in the last scan (no card left, or an old record) that still have a role. Auto Trade treats them by their roles. The × next to a role removes it, “Remove roles” removes them all. The table is hidden when there are none."],
         ["Synthesis · team players", "Combines 4 cards of the same player at the same level into the next level."],
         ["Synthesis · No Team", "Uses one card each of the 4 different No Team players with the most cards; success gives a random next-level card."],
+        ["Count the cards of 5★ players as No Team", "When on (off by default), the 1–4★ cards of players activated to 5★ are used in the No Team synthesis too; those cards are of no use to that player any more. Stars come from the last Cards scan."],
+        ["ⓘ (5★ option)", "Hover or click to see the players this option includes: name, team and active star level."],
         ["Synthesis · levels", "1★→2★ … 4★→5★; unticked levels are skipped."],
         ["Activate", "Activates cards player by player in the chosen stars, the highest first (the game's “activate all” is never used)."]
       ],
@@ -548,6 +559,18 @@ export const GUIDE_EN = {
       ],
       tips: ["In the synthesis summary green is successful, red is failed tries."],
       problems: [["Auto Trade signs a player that is not in the list", "Remove that player's role in the “Players with a role that are not in the list” table."]]
+    },
+    {
+      id: "bag", icon: "🎒", name: "Bag",
+      what: "The item use page; X2 EXP for now. Shows how many X2 EXP items each account has and the time left of a running one, and uses them one by one or in bulk.",
+      steps: ["“Read bags” reads the X2 EXP counts of every account (no sign-in).","“Use” on a row, or tick accounts on the left and “Use on selected”."],
+      buttons: [
+        ["Use","Uses one X2 EXP item on that account (the shortest kind when there are several)."],
+        ["Use on selected","Uses one on every ticked account, all at once. When one is already running you are asked first."],
+        ["Read time left","Reads the time left of an item used by hand in the game; the account signs in for a moment."]
+      ],
+      rules: ["The end of every item the app uses is kept, so the time left shows without signing in.","Reading and using run on every account at once (141 bags are read in ~2–3 seconds). No browser opens, so it costs no RAM; PVP, Go-up, Boss, Office, Rosters, Market, Cheer and Slot now work the same way."],
+      tips: [], problems: []
     },
     {
       id: "equipment", icon: "🧤", name: "Equipment",

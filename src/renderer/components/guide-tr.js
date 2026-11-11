@@ -116,7 +116,7 @@ export const GUIDE_TR = {
       ],
       rules: [
         "Şifreler bu bilgisayarda şifrelenmiş olarak saklanır.",
-        "Kullanılabilir APK / TIX: hepsi ana hesaba aktarılsaydı kalacak miktar. Yan hesaplarda %5 kesinti yukarı yuvarlanır (en az 3); ana hesapta kesinti yoktur.",
+        "Kullanılabilir APK / TIX: hepsi ana hesaba aktarılsaydı kalacak miktar, x/y olarak gösterilir. y bütün hesapları sayar; x, 20'den az APK (TIX) olan yan hesapları saymaz, çünkü onlar ana hesaba aktarılamaz. Yan hesaplarda %5 kesinti yukarı yuvarlanır (en az 3); ana hesapta kesinti yoktur.",
         "Hesap oluştur: her hesap için geçici bir mail adresi alınır, oyunda hesap açılır, takım adı ön ek + numara olur, takım kurulur, logo seçilir; hesap günlük rutine eklenir ve Auto Play'i başlatılır.",
         "Hesaplar 1, 5 ya da 10'ar 10'ar aynı anda açılır. Numara, o ön ekle kullanılan en yüksek numaradan devam eder; oyunda alınmış adlar atlanır.",
         "Oyun ya da mail sitesi reddederse ya da üst üste 5 hesap başarısız olursa işlem durur, zorlanmaz. Uygulama yarıda kapanırsa bir sonraki açılışta kaldığı yerden devam eder."
@@ -154,7 +154,7 @@ export const GUIDE_TR = {
     },
     {
       id: "autoplay", icon: "▶️", name: "Auto Play",
-      what: "Seçtiğin hesaplarda maçları otomatik oynatır ve her gün günlük rutini yapar: Daily Signin, 600 Günlük giriş, günlük görevler, ittifaktaki hesaplarda 100 TK bağış, 1 Dostluk Maçı ve görev ödüllerinin toplanması.",
+      what: "Seçtiğin hesaplarda maçları otomatik oynatır ve her gün günlük rutini yapar: Daily Signin, 600 Günlük giriş, günlük görevler, ittifaktaki hesaplarda 100 TK bağış, 1 Dostluk Maçı, 1 Group Match (3v3 parti) ve görev ödüllerinin toplanması.",
       steps: [
         "Tablodan hesapları işaretle (ya da üstteki gruptan/rol menüsünden seç).",
         "“Seçilileri Başlat”a bas. Tek hesap için satırdaki ▶ düğmesini kullan.",
@@ -175,6 +175,7 @@ export const GUIDE_TR = {
         ["Daily Reward anahtarı", "Açıkken Stadyumdaki Daily Reward hediyesi Auto Play çalışmayan hesaplarda da süresi dolunca toplanır."]
       ],
       rules: [
+        "Group Match: yalnızca lideri bizim hesap olan partilere girilir (Find match'e biz basarız); öyle bir parti yoksa yeni parti kurulur. Başkalarının partisine girilmez, ama başkaları bizim partimize katılabilir. Parti dolu olduğu halde 1 dakika Ready basmayan üye partiden çıkarılır. Maç bitince partiden çıkılır (partideki hesap Quick Play oynayamaz). Maaş sınırını aşan hesap Group Match oynayamaz.",
         "Günlük rutin 19:10'dan sonraki ilk başlatmada ya da çalışırken 19:12'de yapılır.",
         "Hesaplar Hızlı Oyun'u sırayla arar; böylece kendi hesapların birbirine denk gelmez. Rakip kendi hesabınsa turuncu görünür.",
         "Takım maaş sınırını aşarsa Auto Play o hesapta kendini durdurur ve uyarır.",
@@ -231,6 +232,7 @@ export const GUIDE_TR = {
         ["Durdur / Kaldığı yerden devam et", "Durdurur; durmadan önce yan hesaplarda main'i bekleyen ucuz oyuncular main'e verilir (main'in TK'sı yetmezse kovulur) ve harcayıcılar oyuncularını pazara koyar. Ekranda kalan işlem sayısı ve geri sayan tahmini süre görünür. Sonra kaldığı yerden sürdürebilirsin."],
         ["İlerlemeyi sıfırla", "Kayıtlı ilerlemeyi siler, her şeye baştan başlanır."],
         ["Hesap rollerine göre kurallar", "Main dışındaki her hesap rolü için Scout'tan neyin imzalanacağını sınırlar (Satılabilir / Kart / Ucuz) ve role kendi fiyat sınırını verir. Harcayıcı satırı da geçerlidir."],
+        ["Sadece Satılabilir ve Stok oyuncuları al", "Varsayılan olarak kapalı. Açıkken Kart ve fiyat sınırının altındaki ucuz oyuncular alınmaz; yalnızca Satılabilir ve Stok alınır. Bu modda main kendi sırasında Scout'unu ve arkadaş listelerini tarar, aldıklarını harcayıcılara verir ve kapanır; sonra 10 yan hesap main'i hiç açmadan aynı anda çalışır, her biri oyuncularını o an boşta olan ayrı bir harcayıcıya verir ve harcayıcı onları hemen pazara koyar (boşta harcayıcı yoksa yan hesap kendisi listeler)."],
         ["Base oyuncuları satılabilir olarak değerlendir", "Alımda ödenen gerçek maaşı Base'inde ya da altında olan, bir takımdaki oyuncular Satılabilir sayılır ve karta çevrilmez."],
         ["Ertesi günün Base değerini kullan", "Maaş, yarınki Base ile (Base × 0,95) karşılaştırılır: Base 50 iken 50 maaşlı oyuncu Base sayılmaz, 48 maaşlı sayılır."],
         ["Arkadaş Scout'larını kullan (Harcayıcı ağı)", "Hesaplar kendi Scout'larından sonra arkadaşlarının Scout'larına da bakar. Arkadaşlıkları Auto Trade kurar; Main'in arkadaş listesine dokunulmaz. Bu çalıştırmada sırası henüz gelmemiş bir Harcayıcının Scout'undaki Satılabilir / Stok oyuncuya başka hesap dokunmaz; onu Harcayıcı kendi sırasında kendisi alır (takasla geri vermeye gerek kalmaz). Harcayıcıların aldığı Satılabilir / Stok oyuncular her yan hesabın sırası biter bitmez pazara konur (tur sonunu beklemez). Auto Trade başka bir iş (ör. elle listeleme) yüzünden durursa harcayıcılar yine önce listeler; bunu sadece senin ikinci kez Durdur'a basman keser."],
@@ -343,8 +345,9 @@ export const GUIDE_TR = {
         ["Elite Ascent", "Her hesap bulunduğu kattaki botla oynar, kazanırsa üst kata çıkar; günlük 2 bedava hak."],
         ["Big 3 (Magic Team)", "Lv 15 ve Ofis'te aktif üçlü MIAMI ve PHILADELPHIA botlarını yener, ödül kendiliğinden alınır."],
         ["Prop", "Maçtaki takımın ilk 5'ine devre arasında su şişesiyle stamina basar: staminası 75 ve altındaysa +30, 76–94 arasındaysa +10; 95'e gelince durur. Örnek: 15 staminalı oyuncuya 3 × +30, 55 staminalıya +30 sonra +10."],
+        ["Prop · toplu seçim", "Soldaki kutularla hesapları seç (ya da “Tümünü seç”), “Seçilenlere bas” hepsinde aynı anda prop basmayı başlatır; “Seçilenleri durdur” çalışanları durdurur."],
         ["Daily Quiz", "Bütün hesapların quizi aynı anda kartlarda görünür; bilinen sorular otomatik cevaplanır, yeni soruyu sen cevaplarsın (8–9 sn içinde seçmezsen rastgele)."],
-        ["Cheer", "Seçtiğin hesap o an maçtaysa, diğer seçili hesaplar onun takımına Cheer atar."],
+        ["Cheer", "Bir ya da birden çok hedef hesap ve Cheer atacak hesapları seçersin. Atan hesaplar hedeflere sırayla dağılır (biri ona, biri ona); her hedefe 2. yarı (3. periyot) başlayınca atılır, morali 200 olunca o hedef için durur. Bir hesap bir maçta bir kez, günde yaklaşık 3 kez Cheer atabilir."],
         ["Chat", "Mesaj listesini sırayla, her mesajı kendi hesabından, en az 11 sn arayla genel sohbete yazar; döngü sayısı ya da sonsuz."]
       ],
       rules: [
@@ -376,6 +379,9 @@ export const GUIDE_TR = {
         ["+Hücum / +Savunma", "Seviye atlayınca gelen bonus puanını harcar."],
         ["Aktifleştir / Kapat", "Big3 bonusunu maçlarda açar; Magic Team maçları için üçlü aktif olmalı."],
         ["Super Big 3", "Kadrondan 3 oyuncu seçip kendi üçlünü kurarsın. Üçlüyü değiştirmek bütün ilerlemesini sıfırlar (sorulur)."]
+        ["Big 3 otomatik · Takımları tara / Aktifleştir", "Lig üçlüsü (Magic Team için uygun Big 3) olan hesapta onu, yoksa var olan Super Big 3'ü (bozmadan), o da yoksa ilk 5'in en iyi 3 oyuncusuyla yeni Super Big 3 kurup aktifleştirir. Yalnızca seçili ve hazır olmayan hesaplara uygulanır."],
+        ["Big 3 otomatik · Antrenmanları otomatik yap", "Varsayılan açık. Uygulama açıkken, aktif Big 3'ü olan her hesapta süre bitince antrenmanı alır, bonus puanını verir ve günün 3 ücretsiz hakkından biri varsa yenisini başlatır; 10. seviyede durur, haklar bitince 19:10'u bekler. Başka işi durdurmaz."],
+        ["Big 3 otomatik · Bonus", "Hesap başına Atak ya da Defans (varsayılan Atak). Değiştirince verilmiş puanlar ücretsiz sıfırlanıp yeni seçime aktarılır."],
       ],
       rules: [
         "Koçta günde 2 ücretsiz antrenman var; sonrakiler, yoğun antrenman ve erken bitirme bilet ister, uygulama bunları kullanmaz.",
@@ -415,6 +421,7 @@ export const GUIDE_TR = {
       what: "Seçili hesapları seviyelerine uygun günün turnuvasına kaydeder. Bugünün kaydı kapandıysa yeni kaydın açılmasını bekler.",
       steps: ["Hesapları seç.", "“Turnuvalara Katıl”a bas.", "Son çalıştırma raporunda kimin kaydolduğuna ve olmayanların nedenine bak."],
       buttons: [["Turnuvalara Katıl", "Kaydı başlatır."], ["Listeyi Yenile", "Turnuva listesini yeniden okur."],
+        ["Seviye kontrolü sekmesi", "Kayıtlı olduğu turnuvanın seviyesini geçen hesapları uyarıyla gösterir (turnuva başlayınca maçı 25-0 kaybederler). O turnuvaya uygun ve kayıtlı olmayan hesabımız varsa uygun olmayan çıkar, uygun olan hemen kaydolur; uygun hesap yetmezse fazlası kayıtlı kalır. “Kontrol et” yalnızca gösterir, “Kontrol et ve değiştir” ve otomatik kontrol (30 dakikada bir, varsayılan açık) değişimi de yapar."],
         ["Son çalıştırma raporu", "Tek satırlık bir tablo: Toplam hesap · Zaten hepsine kayıtlıydı · Kaydoldu · Turnuva dolu · Level yetersiz (hata ya da durdurma olduysa bir de Diğer). Sıfır olmayan bir sayıya tıklayınca o hesapların adları küçük bir pencerede açılır; boş bir yere tıklayınca ya da Kapat'a basınca kapanır."],
         ["Kaydolunan turnuvalar", "Raporun altında her turnuvanın adı ve kaç hesabın kaydolduğu yazar; sayıya tıklayınca hesaplar görünür."]],
       rules: [
@@ -472,6 +479,7 @@ export const GUIDE_TR = {
       steps: ["Hesabı seç ve “Scout Aç”a bas.", "Listeyi incele; istediğin oyuncuda “Satın Al”a bas."],
       buttons: [["Scout Aç / Kapat", "Listeyi getirir ya da kapatır."], ["Call Back", "Listeyi yeniler (günde sınırlı hak)."], ["Satın Al", "Oyuncuyu hesaba alır."]],
       rules: [
+        "Secret oyuncu: oyun yalnızca fiyatını gösterir. Fiyat, o günkü değeriyle tek bir oyuncuya denk gelir (1000 TK üstündeki değerlerin hepsi farklı); uygulama Secret'ı o oyuncu olarak tanır, rolüne göre alır ve kartta “Secret · fiyatından” yazar. Fiyat hiçbir oyuncuya denk gelmezse Auto Trade onu yine alır, oyun adını açıklayınca işe yaramıyorsa kovar. Secret'ta %5 maaş indirimi seviyeden bağımsız, şansa bağlı gelir (Lv16 bir hesapta görüldü); bu yüzden Secret'ı gören hesap, Stok olsa bile, seviyesi ne olursa olsun kendisi alır.",
         "Liste giriş yapmadan okunur. Satın Al ve Call Back için hesaba bağlanılır; hesap başka yerde açıksa oradan çıkar.",
         "Kartlar ve roller oyuncunun oyundaki kimliğiyle eşleşir, isim benzerliğinden etkilenmez.",
         "Sağ üstteki sayaç Scout'un kendiliğinden yenilenmesine kalan süreyi gösterir."
@@ -487,6 +495,7 @@ export const GUIDE_TR = {
         ["Filtreler", "İsim, takım, mevki, rol, rating ve Base'e yakınlık."],
         ["Rol düzenle", "Kart / Satılabilir / Stok gibi roller verir."],
         ["Yenile", "Listeyi hemen yeniden okur."]
+        ,["Kadrolarım sekmesi", "Bütün hesapların ilk 5 ve bench oyuncularını tek listede gösterir. “Kadroları oku” oturum açmadan okur (oyun sekmelerine dokunmaz). Hesap, hesap rolü, İlk 5 / Bench, takım, mevki, rating, değer, Base, rol, sağlık ve tür (normal / X / geçici) ile süzülür."]
       ],
       rules: [
         "Değerler her gün 11:00'de değişir; liste 11:05'te (ya da oyun güncellemeyi bitirdiğini haber verince hemen) yenilenir. Gün içinde elle tarama o günün artış / düşüşlerini bozmaz.",
@@ -517,8 +526,8 @@ export const GUIDE_TR = {
       id: "draft", icon: "🎯", name: "Draft",
       what: "Canlı draft odalarını izler ve hangi hesabın hangi odaya girebileceğini gösterir; seçimi sen yaparsın. Havuzdaki her oyuncunun fiyatı, maaşı, Base'i, rolü ve kart durumu görünür.",
       steps: ["Uygun odada hesabın yanındaki “Katıl”a bas.", "Sıra sana gelince uygulama öne gelir; oyuncunu “… seçsin” ile seç (30 saniye içinde).", "Draft bitince alınan oyuncuları “Seçilileri listele” ile pazara koy."],
-      buttons: [["Katıl", "Hesabı o odaya sokar."], ["… seçsin", "Sıra o hesaptayken oyuncuyu seçer."], ["Fiyat / Roller başlığı", "Havuzu fiyata ya da role göre sıralar."], ["Seçilileri listele", "Drafttan alınanları pazara koyar."]],
-      rules: ["Odaya girince draft bitene kadar çıkılmaz; haklar draft bitince yeniden okunur.", "Pazara konan oyuncu listeden düşer."],
+      buttons: [["Katıl", "Hesabı o odaya sokar."], ["… seçsin", "Sıra o hesaptayken oyuncuyu seçer."], ["Fiyat / Roller başlığı", "Havuzu fiyata ya da role göre sıralar."], ["Seçilileri listele", "Drafttan alınanları pazara koyar."], ["Kov / Tümünü kov", "Oyuncuyu (ya da o hesabın listedeki hepsini) oyunda kovar; önce sorulur."], ["Karta çevir / Seçilileri karta çevir", "Oyuncuları bir takas odasında ana hesaba verir (ana hesap karşılığında bir şey vermez), sonra ana hesapta yıldız kartına çevirir. Ana hesabın kendi draftı ise yalnızca karta çevrilir."]],
+      rules: ["Odaya girince draft bitene kadar çıkılmaz; haklar draft bitince yeniden okunur.", "Pazara konan oyuncu listeden düşer.", "Kovulan ya da karta çevrilen oyuncu da listeden düşer. Auto Trade o an hesabı ya da ana hesabı kullanıyorsa Kov / Karta çevir beklemeden reddedilir; bitince tekrar dene."],
       tips: [], problems: []
     },
     {
@@ -537,6 +546,8 @@ export const GUIDE_TR = {
         ["Listede olmayan ama rolü olan oyuncular", "Son taramada görünmeyen (kartı kalmamış ya da eski kayıt) ama hâlâ rolü olan oyuncular. Auto Trade bu oyunculara rollerine göre davranır. Rolün yanındaki × o rolü, “Rolleri kaldır” hepsini siler. Böyle oyuncu yoksa tablo görünmez."],
         ["Sentez · Takımlı", "Aynı oyuncudan aynı seviyede 4 kartı bir üst seviyeye birleştirir."],
         ["Sentez · Takımsız (No Team)", "En çok kartı olan 4 farklı No Team oyuncudan birer kart kullanır; başarılıysa rastgele bir üst seviye kart gelir."],
+        ["5★ oyuncuların kartlarını takımsız say", "Açıkken (varsayılan kapalı) 5★ aktifleştirilmiş oyuncuların 1–4★ kartları da Takımsız birleştirmede kullanılır; bu kartların o oyuncuya artık faydası yoktur. Yıldızlar son Kartlar taramasından okunur."],
+        ["ⓘ (5★ ayarı)", "Üzerine gelince ya da tıklayınca bu ayarla dahil edilen oyuncuları gösterir: isim, takım ve aktif yıldız seviyesi."],
         ["Sentez · Seviyeler", "1★→2★ … 4★→5★; işaretlenmeyen seviyeler denenmez."],
         ["Aktive et", "Kartları oyuncu oyuncu, seçtiğin yıldızlarda en yüksekten başlayarak aktif eder (oyunun “hepsini aktif et” düğmesi kullanılmaz)."]
       ],
@@ -548,6 +559,18 @@ export const GUIDE_TR = {
       ],
       tips: ["Sentez özetinde yeşil sayı başarılı, kırmızı sayı başarısız denemelerdir."],
       problems: [["Auto Trade listede olmayan bir oyuncuyu alıyor", "“Listede olmayan ama rolü olan oyuncular” tablosunda o oyuncunun rolünü kaldır."]]
+    },
+    {
+      id: "bag", icon: "🎒", name: "Çanta",
+      what: "Eşya kullanma sayfası; şimdilik X2 EXP. Her hesabın X2 EXP eşyalarının adedini, aktif olanın kalan süresini gösterir ve eşyayı tek tek ya da toplu kullanır.",
+      steps: ["“Çantaları oku” ile bütün hesapların X2 EXP adetlerini oku (giriş yapılmaz).","Satırdaki “Kullan” ya da soldan hesapları seçip “Seçilenlere kullan”."],
+      buttons: [
+        ["Kullan","O hesapta bir X2 EXP eşyası kullanır (birden çok çeşit varsa en kısa süreli olan)."],
+        ["Seçilenlere kullan","Seçili hesapların hepsinde aynı anda birer tane kullanır. Zaten aktif olan varsa önce sorulur."],
+        ["Süreyi oku","Oyunda elle kullanılmış bir eşyanın kalan süresini okur; hesaba kısa bir giriş yapılır."]
+      ],
+      rules: ["Uygulamanın kullandığı eşyaların bitiş saati saklanır, kalan süre giriş yapmadan görünür.","Okuma ve kullanma bütün hesaplarda aynı anda yapılır (141 hesabın çantası ~2–3 saniyede okunur). Tarayıcı açılmadığı için RAM harcamaz; PVP, Go-up, Boss, Ofis, Kadrolar, Pazar, Cheer ve Slot da artık böyle çalışır."],
+      tips: [], problems: []
     },
     {
       id: "equipment", icon: "🧤", name: "Ekipman",

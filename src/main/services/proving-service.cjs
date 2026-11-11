@@ -1,4 +1,5 @@
 const { GameSocket } = require('./game-socket.cjs');
+const { WIDE, eachAtOnce, eachWithSocket } = require('./wide.cjs');
 const { isNetError } = require('./game-health.cjs');
 const { matchStartSlot } = require('./match-start-gate.cjs');
 
@@ -177,7 +178,7 @@ class DailyBossService extends ProvingBase {
   // Level and attempts of every account plus the boss list (no sign-in).
   async status(accountIds) {
     const ids = accountIds || this.store.getAccounts().map(a => a.id);
-    try { for (const id of ids) { const u = this._userId(id); if (u) await this._readBoss(id, u).catch(() => null); } }
+    try { await this._anonSim(); await eachAtOnce(ids, async id => { const u = this._userId(id); if (u) await this._readBoss(id, u).catch(() => null); }); }
     finally { if (!this.controller) this._closeAnon(); this.onChanged(); }
     return this.snapshot();
   }
@@ -260,12 +261,12 @@ class EliteAscentService extends ProvingBase {
   // Signs each account in briefly to read its floor and attempts.
   async status(accountIds) {
     const ids = accountIds || this.store.getAccounts().map(a => a.id);
-    for (const id of ids) {
+    await eachAtOnce(ids, async id => {
       const account = this.store.getAccounts().find(a => a.id === id);
-      if (!account) continue;
+      if (!account) return;
       let gs = null;
       try { ({ gs } = await this._main(account)); await this._readAscent(id, gs); } catch {} finally { try { gs?.close(); } catch {} }
-    }
+    });
     this.onChanged();
     return this.snapshot();
   }
@@ -494,15 +495,15 @@ class ProfessionalService extends ProvingBase {
   // Stage, matches left and (for HOF) the opponents with their strength.
   async status(accountIds) {
     const ids = accountIds || this.store.getAccounts().map(a => a.id);
-    for (const id of ids) {
+    await eachAtOnce(ids, async id => {
       const account = this.store.getAccounts().find(a => a.id === id);
-      if (!account) continue;
+      if (!account) return;
       let gs = null;
       try { const r = await this._read(account); gs = r.gs; await this._stage(id, gs, r.session.userId); }
       catch (error) { this.info[id] = { stage: 'error', error: error.message, readAt: new Date(this.now()).toISOString() }; }
       finally { try { gs?.close(); } catch {} }
       this.onChanged();
-    }
+    });
     return this.snapshot();
   }
 

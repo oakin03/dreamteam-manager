@@ -74,7 +74,8 @@ function createWorld(users) {
       case 'getUserBasicInfo': return push('userBasicInfo', { success: true, funds: u.funds, autoPKTickets: u.apk });
       case 'getFreeAgent': {
         const list = u.lists[0] || [];
-        return reply({ freeAgents: list.map(a => ({ ...a, isSigned: u.signed.has(a.id) })), attemptsLeft: u.attempts, cooldownEnds: u.cooldownEnds });
+        // a secret (game 2026-11) shows only its price until it is signed
+        return reply({ freeAgents: list.map(a => a.secret && !u.signed.has(a.id) ? { id: 'secret-agent', name: 'Secret Player', rating: '?', baseSalary: a.baseSalary, isSecret: true, isSigned: false } : ({ ...a, isSigned: u.signed.has(a.id) })), attemptsLeft: u.attempts, cooldownEnds: u.cooldownEnds });
       }
       case 'getFreeAgentAttempts': return reply({ success: true, attemptsLeft: u.attempts, hasAttempts: u.attempts > 0 });
       case 'CallBackFreeAgent': {
@@ -84,14 +85,14 @@ function createWorld(users) {
       }
       case 'signFreeAgent': {
         const me = world.users[s.userId];
-        const a = (me.lists[0] || []).find(x => x.id === p.playerId);
+        const a = (me.lists[0] || []).find(x => x.id === p.playerId || (p.playerId === 'secret-agent' && x.secret && !me.signed.has(x.id)));
         if (!a || me.signed.has(a.id)) return reply({ success: false, message: 'Player not available' });
         if (total(me) >= 11) return reply({ success: false, message: 'Roster is full' });
         if (me.funds < a.baseSalary) return reply({ success: false, message: 'Not enough funds' });
         me.signed.add(a.id); me.funds -= a.baseSalary;
         const signed = me.discount?.includes(a.id) ? Math.round(a.baseSalary * 0.95) : a.baseSalary;
         me.bench.push({ ...player(a.id, a.baseSalary, { name: a.name, newBaseSalary: a.newBaseSalary }), signedSalary: signed, benchSlot: me.bench.length + 1 });
-        return reply({ success: true, message: 'Player signed successfully.' });
+        return reply({ success: true, message: a.secret ? `Secret player revealed: ${a.name}!` : 'Player signed successfully.', ...(a.secret ? { revealedPlayer: { id: a.id, name: a.name } } : {}) });
       }
       case 'firePlayer': {
         const me = world.users[s.userId];

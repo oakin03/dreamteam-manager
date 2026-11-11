@@ -63,6 +63,8 @@ function classify(player, config, roleMap, teamPlayers = null) {
   const toSide = roles.some(r => cfg.mainToSideRoleIds.includes(r));
   // roles both ways (e.g. Satılabilir + Kart): the user decides (user 2026-10-30)
   if (toMain && toSide) return 'ask';
+  // "only Satılabilir / Stok" (user 2026-11-09): no Kart and no cheap players are signed
+  if (config?.sideOnly) return toSide ? 'side' : null;
   const price = Number(player?.baseSalary);
   if (cfg.maxPrice >= PRICE_RULE_MIN && Number.isFinite(price) && price <= cfg.maxPrice) return 'main';
   if (toMain) return 'main';
@@ -79,6 +81,7 @@ function signReason(player, config, roleMap, teamPlayers = null) {
   const toMain = roles.some(r => cfg.sideToMainRoleIds.includes(r));
   const toSide = roles.some(r => cfg.mainToSideRoleIds.includes(r));
   if (toMain && toSide) return 'ask';
+  if (config?.sideOnly) return toSide ? 'sellable' : null;
   const price = Number(player?.baseSalary);
   if (cfg.maxPrice >= PRICE_RULE_MIN && Number.isFinite(price) && price <= cfg.maxPrice) return 'price';
   if (toMain) return 'card';

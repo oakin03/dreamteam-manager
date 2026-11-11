@@ -1,9 +1,10 @@
 const { GameSocket } = require('./game-socket.cjs');
+const { WIDE, eachAtOnce, eachWithSocket } = require('./wide.cjs');
 const { lastExpiryCutoff } = require('./market-service.cjs');
 
 // Once per game day (after the 19:10 TR reset) Auto Play first runs the daily
 // routine for the selected accounts: Daily Signin, 600-Day Sign In, starting
-// the daily tasks and one Friendly Match. Everything goes through the game's
+// the daily tasks, one Friendly Match and one Group Match. Everything goes through the game's
 // socket / HTTP API; every step is safe to repeat ("already done" answers).
 const SIGNIN_600_URL = 'https://www.dreamteamph.com/api/daily-signin-600';
 const DEFAULT_TIMING = {
@@ -13,7 +14,12 @@ const DEFAULT_TIMING = {
   opponentWaitMs: 10 * 60 * 1000, // nobody joined our match → cancel and look again
   matchWaitMs: 20 * 60 * 1000,    // one Friendly Match takes a few minutes
   appearMs: 90 * 1000,            // a joined match must show up as active by then
-  totalMs: 40 * 60 * 1000         // after this Auto Play goes on; the next start retries
+  totalMs: 40 * 60 * 1000,        // after this Auto Play goes on; the next start retries
+  partyWaitMs: 10 * 60 * 1000,    // Group Match: a party that is not matched by then is left
+  unreadyKickMs: 60 * 1000,       // our full party: a member not ready this long is kicked (leader)
+  idleLeaderMs: 60 * 1000,        // a stranger's full, ready party whose leader does not search: leave
+  leaveWaitMs: 10 * 60 * 1000,    // the party cannot be left while its games run: wait this long
+  groupTotalMs: 40 * 60 * 1000
 };
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -71,6 +77,7 @@ function mailItems(mails) {
 
 const isFmEntry = m => m?.type === 'FM' || /^fm-/.test(String(m?.match_id || ''));
 const reasonOf = r => String(r?.error || r?.message || 'rejected');
+const CAP_RE = /salary cap/i;
 
 class DailyRoutineService {
   constructor({ store, activity, sessions, onChanged, createSocket, fetchImpl = (...a) => fetch(...a), now = () => Date.now(), timing = {} }) {
@@ -157,6 +164,7 @@ class DailyRoutineService {
     if (!this.selectedIds().includes(account.id)) return null;
     if (this.doneThisCycle(account.id)) {
       // Routine done today: only collect rewards of tasks finished since the last check.
+      await this._leaveStaleParty(account, signal).catch(error => { if (error?.name === 'AbortError') throw error; });
       await this._donateLate(account, signal);
       const last = this.lastClaimCheck.get(account.id);
       if (last == null || this.now() - last >= REWARD_CHECK_MS) await this._claimSafely(account, signal);
@@ -183,6 +191,13 @@ class DailyRoutineService {
           if (await this._taskDone(main, userId, 'friendly_match', signal)) return 'already';
           sim = await GameSocket.open({ createSocket: this.createSocket, path: '/simulation-socket/', cookie, signal });
           return this._friendlyMatch(account, sim, main, userId, signal);
+        }],
+        // Group Match (3v3 parties, game update 2026-11): after the Friendly Match
+        ['group', async () => {
+          sim ||= await GameSocket.open({ createSocket: this.createSocket, path: '/simulation-socket/', cookie, signal });
+          // done already: an account still sitting in a party (an earlier run was stopped) leaves it
+          if (await this._taskDone(main, userId, 'group_match', signal)) { await this._leaveParty(account, sim, userId).catch(() => {}); return 'already'; }
+          return this._groupMatch(account, sim, main, userId, signal);
         }]
       ];
       for (const [key, run] of steps) {
@@ -223,7 +238,7 @@ class DailyRoutineService {
       this._log(account, 'warning', 'dr.partial', { failed: failed.join(', ') }, `Daily routine incomplete (${failed.join(', ')}); it will be retried at the next Auto Play start`);
     } else {
       const keep = this._saved(account.id) || {};
-      this._save(account.id, { rewards: keep.rewards, tasks: keep.tasks, donation: keep.donation, donateChecked: keep.donateChecked, cycle, doneAt: new Date(this.now()).toISOString(), results });
+      this._save(account.id, { rewards: keep.rewards, tasks: keep.tasks, donation: keep.donation, donateChecked: keep.donateChecked, cycle, doneAt: new Date(this.now()).toISOString(), results, partyLeftCycle: cycle });
       this._log(account, 'success', 'dr.done', {}, 'Daily routine finished · Auto Play continues');
     }
     this.onChanged?.();
@@ -235,7 +250,7 @@ class DailyRoutineService {
   async claimRewards(accountIds) {
     const accounts = this.store.getAccounts().filter(a => accountIds.includes(a.id));
     const out = {};
-    for (const account of accounts) out[account.id] = await this._claimSafely(account, null);
+    await eachAtOnce(accounts, async account => { out[account.id] = await this._claimSafely(account, null); });
     return out;
   }
 
@@ -596,6 +611,171 @@ class DailyRoutineService {
       this._log(account, 'warning', 'dr.fmNoOpponent', { minutes: Math.round(opponentWaitMs / 60000) }, 'Nobody joined; the match was cancelled, looking again');
     }
     throw new Error('No Friendly Match could be played in time.');
+  }
+
+  // userIds of our own accounts: their parties are joined first
+  _ourUserIds() {
+    const prof = this.store.getAccountProfile?.()?.accounts || {};
+    return new Set(Object.values(prof).map(p => p?.userId).filter(Boolean));
+  }
+
+  async _myParty(sim, userId, signal) {
+    const r = await sim.ack('getMyParty', { userId }, { signal });
+    if (!r?.success) throw new Error(`My party: ${reasonOf(r)}`);
+    return r.party || null;
+  }
+
+  // Group Match: parties of 3; everyone presses Ready, the leader presses Find match when the
+  // party is full, and it is matched with another full party (no bots). Join an open party
+  // without a password (ours first: a party with one of our accounts in it; fuller ones
+  // first), else create one. A party not matched in partyWaitMs is left and the search starts
+  // again. Done when the group_match task completes; the party is then left, because an
+  // account in a party cannot play Quick Play.
+  async _groupMatch(account, sim, main, userId, signal) {
+    const { pollMs, partyWaitMs, groupTotalMs } = this.timing;
+    const deadline = this.now() + groupTotalMs;
+    const ours = this._ourUserIds();
+    const tried = new Set();
+    let party = await this._myParty(sim, userId, signal);
+    try {
+      while (this.now() < deadline) {
+        if (!party) {
+          this._step(account, 'gmSearching');
+          const list = await sim.ack('requestPartyList', undefined, { signal });
+          if (!list?.success) throw new Error(`Party list: ${reasonOf(list)}`);
+          // Only parties led by one of our accounts are joined (user 2026-11-09: strangers' parties
+          // bring problems we cannot control: away leaders, members who never get ready). Others
+          // may join ours. No party of ours open: we make one.
+          const ourLead = p => ours.has(p.leader) && p.leader !== userId;
+          const open = (list.parties || []).filter(p => (p.mode || 'GROUP') === 'GROUP' && p.status === 'open' && !p.hasPassword && ourLead(p) && (p.members || []).length < (p.maxMembers || 3) && !(p.members || []).some(m => m.userId === userId) && !tried.has(p.party_id));
+          open.sort((a, b) => ((b.members || []).length - (a.members || []).length) || ((a.createdAt || 0) - (b.createdAt || 0)));
+          for (const p of open) {
+            tried.add(p.party_id);
+            const r = await sim.ack('joinParty', { userId, partyId: p.party_id }, { signal });
+            if (r?.success) {
+              party = r.party || await this._myParty(sim, userId, signal);
+              this._log(account, 'success', 'dr.gmJoined', { leader: p.leaderName || '?' }, `Group Match party joined · leader ${p.leaderName || '?'}`);
+              break;
+            }
+            // over the salary cap: every party (and our own) says the same, stop here
+            if (CAP_RE.test(reasonOf(r))) throw new Error(reasonOf(r));
+            this._log(account, 'warning', 'dr.gmJoinFailed', { leader: p.leaderName || '?', error: reasonOf(r) }, `Could not join the party of ${p.leaderName || '?'}: ${reasonOf(r)}`);
+          }
+          if (!party) {
+            // not cut short by a stop: a party created meanwhile must still be left
+            const r = await sim.ack('createParty', { userId });
+            if (!r?.success) throw new Error(`Create party: ${reasonOf(r)}`);
+            party = r.party || await this._myParty(sim, userId, signal);
+            this._log(account, 'info', 'dr.gmCreated', {}, 'No joinable party · created a Group Match party');
+            if (signal?.aborted) throw abortError();
+          }
+        }
+        // in the party: ready up, the leader finds the match, wait for the games
+        const joinedAt = this.now();
+        let matched = false;
+        let unreadySince = null;
+        let idleSince = null;
+        while (party && this.now() < deadline) {
+          if (await this._taskDone(main, userId, 'group_match', signal)) {
+            this._log(account, 'success', 'dr.gmDone', {}, 'Group Match finished · daily task complete');
+            return 'played';
+          }
+          const members = party.members || [];
+          const me = members.find(m => m.userId === userId);
+          const full = members.length >= (party.maxMembers || 3);
+          if (party.status === 'matched') {
+            if (!matched) this._log(account, 'info', 'dr.gmMatched', {}, 'Group Match found · the games are being played');
+            matched = true;
+            this._step(account, 'gmPlaying');
+          } else if (party.status === 'searching') {
+            this._step(account, 'gmSearchingMatch');
+          } else {
+            if (me && !me.ready) await sim.ack('setPartyReady', { userId, ready: true }, { signal }).catch(() => null);
+            const unready = members.filter(m => !m.ready && m.userId !== userId);
+            if (party.leader === userId && full && !unready.length) {
+              unreadySince = null;
+              const r = await sim.ack('findPartyMatch', { userId }, { signal });
+              if (r?.success) this._log(account, 'info', 'dr.gmFind', {}, 'Party full · looking for an opponent party');
+              else {
+                this._log(account, 'warning', 'dr.gmFindFailed', { error: reasonOf(r) }, `Find match failed: ${reasonOf(r)}`);
+                // a member over the salary cap blocks the party: put that one out
+                const name = (reasonOf(r).match(/^(.+?) is over the salary cap/i) || [])[1];
+                const bad = name && members.find(m => m.userId !== userId && m.teamName === name);
+                if (bad) await sim.ack('kickPartyMember', { userId, targetId: bad.userId }, { signal }).catch(() => null);
+              }
+            } else if (party.leader === userId && full && unready.length) {
+              // full but someone does not press Ready: after a minute that one is put out, so
+              // another account can take the place (user 2026-11-09)
+              unreadySince ??= this.now();
+              if (this.now() - unreadySince >= this.timing.unreadyKickMs) {
+                for (const m of unready) {
+                  const r = await sim.ack('kickPartyMember', { userId, targetId: m.userId }, { signal }).catch(() => null);
+                  if (r?.success) this._log(account, 'info', 'dr.gmKicked', { name: m.teamName || '?' }, `${m.teamName || '?'} did not get ready · put out of the party`);
+                }
+                unreadySince = null;
+              }
+            } else unreadySince = null;
+            // someone else leads a full, ready party and does not search: leave it
+            if (party.leader !== userId && full && !members.some(m => !m.ready)) {
+              idleSince ??= this.now();
+              if (this.now() - idleSince >= this.timing.idleLeaderMs) {
+                tried.add(party.party_id);
+                await sim.ack('leaveParty', { userId }, { signal }).catch(() => null);
+                const leader = members.find(m => m.userId === party.leader)?.teamName || party.leaderName || '?';
+                this._log(account, 'warning', 'dr.gmLeaderIdle', { leader }, `${leader} does not start the match · left the party, looking for another`);
+                party = null;
+                break;
+              }
+            } else idleSince = null;
+            this._step(account, 'gmWaitingParty', { count: members.length, max: party.maxMembers || 3 });
+            if (!matched && this.now() - joinedAt > partyWaitMs) {
+              await sim.ack('leaveParty', { userId }, { signal }).catch(() => null);
+              this._log(account, 'warning', 'dr.gmNoMatch', { minutes: Math.round(partyWaitMs / 60000) }, 'The party was not matched in time · left it, looking again');
+              party = null;
+              break;
+            }
+          }
+          await sleep(pollMs, signal);
+          party = await this._myParty(sim, userId, signal);
+          // put out of the party by its leader: look for another one
+          if (!party && !matched) this._log(account, 'warning', 'dr.gmRemoved', {}, 'Removed from the party · looking for another one');
+        }
+      }
+      throw new Error('No Group Match could be played in time.');
+    } finally {
+      await this._leaveParty(account, sim, userId);
+    }
+  }
+
+  // An account in a party cannot play Quick Play: always leave. Nobody can leave while the games
+  // are played (status 'matched'), so wait for them first (2026-11-09: leaders and members were
+  // left in their reopened parties after the match).
+  async _leaveParty(account, sim, userId) {
+    const until = this.now() + this.timing.leaveWaitMs;
+    let p = await this._myParty(sim, userId, null).catch(() => null);
+    while (p && p.status === 'matched' && this.now() < until) {
+      this._step(account, 'gmLeaving');
+      await sleep(this.timing.pollMs);
+      p = await this._myParty(sim, userId, null).catch(() => null);
+    }
+    if (!p) return false;
+    if (p.status === 'searching') await sim.ack('cancelPartySearch', { userId }, { timeoutMs: 5000 }).catch(() => null);
+    const r = await sim.ack('leaveParty', { userId }, { timeoutMs: 5000 }).catch(() => null);
+    if (r?.success !== false) this._log(account, 'info', 'dr.gmLeft', {}, 'Left the Group Match party');
+    return true;
+  }
+
+  // Accounts left in a party by an earlier run (before 2026-11-09): out, so Quick Play works.
+  async _leaveStaleParty(account, signal) {
+    const saved = this._saved(account.id);
+    if (!['played', 'already'].includes(saved?.results?.group) || saved.partyLeftCycle === this.cycle()) return;
+    const { userId, cookieHeader: cookie } = await this.sessions.get(account, { owner: 'daily-routine' });
+    const sim = await GameSocket.open({ createSocket: this.createSocket, path: '/simulation-socket/', cookie, signal });
+    try {
+      const p = await this._myParty(sim, userId, signal).catch(() => null);
+      if (p && (p.mode || 'GROUP') === 'GROUP' && p.status !== 'matched') await this._leaveParty(account, sim, userId);
+      if (!p || p.status !== 'matched') this._save(account.id, { ...(this._saved(account.id) || {}), partyLeftCycle: this.cycle() });
+    } finally { try { sim.close(); } catch {} }
   }
 
   async _waitOpponent(account, sim, userId, matchId, waitMs, signal) {

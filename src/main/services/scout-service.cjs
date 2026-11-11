@@ -12,15 +12,20 @@ const ROSTER_MAX = 11;
 const ATTEMPTS_MAX = 3;
 const READ_TIMEOUT_MS = 15000;
 
-function agentFrom(a, index) {
+// A secret player (game 2026-11) shows only its price: that price is the player's value of the
+// day and names it (`secretOf` = { id, name, rating, position, base } from the Players list).
+// The signing still sends the game's id (`signId`).
+function agentFrom(a, index, secretOf = null) {
   const price = Number(a.baseSalary);
   const last = Number(a.lastSalary);
+  const s = a.isSecret && !a.isSigned ? secretOf?.(price) : null;
   return {
-    key: a.id, index, playerId: a.id,
-    name: a.visualName || a.name || '', fullName: a.name || '',
-    position: a.position || '', grade: a.rating || '',
+    key: s ? s.id : a.id, index, playerId: s ? s.id : a.id, signId: a.id,
+    secret: Boolean(a.isSecret), secretKnown: Boolean(s),
+    name: s ? s.name : (a.visualName || a.name || ''), fullName: s ? s.name : (a.name || ''),
+    position: (s ? s.position : a.position) || '', grade: (s ? s.rating : a.rating) || '',
     price: Number.isFinite(price) ? price : null,
-    base: Number.isFinite(Number(a.newBaseSalary)) ? Number(a.newBaseSalary) : null,
+    base: s && Number.isFinite(Number(s.base)) ? Number(s.base) : Number.isFinite(Number(a.newBaseSalary)) ? Number(a.newBaseSalary) : null,
     lastSalary: Number.isFinite(last) ? last : null,
     change: Number.isFinite(price) && Number.isFinite(last) ? price - last : null,
     offense: a.offense ?? null, defense: a.defense ?? null,
@@ -34,6 +39,13 @@ class ScoutService {
     Object.assign(this, { store, activity, sessions, accountProfile, gameHealth, onChanged, createSocket });
     this.cards = cardsService;
     this.states = new Map();
+  }
+
+  // price → player of the stored Players list (null when no or several players have that value)
+  _secretOf() {
+    const byValue = new Map();
+    for (const p of this.store.getPlayersData?.()?.players || []) { const v = Number(p.value); if (v > 0) byValue.set(v, byValue.has(v) ? null : p); }
+    return price => byValue.get(Number(price)) || null;
   }
 
   accountById(id) {
@@ -85,7 +97,7 @@ class ScoutService {
     const previous = state.data || {};
     state.data = {
       ...previous,
-      agents: reply.freeAgents.map(agentFrom),
+      agents: reply.freeAgents.map((a, i) => agentFrom(a, i, this._secretOf())),
       attempts: reply.attemptsLeft ?? previous.attempts ?? null,
       attemptsMax: ATTEMPTS_MAX,
       cooldownEnds: Number(reply.cooldownEnds) || previous.cooldownEnds || null,
@@ -186,7 +198,7 @@ class ScoutService {
       const agent = state.data?.agents?.find(a => a.key === playerKey || a.playerId === playerKey);
       if (!agent) throw new Error('This player is no longer in the Scout list; refresh it.');
       if (agent.signed) throw new Error('This player was already signed.');
-      const r = await this._write(account, c => c.sign(agent.playerId));
+      const r = await this._write(account, c => c.sign(agent.signId || agent.playerId));
       if (!r?.success) throw new Error(r?.message || r?.error || 'The game refused the signing.');
       const data = await this._read(account);
       this._log(account, 'success', 'sct.signed', { name: agent.name, price: agent.price }, `Scout · ${agent.name} signed · ${agent.price ?? '—'} TK`);

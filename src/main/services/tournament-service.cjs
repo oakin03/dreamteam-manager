@@ -21,7 +21,9 @@ const POLL_ONGOING_MS = 5000;
 const POLL_IDLE_MS = 2000;
 const MAX_WAIT_MS = 3 * 60 * 60 * 1000;
 const WAIT_LOG_INTERVAL_MS = 5 * 60 * 1000;
-const AUTH_CONCURRENCY = 2;
+// Every account signs in and reads its level at the same time (user 2026-11-09). The sign-in is
+// HTTP; the Chromium fallback stays limited to 2 by GameSessions, so RAM does not grow with it.
+const AUTH_CONCURRENCY = Infinity;
 const FULL_RETRY_MS = 30000;
 
 function abortError() { const e = new Error('Aborted'); e.name = 'AbortError'; return e; }
@@ -329,7 +331,7 @@ class TournamentService {
       const statuses = first.reduce((acc, e) => ({ ...acc, [e.status]: (acc[e.status] || 0) + 1 }), {});
       this.log('info', `${first.length} tournaments listed · ${Object.entries(statuses).map(([k, v]) => `${v} ${k}`).join(' · ')}.`, null, 'tn.listed', { count: first.length, open: statuses.REGISTRATION || 0, playing: first.length - (statuses.REGISTRATION || 0) });
 
-      // Sign in and read levels, a couple of accounts at a time.
+      // Sign in and read levels, every account at once.
       let next = 0;
       await Promise.all(Array.from({ length: Math.min(AUTH_CONCURRENCY, accounts.length) }, async () => {
         while (next < accounts.length) {
@@ -365,7 +367,9 @@ class TournamentService {
         let anyBlank = false;
         let anyWaiting = false;
 
-        for (const entry of active) {
+        // The accounts register at the same time (user 2026-11-09: one by one was slow). Each
+        // account's own tournaments stay in order; the sockets are already open.
+        const one = async entry => {
           const plan = planAccount(this.events, entry);
           for (const event of plan.toRegister) {
             if (signal.aborted) throw abortError();
@@ -391,7 +395,9 @@ class TournamentService {
             this.setAccount(entry.account.id, { status: 'done', level: entry.level, joined: entry.joined, step: 'outcome', stepParams: { outcome: result.outcome, details: result.reason }, message: summary || 'Nothing to register.' });
             this.log(entry.joined.length ? 'success' : 'info', `Finished · ${summary || 'nothing to register'}.`, entry.account, 'tn.accountDone', { outcome: result.outcome, details: result.reason });
           }
-        }
+        };
+        // every account at once (user 2026-11-09)
+        await Promise.all(active.map(one));
 
         if (!entries.some(entry => !entry.done)) break;
         if (Date.now() - startedAt > MAX_WAIT_MS) {
@@ -505,4 +511,4 @@ class TournamentService {
   async shutdown() { await this.stop(); }
 }
 
-module.exports = { startFor, cleanName,  TournamentService, planAccount, normalizeEvent, trTime };
+module.exports = { startFor, cleanName,  TournamentService, planAccount, normalizeEvent, trTime, SOCKET_URL, EVENT_SOCKET_PATH, MAIN_SOCKET_PATH, emitAck, waitForConnect, fitsLevel };

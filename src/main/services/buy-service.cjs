@@ -1,5 +1,6 @@
 const crypto = require('crypto');
 const { GameSocket } = require('./game-socket.cjs');
+const { WIDE, eachAtOnce, eachWithSocket } = require('./wide.cjs');
 const { OwnedSwap, isOwnedError } = require('./owned-swap.cjs');
 
 // Buying from the Trading Hall and Auto Buy, over the game's /socket/:
@@ -689,7 +690,7 @@ class BuyService {
 
   async _autoLoop(order, interval, signal) {
     const balances = {};
-    for (const id of order) balances[id] = await this._balance(id, null, signal).catch(() => null) || { apk: 0, tix: 0 };
+    await eachAtOnce(order, async id => { balances[id] = await this._balance(id, null, signal).catch(() => null) || { apk: 0, tix: 0 }; });
     this.auto.balances = balances;
     const failedTickets = new Set();
     // team name → account id: the account selling a listing never tries to buy it

@@ -1,4 +1,5 @@
 import SortTable from './SortTable';
+import { useGroupedRows, groupRowOf, asAccounts } from './AccountGroups';
 import { filOf } from '../i18n-fil';
 const api = window.dreamteam;
 const TEXT = {
@@ -23,6 +24,7 @@ const fill = (s, p = {}) => String(s).replace(/\{(\w+)\}/g, (_, k) => p[k] ?? ''
 // account played how many matches and which one was interrupted (and why).
 export default function PvpPanel({ pvp, lang }) {
   const x = TEXT[lang] || TEXT.en;
+  const grp = useGroupedRows('pvp-run');
   const live = pvp?.run;
   const rep = live || pvp?.lastReport;
   if (!rep) return null;
@@ -37,12 +39,12 @@ export default function PvpPanel({ pvp, lang }) {
       {live && <button className="btn danger-soft small" onClick={() => api.pvp.stop()}>{x.stop}</button>}
     </div>
     <SortTable><thead><tr><th>{x.account}</th><th>{x.status}</th><th>{x.played}</th><th>{x.left}</th><th>{x.note}</th></tr></thead>
-      <tbody>{rows.map(r => <tr key={r.accountId}>
+      <tbody>{grp(asAccounts(rows), r => <tr key={r.accountId}>
         <td><b>{r.name}</b></td>
         <td><span className={`pill ${TONE[r.status] || 'muted'}`}><i />{x.st[r.status] || r.status}</span></td>
         <td><b>{r.played}</b>{r.attemptsStart != null && <span className="muted-text"> / {r.attemptsStart}</span>}</td>
         <td>{r.attemptsLeft ?? '—'}</td>
         <td className="muted-text">{r.status === 'error' ? r.reason : x.msg[r.message] || ''}</td>
-      </tr>)}</tbody></SortTable>
+      </tr>, groupRowOf(5, g => <><td>{g.filter(r => r.status === 'done').length}/{g.length}</td><td><b>{g.reduce((n, r) => n + (r.played || 0), 0)}</b></td><td>{g.reduce((n, r) => n + (Number(r.attemptsLeft) || 0), 0)}</td><td /></>))}</tbody></SortTable>
   </div>;
 }

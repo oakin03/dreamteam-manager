@@ -1129,3 +1129,19 @@ td.good-text b,td.bad-text b{font-weight:800}
 .th-bulk-accounts button.off { opacity: .45; cursor: not-allowed; }
 .th-bulk-accounts em { font-style: normal; opacity: .75; font-size: 12px; }
 .bought-clear { margin-left: 10px; }
+
+/* Kadrolarım tab + synthesis 5★ info */
+.rosters-tab .rs-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 4px 0 12px; flex-wrap: wrap; }
+.synth-maxed { margin-top: 8px; }
+.synth-info { position: relative; display: inline-block; margin-left: 6px; vertical-align: middle; }
+.synth-info .info-dot { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; border-radius: 50%; border: 1px solid var(--muted, #8a8f98); color: var(--muted, #8a8f98); font-size: 11px; font-style: italic; font-family: Georgia, serif; cursor: pointer; user-select: none; }
+.synth-info .info-dot:hover { color: var(--text, #fff); border-color: var(--text, #fff); }
+.synth-info-pop { position: absolute; z-index: 40; top: 24px; left: 0; min-width: 300px; max-width: min(420px, 90vw); max-height: 360px; overflow: auto; padding: 10px 12px; box-shadow: 0 8px 24px rgba(0,0,0,.35); }
+.synth-info-pop table { width: 100%; border-collapse: collapse; margin-top: 6px; font-size: 12px; }
+.synth-info-pop th, .synth-info-pop td { text-align: left; padding: 3px 6px; border-bottom: 1px solid var(--line, rgba(255,255,255,.08)); white-space: nowrap; }
+
+.ch-morale { position: relative; display: inline-block; width: 120px; height: 16px; border-radius: 8px; background: rgba(255,255,255,.08); overflow: hidden; vertical-align: middle; }
+.ch-morale i { position: absolute; left: 0; top: 0; bottom: 0; background: linear-gradient(90deg, #fbbf24, #f97316); }
+.ch-morale b { position: relative; display: block; text-align: center; font-size: 11px; line-height: 16px; }
+
+.tl-warn { display: inline-block; margin: 0 8px 2px 0; white-space: nowrap; }

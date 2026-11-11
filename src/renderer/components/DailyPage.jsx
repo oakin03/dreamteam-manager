@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import SortTable from './SortTable';
 import { filOf } from '../i18n-fil';
-import { GroupedPicks, useGroupedRows } from './AccountGroups';
+import { GroupedPicks, useGroupedRows, groupRowOf, asAccounts } from './AccountGroups';
 
 const api = window.dreamteam;
 const num = v => (v == null ? '—' : Number(v).toLocaleString());
@@ -16,6 +16,7 @@ const TEXT = {
     tabs: { goup: 'Go-up', pro: 'Professional', boss: 'Daily Boss', ascent: 'Elite Ascent', magic: 'Big 3 (Magic Team)', props: 'Prop', quiz: 'Daily Quiz', cheer: 'Cheer', chat: 'Chat', slot: 'Daily Slot' },
     ds: { scan: 'Durumu tara', spin: 'Hepsini çevir ({n})', spinning: 'Çevriliyor…', stop: 'Durdur', accounts: 'Hesaplar', hint: 'Daily Sign-in penceresindeki günlük slot: günde 1 çevirme, 3 ödül. Tarama hiçbir hesaba giriş yapmaz; çevirme, hesabın uygulamada açık bağlantısını kullanır (Auto Play maç oynuyorsa maç bitince çevrilir), yoksa giriş yapar. Zaten çevrilmiş hesapların bugünkü ödülleri de görünür.', account: 'Hesap', status: 'Durum', prizes: 'Kazanılan 3 ödül', when: 'Saat', summary: '{spun} çevrildi · {already} zaten çevrilmişti · {failed} hata', none: 'Henüz tarama yok · “Durumu tara”ya bas.', tally: 'Bugün: {spun}/{total} hesap çevrildi', st: { queued: 'Sırada', reading: 'Okunuyor', ready: 'Çevrilebilir', spinning: 'Çevriliyor', waitMatch: 'Maç bitince', spun: 'Çevrildi', error: 'Hata', stopped: 'Durduruldu' }, inMatch: 'maç bitmedi', totals: 'Bugünün ödülleri (toplam) · kimin kazandığını görmek için ödüle tıkla', whoCount: '{n} hesap', close: 'Kapat', pool: 'Ödül havuzu (şans)' },
     pr: {
+      runSel: 'Seçilenlere bas ({n})', stopSel: 'Seçilenleri durdur ({n})', selectAll: 'Tümünü seç', clearSel: 'Seçimi kaldır',
       button: 'Prop bas', stop: 'Durdur', refresh: 'Çantaları oku', small: 'Su şişesi küçük (+10)', medium: 'Su şişesi orta (+30)', used: 'Kullanılan', players: 'İlk 5',
       st: { finding: 'Maç aranıyor', noMatch: 'Takım maçta değil', late: '3./4. periyotta · devre arası geçti', waitingHalftime: 'Devre arası bekleniyor', using: 'Prop basılıyor', done: 'Bitti', error: 'Hata', stopped: 'Durduruldu' },
       quarter: '{n}. periyot', countdown: 'devre arası {s} sn',
@@ -50,9 +51,11 @@ const TEXT = {
       how: ['Bilinen sorular otomatik cevaplanır. İlk kez gelen soruda kartta şıklar çıkar; birkaç saniye içinde seçmezsen rastgele bir şık denenir.', 'Cevaptan sonra oyun doğru cevabı gösterir; uygulama senin cevabını değil doğru cevabı öğrenir. Cevabı değişen soru kendiliğinden yeniden öğrenilir.', 'Bütün sorular bitince ödüller toplanır. Öğrenilen cevaplar kalıcıdır ve kurulum dosyasına eklenir.']
     },
     ch: {
+      targets: 'Cheer atılacak hesaplar', start: 'Cheer başlat · {t} hedef · {n} hesap', stop: 'Durdur', run: 'Çalışan Cheer', morale: 'Moral', sent: 'Atılan', quarter: '{n}. periyot',
+      rst: { finding: 'Maç aranıyor', noMatch: 'Maçta değil', waiting2ndHalf: '2. yarı bekleniyor', cheering: 'Cheer atılıyor', full: 'Moral 200 · durdu', ended: 'Maç bitti', noCheerers: 'Cheer atacak hesap kalmadı', stopped: 'Durduruldu', error: 'Hata' },
       target: 'Cheer atılacak hesap', from: 'Cheer atacak hesaplar', send: 'Şimdi Cheer at ({n})', sending: 'Gönderiliyor…', main: 'ANA',
       noMatch: '{name} şu an bir maçta değil · maç bulunamadı, Cheer atılmadı.', result: 'Son Cheer', rights: 'Bugünkü Cheer hakları', resetAt: '{t} sıfırlanır', today: 'Bugünün Cheer kaydı', noneToday: 'Bugün henüz Cheer atılmadı.', noneLeft: 'Hak bitti', time: 'Saat', target2: 'Hedef', leftHint: 'Oyun kalan hakkı göstermiyor; uygulama hesap başına günde {n} hak sayar, oyun "limit" derse o hesap 0 olur.', ok: 'Atıldı', fail: 'Atılamadı', side: { host: 'ev sahibi takım', opponent: 'deplasman takımı' },
-      how: ['Seçilen hesap o an hangi maçtaysa (Auto Play, Kule, PVP…) o maçta kendi takımına Cheer atılır (+5 moral). Maçta değilse hiçbir şey gönderilmez.', 'Her hesabın günde yaklaşık 3 Cheer hakkı var; hak bitince oyunun verdiği hata yazılır.', 'Çantadaki Cheer eşyası asla kullanılmaz; yalnızca maç ekranındaki ücretsiz Cheer.']
+      how: ['Birden çok hedef seçebilirsin; Cheer atan hesaplar hedeflere sırayla dağılır (biri ona, biri ona). Her hedefe 2. yarı (3. periyot) başlayınca atılır, moral 200 olunca o hedef için durur. Bir hesap bir maçta yalnızca bir kez Cheer atabilir.', 'Seçilen hesap o an hangi maçtaysa (Auto Play, Kule, PVP…) o maçta kendi takımına Cheer atılır (+5 moral). Maçta değilse hiçbir şey gönderilmez.', 'Her hesabın günde yaklaşık 3 Cheer hakkı var; hak bitince oyunun verdiği hata yazılır.', 'Çantadaki Cheer eşyası asla kullanılmaz; yalnızca maç ekranındaki ücretsiz Cheer.']
     },
     cs: {
       messages: 'Mesajlar', add: 'Mesaj ekle', text: 'Mesaj', pickAccount: 'Hesap seç', interval: 'Mesajlar arası (sn)', loopCount: 'Döngü sayısı', infinite: 'Sonsuz döngü',
@@ -68,6 +71,7 @@ const TEXT = {
     tabs: { goup: 'Go-up', pro: 'Professional', boss: 'Daily Boss', ascent: 'Elite Ascent', magic: 'Big 3 (Magic Team)', props: 'Props', quiz: 'Daily Quiz', cheer: 'Cheer', chat: 'Chat', slot: 'Daily Slot' },
     ds: { scan: 'Check status', spin: 'Spin all ({n})', spinning: 'Spinning…', stop: 'Stop', accounts: 'Accounts', hint: 'The daily slot of the Daily Sign-in window: 1 spin a day, 3 prizes. Checking signs in to no account; spinning uses the account\'s open connection in the app (when Auto Play is in a match it spins after the match), otherwise it signs in. The prizes of accounts that already spun today show too.', account: 'Account', status: 'Status', prizes: 'The 3 prizes won', when: 'Time', summary: '{spun} spun · {already} had already spun · {failed} failed', none: 'Nothing checked yet · press “Check status”.', tally: 'Today: {spun}/{total} accounts spun', st: { queued: 'Queued', reading: 'Reading', ready: 'Can spin', spinning: 'Spinning', waitMatch: 'After the match', spun: 'Spun', error: 'Error', stopped: 'Stopped' }, inMatch: 'the match did not end', totals: 'Today\'s prizes (total) · click a prize to see who won it', whoCount: '{n} account(s)', close: 'Close', pool: 'Prize pool (chance)' },
     pr: {
+      runSel: 'Use on selected ({n})', stopSel: 'Stop selected ({n})', selectAll: 'Select all', clearSel: 'Clear selection',
       button: 'Use props', stop: 'Stop', refresh: 'Read bags', small: 'Water Bottle Small (+10)', medium: 'Water Bottle Medium (+30)', used: 'Used', players: 'Starters',
       st: { finding: 'Finding the match', noMatch: 'The team is not in a match', late: 'Quarter 3/4 · halftime is over', waitingHalftime: 'Waiting for halftime', using: 'Using props', done: 'Done', error: 'Error', stopped: 'Stopped' },
       quarter: 'quarter {n}', countdown: 'halftime {s} s',
@@ -102,9 +106,11 @@ const TEXT = {
       how: ['Known questions are answered by the app. A new question shows its options on the card; if you do not pick one within a few seconds a random option is tried.', 'After answering, the game shows the right answer; the app learns that, not your answer. A question whose answer changed is relearned by itself.', 'When every question is done the rewards are claimed. Learned answers are permanent and go into the setup build.']
     },
     ch: {
+      targets: 'Accounts to cheer for', start: 'Start cheering · {t} target(s) · {n} account(s)', stop: 'Stop', run: 'Running cheer', morale: 'Morale', sent: 'Sent', quarter: 'quarter {n}',
+      rst: { finding: 'Finding the match', noMatch: 'Not in a match', waiting2ndHalf: 'Waiting for the 2nd half', cheering: 'Cheering', full: 'Morale 200 · stopped', ended: 'Match over', noCheerers: 'No account left to cheer', stopped: 'Stopped', error: 'Error' },
       target: 'Account to cheer for', from: 'Accounts that cheer', send: 'Cheer now ({n})', sending: 'Sending…', main: 'MAIN',
       noMatch: '{name} is not in a match right now · no match found, nothing was sent.', result: 'Last cheer', rights: 'Cheers left today', resetAt: 'resets {t}', today: "Today's cheers", noneToday: 'No cheers sent today yet.', noneLeft: 'None left', time: 'Time', target2: 'Target', leftHint: 'The game does not show the cheers left; the app counts {n} a day per account, and a "limit" reply sets that account to 0.', ok: 'Sent', fail: 'Not sent', side: { host: 'host team', opponent: 'away team' },
-      how: ['Whatever match the chosen account plays right now (Auto Play, Tower, PVP…), its own team gets the cheer (+5 morale). If it is not in a match, nothing is sent.', 'Each account has about 3 cheers a day; when they run out the game\'s message is shown.', 'The Cheer item from the bag is never used; only the free cheer of the match screen.']
+      how: ['You can pick several targets; the cheering accounts take turns over them (one to this, one to that). A target gets cheers once the 2nd half (quarter 3) starts, and none once its morale is 200. An account can cheer only once per match.', 'Whatever match the chosen account plays right now (Auto Play, Tower, PVP…), its own team gets the cheer (+5 morale). If it is not in a match, nothing is sent.', 'Each account has about 3 cheers a day; when they run out the game\'s message is shown.', 'The Cheer item from the bag is never used; only the free cheer of the match screen.']
     },
     cs: {
       messages: 'Messages', add: 'Add message', text: 'Message', pickAccount: 'Choose account', interval: 'Seconds between messages', loopCount: 'Loops', infinite: 'Endless',
@@ -143,6 +149,7 @@ function GoUpTab({ state, x, toast }) {
   const accounts = state.accounts || [];
   const running = Boolean(g.running);
   const [ids, setIds] = useSavedIds(state, 'goupAccountIds', accounts);
+  const grp = useGroupedRows('dp-goup');
   const [mode, setMode] = useState(state.settings?.goupMode || 'parallel');
   const [gap, setGap] = useState(state.settings?.goupGapSec ?? 30);
   const [checking, setChecking] = useState(false);
@@ -177,7 +184,7 @@ function GoUpTab({ state, x, toast }) {
     </div>
     <div className="panel dp-section"><AccountPicks accounts={accounts} ids={ids} setIds={setIds} disabled={running} x={x} extra={a => { const p = g.points?.[a.id]; return <em className={p?.left === 0 ? 'zero' : ''}>{p?.left == null ? '—' : `${p.left}/${p.max ?? 2}`}</em>; }} /></div>
     <div className="panel table-panel dp-table"><SortTable><thead><tr><th>{x.account}</th><th>{x.gu.league}</th><th>{x.gu.season}</th><th>{x.gu.total}</th><th>{x.gu.attempts}</th><th>{x.status}</th><th>{x.gu.last}</th></tr></thead>
-      <tbody>{rows.map(({ a, p, r }) => <tr key={a.id} className={r && ['searching', 'playing'].includes(r.status) ? 'dp-live' : ''}>
+      <tbody>{grp(rows.map(row => ({ ...row, id: row.a.id, name: row.a.name })), ({ a, p, r }) => <tr key={a.id} className={r && ['searching', 'playing'].includes(r.status) ? 'dp-live' : ''}>
         <td><b>{a.name}</b></td>
         <td>{p?.tier ? `${p.tier.name}${p.tier.level ? ` ${p.tier.level}` : ''}` : '—'}</td>
         <td><b>{num(r?.season ?? p?.season)}</b>{r?.seasonStart != null && r?.season != null && r.season !== r.seasonStart && <small className={`cell-sub ${r.season > r.seasonStart ? 'good-text' : 'bad-text'}`}>{r.season > r.seasonStart ? '+' : ''}{r.season - r.seasonStart}</small>}</td>
@@ -185,7 +192,7 @@ function GoUpTab({ state, x, toast }) {
         <td>{(r?.attemptsLeft ?? p?.left) == null ? '—' : `${r?.attemptsLeft ?? p?.left}/${p?.max ?? 2}`}</td>
         <td className={r?.status === 'error' || r?.status === 'inactive' ? 'bad-text' : ''}>{statusText(r)}</td>
         <td>{r?.lastDiff != null ? <span className={r.lastDiff >= 0 ? 'good-text' : 'bad-text'}>{r.lastDiff >= 0 ? '+' : ''}{r.lastDiff}</span> : '—'}</td>
-      </tr>)}</tbody></SortTable></div>
+      </tr>, groupRowOf(7, g => <><td /><td /><td /><td>{g.reduce((n, { r, p }) => n + (Number(r?.attemptsLeft ?? p?.left) || 0), 0)}/{g.reduce((n, { p }) => n + (Number(p?.max) || 2), 0)}</td><td className="muted-text">{g.filter(({ r }) => r && ['searching', 'playing'].includes(r.status)).length || ''}</td><td /></>))}</tbody></SortTable></div>
     <details className="panel pvp-how"><summary>{x.howTitle}</summary><ul>{x.gu.how.map(l => <li key={l}>{l}</li>)}</ul></details>
   </>;
 }
@@ -400,6 +407,15 @@ function PropsTab({ state, x, toast }) {
   const read = async () => { if (!api.props) return toast(x.notReady, 'error'); setChecking(true); try { await api.props.bags(accounts.map(a => a.id)); } catch (e) { toast(e.message, 'error'); } finally { setChecking(false); } };
   useEffect(() => { if (api.props) read(); }, []);
   const busy = new Set(p.busy || []);
+  // bulk (user 2026-11-09): tick accounts, then use props on all of them at once
+  const [sel, setSel] = useState(() => new Set());
+  const toggle = id => setSel(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const allOn = accounts.length > 0 && accounts.every(a => sel.has(a.id));
+  const picked = accounts.filter(a => sel.has(a.id));
+  const idle = picked.filter(a => !busy.has(a.id));
+  const running = picked.filter(a => busy.has(a.id));
+  const runSel = async () => { for (const a of idle) await api.props.run(a.id).catch(e => toast(`${a.name}: ${e.message}`, 'error')); };
+  const stopSel = async () => { for (const a of running) await api.props.stop(a.id).catch(() => {}); };
   const status = r => {
     if (!r) return '';
     let txt = x.pr.st[r.status] || r.status;
@@ -410,14 +426,21 @@ function PropsTab({ state, x, toast }) {
   };
   return <>
     <div className="panel pg-bar"><span className="pg-hint">{x.pr.how[0]}</span><span className="sp" /><button className="btn ghost" disabled={checking} onClick={read}>{checking ? x.checking : x.pr.refresh}</button></div>
-    <div className="panel table-panel dp-table"><SortTable><thead><tr><th>{x.account}</th><th>{x.pr.small}</th><th>{x.pr.medium}</th><th>{x.pr.used}</th><th>{x.status}</th><th>{x.pr.players}</th><th></th></tr></thead>
+    <div className="panel pg-bar">
+      <button className="chip" onClick={() => setSel(allOn ? new Set() : new Set(accounts.map(a => a.id)))}>{allOn ? x.pr.clearSel : x.pr.selectAll}</button>
+      <span className="sp" />
+      {running.length > 0 && <button className="btn danger-soft" onClick={stopSel}>{fill(x.pr.stopSel, { n: running.length })}</button>}
+      <button className="btn primary" disabled={!idle.length} onClick={runSel}>{fill(x.pr.runSel, { n: idle.length })}</button>
+    </div>
+    <div className="panel table-panel dp-table"><SortTable><thead><tr><th className="select-col"><input type="checkbox" checked={allOn} onChange={() => setSel(allOn ? new Set() : new Set(accounts.map(a => a.id)))} aria-label={x.pr.selectAll} /></th><th>{x.account}</th><th>{x.pr.small}</th><th>{x.pr.medium}</th><th>{x.pr.used}</th><th>{x.status}</th><th>{x.pr.players}</th><th></th></tr></thead>
       <tbody>{grp(accounts, a => {
         const r = p.runs?.[a.id];
         const bag = p.bags?.[a.id];
         const live = r && ['using', 'waitingHalftime', 'finding'].includes(r.status);
         const small = live && r.bagSmall != null ? r.bagSmall : bag?.small;
         const medium = live && r.bagMedium != null ? r.bagMedium : bag?.medium;
-        return <tr key={a.id} className={r?.status === 'using' ? 'dp-live' : ''}>
+        return <tr key={a.id} className={r?.status === 'using' ? 'dp-live' : sel.has(a.id) ? 'selected-row-soft' : ''}>
+          <td className="select-col"><input type="checkbox" checked={sel.has(a.id)} onChange={() => toggle(a.id)} aria-label={a.name} /></td>
           <td><b>{a.name}</b></td>
           <td className="num">{small ?? '—'}</td>
           <td className="num">{medium ?? '—'}</td>
@@ -426,7 +449,7 @@ function PropsTab({ state, x, toast }) {
           <td className="pr-players">{(r?.players || []).map(pl => <span key={pl.id} className={pl.stamina >= 95 ? 'ok' : 'low'} title={`${pl.name}: ${pl.start} → ${pl.stamina}`}>{pl.name.split(' ').slice(-1)[0]} {pl.stamina}</span>)}</td>
           <td className="actions">{busy.has(a.id) ? <button className="btn danger-soft small" onClick={() => api.props.stop(a.id).catch(e => toast(e.message, 'error'))}>{x.pr.stop}</button> : <button className="btn primary small" onClick={() => api.props.run(a.id).catch(e => toast(e.message, 'error'))}>{x.pr.button}</button>}</td>
         </tr>;
-      }, (g, o) => groupHeadRow(g, o, { select: false, rest: 6 }))}</tbody></SortTable></div>
+      }, (g, o) => groupHeadRow(g, o, { select: false, rest: 7 }))}</tbody></SortTable></div>
     <details className="panel pvp-how"><summary>{x.howTitle}</summary><ul>{x.pr.how.map(l => <li key={l}>{l}</li>)}</ul></details>
   </>;
 }
@@ -464,6 +487,7 @@ function QuizTab({ state, x, toast }) {
   const accounts = state.accounts || [];
   const running = Boolean(qz.running);
   const [ids, setIds] = useSavedIds(state, 'quizAccountIds', accounts);
+  const grp = useGroupedRows('dp-quiz');
   const now = useNow(running);
   const rows = Object.values(qz.run?.accounts || {});
   const asking = rows.filter(r => r.status === 'askUser').map(r => `${r.accountId}:${r.number}`).join('|');
@@ -480,7 +504,7 @@ function QuizTab({ state, x, toast }) {
     <div className="panel dp-section"><AccountPicks accounts={accounts} ids={ids} setIds={setIds} disabled={running} x={x} /></div>
     {running && <div className="dp-quiz-grid">{rows.map(r => <QuizCard key={r.accountId} row={r} x={x} now={now} />)}</div>}
     {report && <div className="panel table-panel dp-table"><SortTable><thead><tr><th>{x.account}</th><th>{x.status}</th><th>{x.qz.correct}</th><th>{x.qz.auto} / {x.qz.user} / {x.qz.random}</th><th>{x.qz.learned}</th></tr></thead>
-      <tbody>{report.rows.map(r => <tr key={r.accountId}><td><b>{r.name}</b></td><td className={r.status === 'error' ? 'bad-text' : ''}>{x.qz.st[r.status] || r.status}{r.reason && r.status === 'error' ? `: ${r.reason}` : ''}</td><td>{r.correct}/10</td><td>{r.auto} / {r.byUser} / {r.random}</td><td>{r.learned}</td></tr>)}</tbody></SortTable></div>}
+      <tbody>{grp(asAccounts(report.rows), r => <tr key={r.accountId}><td><b>{r.name}</b></td><td className={r.status === 'error' ? 'bad-text' : ''}>{x.qz.st[r.status] || r.status}{r.reason && r.status === 'error' ? `: ${r.reason}` : ''}</td><td>{r.correct}/10</td><td>{r.auto} / {r.byUser} / {r.random}</td><td>{r.learned}</td></tr>, groupRowOf(5, g => <><td /><td>{g.reduce((n, r) => n + (r.correct || 0), 0)}/{g.length * 10}</td><td /><td>{g.reduce((n, r) => n + (r.learned || 0), 0)}</td></>))}</tbody></SortTable></div>}
     <details className="panel pvp-how"><summary>{x.howTitle}</summary><ul>{x.qz.how.map(l => <li key={l}>{l}</li>)}</ul></details>
   </>;
 }
@@ -488,30 +512,39 @@ function QuizTab({ state, x, toast }) {
 function CheerTab({ state, x, toast }) {
   const accounts = state.accounts || [];
   const mainId = state.accountProfile?.mainAccountId || accounts[0]?.id || '';
-  const [target, setTarget] = useState(() => state.settings?.cheerTargetId && accounts.some(a => a.id === state.settings.cheerTargetId) ? state.settings.cheerTargetId : mainId);
-  const others = accounts.filter(a => a.id !== target);
-  const [ids, setIds] = useSavedIds(state, 'cheerAccountIds', others, others.map(a => a.id));
-  const from = ids.filter(id => id !== target);
+  const [targets, setTargets] = useSavedIds(state, 'cheerTargetIds', accounts, [state.settings?.cheerTargetId || mainId].filter(Boolean));
+  const [ids, setIds] = useSavedIds(state, 'cheerAccountIds', accounts, accounts.filter(a => a.id !== mainId).map(a => a.id));
+  const from = ids;
   const cs = state.cheer || {};
+  const run = cs.run;
+  const runLive = run?.status === 'running';
   const busy = Boolean(cs.busy);
   const last = cs.last;
   const daily = cs.daily || 3;
   const left = id => (cs.left ? cs.left[id] ?? daily : null);
   const entries = [...(cs.entries || [])].reverse();
+  const grp = useGroupedRows('dp-cheer');
   const nameOf = id => accounts.find(a => a.id === id)?.name || '';
-  const send = async () => {
-    if (!api.cheer) return toast(x.notReady, 'error');
-    try {
-      const r = await api.cheer.send(from, target);
-      if (r?.error === 'noMatch') toast(fill(x.ch.noMatch, { name: r.targetName }), 'error');
-    } catch (e) { toast(e.message, 'error'); }
+  const start = async () => {
+    if (!api.cheer?.start) return toast(x.notReady, 'error');
+    try { await api.cheer.start(from, targets); } catch (e) { toast(e.message, 'error'); }
   };
   return <>
     <div className="panel dp-controls dp-row">
-      <label><span>{x.ch.target}</span><select value={target} disabled={busy} onChange={e => { setTarget(e.target.value); api.settings.update({ cheerTargetId: e.target.value }).catch(() => {}); }}>{accounts.map(a => <option key={a.id} value={a.id}>{a.name}{a.id === mainId ? ` (${x.ch.main})` : ''}</option>)}</select></label>
-      <div className="dp-actions"><button className="btn primary" disabled={busy || !from.length || !target} onClick={send}>{busy ? x.ch.sending : fill(x.ch.send, { n: from.length })}</button></div>
+      <div className="dp-actions">{runLive ? <button className="btn danger-soft" onClick={() => api.cheer.stop().catch(e => toast(e.message, 'error'))}>{x.ch.stop}</button>
+        : <button className="btn primary" disabled={busy || !from.length || !targets.length} onClick={start}>{fill(x.ch.start, { t: targets.length, n: from.length })}</button>}</div>
     </div>
-    <div className="panel dp-section"><b className="dp-label">{x.ch.from}</b><AccountPicks accounts={others} ids={from} setIds={setIds} disabled={busy} x={x} extra={a => <em className={left(a.id) === 0 ? 'zero' : ''}>{left(a.id) == null ? '—' : `${left(a.id)}/${daily}`}</em>} /></div>
+    <div className="panel dp-section"><b className="dp-label">{x.ch.targets}</b><AccountPicks accounts={accounts} ids={targets} setIds={setTargets} disabled={busy} x={x} extra={a => a.id === mainId ? <em>{x.ch.main}</em> : null} /></div>
+    <div className="panel dp-section"><b className="dp-label">{x.ch.from}</b><AccountPicks accounts={accounts} ids={from} setIds={setIds} disabled={busy} x={x} extra={a => <em className={left(a.id) === 0 ? 'zero' : ''}>{left(a.id) == null ? '—' : `${left(a.id)}/${daily}`}</em>} /></div>
+    {run && <div className="panel table-panel dp-table">
+      <div className="dp-table-head"><b>{x.ch.run}</b><span>{new Date(run.at).toLocaleTimeString()}{run.finishedAt ? ` → ${new Date(run.finishedAt).toLocaleTimeString()}` : ''}</span></div>
+      <SortTable><thead><tr><th>{x.ch.target2}</th><th>{x.status}</th><th>{x.ch.morale}</th><th>{x.ch.sent}</th></tr></thead><tbody>{Object.entries(run.targets || {}).map(([id, r]) => <tr key={id} className={r.status === 'cheering' ? 'dp-live' : ''}>
+        <td><b>{r.name}</b></td>
+        <td className={['error', 'noMatch'].includes(r.status) ? 'bad-text' : r.status === 'full' ? 'good-text' : ''}>{x.ch.rst[r.status] || r.status}{r.quarter ? ` · ${fill(x.ch.quarter, { n: r.quarter })}` : ''}{r.error ? `: ${r.error}` : ''}</td>
+        <td>{r.morale == null ? '—' : <span className="ch-morale"><i style={{ width: `${Math.min(100, r.morale / 2)}%` }} /><b>{r.morale}/200</b></span>}</td>
+        <td className="num">{r.sent}</td>
+      </tr>)}</tbody></SortTable>
+    </div>}
     <div className="panel dp-section">
       <div className="dp-table-head dp-flush"><b>{x.ch.rights}</b><small className="muted-text">{cs.resetAt ? fill(x.ch.resetAt, { t: new Date(cs.resetAt).toLocaleString([], { weekday: 'short', hour: '2-digit', minute: '2-digit' }) }) : ''}</small></div>
       <div className="dp-rights">{accounts.map(a => { const n = left(a.id); return <div key={a.id} className={`dp-right ${n === 0 ? 'zero' : ''}`}><span>{a.name}</span><b>{n == null ? '—' : `${n}/${daily}`}</b></div>; })}</div>
@@ -521,7 +554,7 @@ function CheerTab({ state, x, toast }) {
       <div className="dp-table-head"><b>{x.ch.result}</b><span>{new Date(last.at).toLocaleTimeString()} · {last.targetName}{last.side ? ` · ${x.ch.side[last.side] || last.side}` : ''}</span></div>
       {last.error === 'noMatch' ? <p className="bad-text dp-pad">{fill(x.ch.noMatch, { name: last.targetName })}</p>
         : last.error && !last.rows?.length ? <p className="bad-text dp-pad">{last.error}</p>
-        : <SortTable><thead><tr><th>{x.account}</th><th>{x.status}</th><th></th></tr></thead><tbody>{(last.rows || []).map(r => <tr key={r.accountId}><td><b>{r.name}</b></td><td className={r.ok ? 'good-text' : 'bad-text'}>{r.ok ? x.ch.ok : r.message === 'noCheersLeft' ? x.ch.noneLeft : x.ch.fail}</td><td>{r.message === 'noCheersLeft' ? '' : r.message}</td></tr>)}</tbody></SortTable>}
+        : <SortTable><thead><tr><th>{x.account}</th><th>{x.status}</th><th></th></tr></thead><tbody>{grp(asAccounts(last.rows), r => <tr key={r.accountId}><td><b>{r.name}</b></td><td className={r.ok ? 'good-text' : 'bad-text'}>{r.ok ? x.ch.ok : r.message === 'noCheersLeft' ? x.ch.noneLeft : x.ch.fail}</td><td>{r.message === 'noCheersLeft' ? '' : r.message}</td></tr>, groupRowOf(3, g => <><td className="good-text">{g.filter(r => r.ok).length}/{g.length}</td><td /></>))}</tbody></SortTable>}
     </div>}
     <div className="panel table-panel dp-table">
       <div className="dp-table-head"><b>{x.ch.today}</b><small className="muted-text">{cs.day || ''}</small></div>
@@ -624,6 +657,7 @@ function SlotTab({ state, x, toast }) {
   const rows = ds.rows || {};
   const [ids, setIds] = useSavedIds(state, 'dailySlotAccountIds', accounts, accounts.map(a => a.id));
   const busy = Boolean(ds.running);
+  const grp = useGroupedRows('dp-slot');
   const go = fn => fn().catch(e => toast(e.message, 'error'));
   const today = Object.values(rows).map(r => r.dayKey).filter(Boolean).sort().pop();
   const shown = accounts.filter(a => rows[a.id]);
@@ -646,12 +680,12 @@ function SlotTab({ state, x, toast }) {
       <div className="dp-table-head"><b>{fill(d.tally, { spun: spunToday, total: shown.length })}</b>{last?.finishedAt && <span>{new Date(last.finishedAt).toLocaleTimeString()}{last.kind === 'spin' ? ` · ${fill(d.summary, last)}` : ''}</span>}</div>
       {!shown.length ? <p className="muted-text dp-pad">{d.none}</p> :
         <SortTable><thead><tr><th>{d.account}</th><th>{d.status}</th><th>{d.prizes}</th><th>{d.when}</th></tr></thead>
-          <tbody>{shown.map(a => { const r = rows[a.id]; return <tr key={a.id} className={['reading', 'spinning'].includes(r.status) ? 'dp-live' : ''}>
+          <tbody>{grp(shown, a => { const r = rows[a.id]; return <tr key={a.id} className={['reading', 'spinning'].includes(r.status) ? 'dp-live' : ''}>
             <td><b>{a.name}</b></td>
             <td><span className={`pill ${r.status === 'spun' ? 'ok' : r.status === 'error' ? 'bad' : r.status === 'ready' ? 'warn' : 'muted'}`}><i />{d.st[r.status] || r.status}</span>{r.error && <small className="cell-sub bad-text">{r.error === 'inMatch' ? d.inMatch : r.error}</small>}</td>
             <td>{(r.results || []).length ? <span className="ds-prizes">{r.results.map((p, i) => <span key={i} className={`ds-prize ${RARITY_TONE[p.rarity] || ''}`}>{p.name}</span>)}</span> : '—'}</td>
             <td>{r.spunAt ? new Date(r.spunAt).toLocaleTimeString() : '—'}</td>
-          </tr>; })}</tbody></SortTable>}
+          </tr>; }, groupRowOf(4, g => <><td>{g.filter(a => rows[a.id].status === 'spun').length}/{g.length}</td><td /><td /></>))}</tbody></SortTable>}
     </div>
     {ds.pool?.length > 0 && <details className="panel dp-section"><summary>{d.pool}</summary><div className="ds-totals">{ds.pool.map(p => <span key={p.name} className={`ds-prize ${RARITY_TONE[p.rarity] || ''}`}>{p.name} <b>%{p.chancePct}</b></span>)}</div></details>}
   </>;

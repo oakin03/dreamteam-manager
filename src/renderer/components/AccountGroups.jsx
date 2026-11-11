@@ -71,3 +71,12 @@ export function useGroupedRows(storeKey = 'rows') {
 }
 
 export const sumOf = (accounts, fn) => accounts.reduce((s, a) => s + (Number(fn(a)) || 0), 0);
+
+// The group row of a plain table (user 2026-11-11: every account table groups): the name opens
+// the group; `cells(accounts)` may add summary cells after it, otherwise the name spans `cols`.
+export const groupRowOf = (cols, cells = null) => (g, { open, toggle }) => <tr key={g.key} className="grp-row">
+  <td className="grp-name" onClick={toggle} colSpan={cells ? 1 : cols}><i className="grp-arrow">{open ? '▾' : '▸'}</i><b>{g.label}</b> <small className="muted-text">{g.accounts.length}</small></td>
+  {cells ? cells(g.accounts) : null}
+</tr>;
+// rows that carry { accountId, name } → the { id, name } shape the grouping reads
+export const asAccounts = rows => (rows || []).map(r => ({ ...r, id: r.accountId ?? r.id, name: r.name }));

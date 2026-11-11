@@ -1,4 +1,5 @@
 const { GameSocket } = require('./game-socket.cjs');
+const { WIDE, eachAtOnce, eachWithSocket } = require('./wide.cjs');
 
 // Stamina props at halftime (read from the game client 2026-10-25). The live match is on
 // /simulation-server-<Server>-socket/: after `joinMatchRoom {matchId, userId, teamName, avatarUrl}`
@@ -55,17 +56,13 @@ class PropService {
   // Props left in every bag (no sign-in).
   async bagsOf(accountIds) {
     const ids = accountIds || this.store.getAccounts().map(a => a.id);
-    const gs = await GameSocket.open({ createSocket: this.createSocket });
-    try {
-      for (const id of ids) {
-        const userId = this._userId(id);
-        if (!userId) continue;
-        const d = await gs.call('getUserInventory', { userId }, 'userInventoryData', { timeoutMs: TIMEOUT_MS }).catch(() => null);
-        const list = Array.isArray(d) ? d : (d?.inventory || d?.items || []);
-        const q = itemId => list.filter(x => (x.itemId || x.item?.id) === itemId).reduce((n, x) => n + (Number(x.quantity) || 0), 0);
-        if (Array.isArray(list)) this.bags[id] = { small: q(SMALL), medium: q(MEDIUM), large: q(LARGE), readAt: new Date(this.now()).toISOString() };
-      }
-    } finally { try { gs.close(); } catch {} }
+    // every account at once, a socket per lane
+    await eachWithSocket(ids.filter(id => this._userId(id)), () => GameSocket.open({ createSocket: this.createSocket }), async (gs, id) => {
+      const d = await gs.call('getUserInventory', { userId: this._userId(id) }, 'userInventoryData', { timeoutMs: TIMEOUT_MS }).catch(() => null);
+      const list = Array.isArray(d) ? d : (d?.inventory || d?.items || []);
+      const q = itemId => list.filter(x => (x.itemId || x.item?.id) === itemId).reduce((n, x) => n + (Number(x.quantity) || 0), 0);
+      if (Array.isArray(list)) this.bags[id] = { small: q(SMALL), medium: q(MEDIUM), large: q(LARGE), readAt: new Date(this.now()).toISOString() };
+    });
     this.onChanged();
     return this.snapshot();
   }

@@ -99,6 +99,12 @@ contextBridge.exposeInMainWorld('dreamteam', {
     stop: () => ipcRenderer.invoke('magic:stop'),
     status: (accountIds) => ipcRenderer.invoke('magic:status', accountIds)
   },
+  big3: {
+    scan: (accountIds) => ipcRenderer.invoke('big3:scan', { accountIds }),
+    setup: (accountIds) => ipcRenderer.invoke('big3:setup', { accountIds }),
+    enable: (on) => ipcRenderer.invoke('big3:enable', { on }),
+    bonus: (accountId, type) => ipcRenderer.invoke('big3:bonus', { accountId, type })
+  },
   office: {
     status: (accountIds, teamIds) => ipcRenderer.invoke('office:status', { accountIds, teamIds }),
     selectCoach: (accountId, coachId) => ipcRenderer.invoke('office:select-coach', { accountId, coachId }),
@@ -147,7 +153,9 @@ contextBridge.exposeInMainWorld('dreamteam', {
     poll: () => ipcRenderer.invoke('social:poll')
   },
   cheer: {
-    send: (fromIds, targetId) => ipcRenderer.invoke('cheer:send', { fromIds, targetId })
+    send: (fromIds, targetId) => ipcRenderer.invoke('cheer:send', { fromIds, targetId }),
+    start: (fromIds, targetIds) => ipcRenderer.invoke('cheer:start', { fromIds, targetIds }),
+    stop: () => ipcRenderer.invoke('cheer:stop')
   },
   chat: {
     start: (config) => ipcRenderer.invoke('chat:start', config),
@@ -164,7 +172,15 @@ contextBridge.exposeInMainWorld('dreamteam', {
     join: (accountId, slot) => ipcRenderer.invoke('draft:join', { accountId, slot }),
     pick: (accountId, playerId) => ipcRenderer.invoke('draft:pick', { accountId, playerId }),
     listPlayers: (accountId, items) => ipcRenderer.invoke('draft:list-players', { accountId, items }),
-    clearDrafted: (accountId) => ipcRenderer.invoke('draft:clear-drafted', accountId)
+    clearDrafted: (accountId) => ipcRenderer.invoke('draft:clear-drafted', accountId),
+    firePlayers: (accountId, playerIds) => ipcRenderer.invoke('draft:fire-players', { accountId, playerIds }),
+    toCards: (accountId, playerIds) => ipcRenderer.invoke('draft:to-cards', { accountId, playerIds })
+  },
+  rosters: { refresh: () => ipcRenderer.invoke('rosters:refresh') },
+  bag: {
+    read: (accountIds) => ipcRenderer.invoke('bag:read', { accountIds }),
+    use: (accountIds, itemId) => ipcRenderer.invoke('bag:use', { accountIds, itemId }),
+    status: (accountId) => ipcRenderer.invoke('bag:status', { accountId })
   },
   players: {
     refresh: () => ipcRenderer.invoke('players:refresh'),
@@ -241,6 +257,10 @@ contextBridge.exposeInMainWorld('dreamteam', {
     register: (collectionId) => ipcRenderer.invoke('equipment:register', collectionId),
     plan: (collectionId, slot) => ipcRenderer.invoke('equipment:plan', collectionId, slot),
     prepare: (collectionId, slot) => ipcRenderer.invoke('equipment:prepare', collectionId, slot)
+  },
+  tournamentLevel: {
+    check: (swap) => ipcRenderer.invoke('tournament-level:check', { swap }),
+    setAuto: (on) => ipcRenderer.invoke('tournament-level:auto', { on })
   },
   tournament: {
     start: (accountIds) => ipcRenderer.invoke('tournament:start', accountIds),

@@ -159,6 +159,9 @@ function parseUserBasicInfo(payload) {
 // account keeps its balance as it is.
 const APK_CUT_RATE = 5;   // percent
 const APK_CUT_MIN = 3;
+// Below this an account's APK / TIX cannot be sent to main (user 2026-11-11): the totals are
+// shown as "x/y", x without those accounts, y everything as before.
+const TRANSFER_MIN = 20;
 function usableApk(value, isMain) {
   const amount = Math.max(0, Number(value || 0));
   if (isMain) return amount;
@@ -221,6 +224,8 @@ class AccountProfileService {
     const mainAccountId = realMainAccountId || secondMainId;
     let totalUsableApk = mainAccountId ? 0 : null;
     let totalUsableTix = mainAccountId ? 0 : null;
+    let movableApk = mainAccountId ? 0 : null;
+    let movableTix = mainAccountId ? 0 : null;
     const effectiveApk = {};
     const effectiveTix = {};
 
@@ -231,12 +236,16 @@ class AccountProfileService {
       effectiveTix[account.id] = usableApk(stats?.tix, isMain);
       if (totalUsableApk != null) totalUsableApk += effectiveApk[account.id];
       if (totalUsableTix != null) totalUsableTix += effectiveTix[account.id];
+      if (movableApk != null && (isMain || Number(stats?.apk || 0) >= TRANSFER_MIN)) movableApk += effectiveApk[account.id];
+      if (movableTix != null && (isMain || Number(stats?.tix || 0) >= TRANSFER_MIN)) movableTix += effectiveTix[account.id];
     }
 
     return {
       ...state, mainAccountId, realMainAccountId, secondMainId, effectiveApk, effectiveTix,
       totalUsableApk: totalUsableApk == null ? null : Math.floor(totalUsableApk),
-      totalUsableTix: totalUsableTix == null ? null : Math.floor(totalUsableTix)
+      totalUsableTix: totalUsableTix == null ? null : Math.floor(totalUsableTix),
+      movableApk: movableApk == null ? null : Math.floor(movableApk),
+      movableTix: movableTix == null ? null : Math.floor(movableTix)
     };
   }
 
@@ -411,4 +420,4 @@ class AccountProfileService {
   }
 }
 
-module.exports = { AccountProfileService, readStadiumTelemetry, parseUserBasicInfo, usableApk, normalizeNumber, normalizeLevel };
+module.exports = { TRANSFER_MIN, AccountProfileService, readStadiumTelemetry, parseUserBasicInfo, usableApk, normalizeNumber, normalizeLevel };

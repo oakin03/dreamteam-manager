@@ -36,6 +36,7 @@ const TEXT = {
     maxPrice: 'Maksimum fiyat (Scout Price)', maxPriceHint: 'Bu fiyat ve altındaki oyuncular rolüne bakılmadan Main\'e gider ve karta çevrilir. 0–2500; 50\'nin altı = sadece roller.',
     room: 'Trade odası', roomDesc: 'Oda adı', roomPass: 'Oda şifresi', roomPassSaved: 'kayıtlı', showPass: 'Şifreyi göster', hidePass: 'Şifreyi gizle',
     loop: 'Döngü', loopOff: 'Tek tur', loopCount: 'Belirli sayıda', loopInfinite: 'Sonsuz', loopTimes: 'tur', loopHint: 'Döngüde her hesaba Scout\'u yenilendiğinde (30 dk) tekrar girilir.',
+    sideOnly: 'Sadece Satılabilir ve Stok oyuncuları al', sideOnlyHint: 'Kart ve fiyat sınırının altındaki ucuz oyuncular alınmaz; yalnızca Satılabilir ve Stok alınır. Main kendi sırasında tarar, harcayıcılara verip kapanır; sonra 10 hesap main olmadan aynı anda çalışır, her biri ayrı bir harcayıcıya verir, harcayıcı hemen pazara koyar.',
     baseAsSellable: 'Base oyuncuları satılabilir olarak değerlendir', baseAsSellableHint: 'Alımda gelen gerçek maaşı (Lv30+ hesaplarda %5 indirim olabilir) Base değerinde ya da altında olan, Kartlar sisteminde bir takımdaki oyuncular Satılabilir sayılır ve karta çevrilmez. No Team ve Kartlar\'da olmayan oyuncular etkilenmez.',
     howTitle: 'Nasıl çalışır?',
     how: [
@@ -79,7 +80,7 @@ const TEXT = {
     prepRunning: 'Hazırlık sürüyor · {done}/{total} hesap', prepStop: 'Hazırlığı durdur', prepDone: 'Hazırlık yapıldı ({time}) · {n} hesap tekrar kontrol edilmeyecek', prepClear: 'Hazırlığı unut',
     prepared: 'Hazırlık yapıldı ({time}) · tekrar kontrol edilmedi', prepFailed: 'Hazırlık yarıda kaldı: {error}',
     waitScout: '{name} Scout yenilenmesini bekliyor · {time}',
-    steps: { prep: 'Hazırlık: bench kararları · {done}/{total} hesap', starting: 'Başlıyor', opening: '{name} açılıyor', scouting: '{name} Scout · {candidates} uygun · {attempts} hak', signing: '{name}: {player} alınıyor ({price} TK)', callback: '{name}: Call back', converting: 'Main: {count} oyuncu karta çevriliyor', trading: '{side} ile takas · Main {give} verir, {take} alır · {tk} TK', waitingScout: '{name} Scout yenilenmesini bekliyor', cardScan: 'Main hesabında kart taraması yapılıyor', leftovers: 'Durmadan önce: {cheap} ucuz oyuncu, {count} harcayıcı', prepDone: 'Hazırlık bitti · bench kararları uygulandı', friendSync: 'Arkadaş ağı kontrol ediliyor', friendBoard: "{name}: {owner} adlı arkadaşın Scout listesine bakılıyor", spenderSearch: '{name}: {player} ({owner}) için uygun harcayıcı aranıyor', listing: '{name}: {count} oyuncu pazara konuyor', done: 'Bitti', stopped: 'Durduruldu' }
+    steps: { prep: 'Hazırlık: bench kararları · {done}/{total} hesap', starting: 'Başlıyor', opening: '{name} açılıyor', scouting: '{name} Scout · {candidates} uygun · {attempts} hak', signing: '{name}: {player} alınıyor ({price} TK)', callback: '{name}: Call back', converting: 'Main: {count} oyuncu karta çevriliyor', trading: '{side} ile takas · Main {give} verir, {take} alır · {tk} TK', waitingScout: '{name} Scout yenilenmesini bekliyor', cardScan: 'Main hesabında kart taraması yapılıyor', leftovers: 'Durmadan önce: {cheap} ucuz oyuncu, {count} harcayıcı', prepDone: 'Hazırlık bitti · bench kararları uygulandı', friendSync: 'Arkadaş ağı kontrol ediliyor', waitingCards: 'Main: Sentez / Aktive et bitince karta çevrilecek', friendBoard: "{name}: {owner} adlı arkadaşın Scout listesine bakılıyor", spenderSearch: '{name}: {player} ({owner}) için uygun harcayıcı aranıyor', listing: '{name}: {count} oyuncu pazara konuyor', done: 'Bitti', stopped: 'Durduruldu' }
   },
   en: {
     title: 'Auto Trade', subtitle: 'Scout · star cards · main ↔ side trades',
@@ -92,6 +93,7 @@ const TEXT = {
     maxPrice: 'Maximum price (Scout Price)', maxPriceHint: 'Players at or below this price go to main and become cards whatever their role. 0–2500; under 50 = roles only.',
     room: 'Trade room', roomDesc: 'Room name', roomPass: 'Room password', roomPassSaved: 'saved', showPass: 'Show password', hidePass: 'Hide password',
     loop: 'Loop', loopOff: 'Single run', loopCount: 'Number of cycles', loopInfinite: 'Endless', loopTimes: 'cycles', loopHint: 'In a loop every account is entered again when its Scout refreshes (30 min).',
+    sideOnly: 'Only sign Satılabilir and Stok players', sideOnlyHint: 'No Kart players and no cheap players under the price limit are signed; only Satılabilir and Stok. Main scouts in its own turn, hands to the spenders and closes; then 10 accounts work at once without main, each hands to its own spender, which lists right away.',
     baseAsSellable: 'Treat base players as sellable', baseAsSellableHint: 'Team players (in the Cards system) whose actual signed salary (Lv30+ accounts may get a 5% discount) is at or below Base count as Satılabilir and are not turned into cards. No Team players and players not in Cards are not affected.',
     howTitle: 'How it works',
     how: [
@@ -150,7 +152,7 @@ const TEXT = {
     prepRunning: 'Preparing · {done}/{total} accounts', prepStop: 'Stop preparing', prepDone: 'Prepared ({time}) · {n} accounts are not checked again', prepClear: 'Forget the preparation',
     prepared: 'Prepared ({time}) · not checked again', prepFailed: 'Preparation stopped: {error}',
     waitScout: '{name} waits for its Scout · {time}',
-    steps: { prep: 'Preparing: bench decisions · {done}/{total} accounts', starting: 'Starting', opening: 'Opening {name}', scouting: '{name} Scout · {candidates} eligible · {attempts} callbacks', signing: '{name}: signing {player} ({price} TK)', callback: '{name}: Call back', converting: 'Main: converting {count} player(s)', trading: 'Trade with {side} · main gives {give}, gets {take} · {tk} TK', waitingScout: '{name} waits for its Scout refresh', cardScan: 'Scanning the cards of the main account', leftovers: 'Before stopping: {cheap} cheap player(s), {count} spender(s)', prepDone: 'Preparation done · bench decisions carried out', friendSync: 'Checking the friend network', friendBoard: "{name}: going through {owner}'s Scout board", spenderSearch: '{name}: looking for a spender for {player} ({owner})', listing: '{name}: listing {count} player(s)', done: 'Done', stopped: 'Stopped' }
+    steps: { prep: 'Preparing: bench decisions · {done}/{total} accounts', starting: 'Starting', opening: 'Opening {name}', scouting: '{name} Scout · {candidates} eligible · {attempts} callbacks', signing: '{name}: signing {player} ({price} TK)', callback: '{name}: Call back', converting: 'Main: converting {count} player(s)', trading: 'Trade with {side} · main gives {give}, gets {take} · {tk} TK', waitingScout: '{name} waits for its Scout refresh', cardScan: 'Scanning the cards of the main account', leftovers: 'Before stopping: {cheap} cheap player(s), {count} spender(s)', prepDone: 'Preparation done · bench decisions carried out', friendSync: 'Checking the friend network', waitingCards: 'Main: turning into cards after Synthesis / Activate', friendBoard: "{name}: going through {owner}'s Scout board", spenderSearch: '{name}: looking for a spender for {player} ({owner})', listing: '{name}: listing {count} player(s)', done: 'Done', stopped: 'Stopped' }
   },
   get fil() { return filOf(this.en); }
 };
@@ -192,6 +194,7 @@ export default function AutoTradePage({ state, t, toast, msgText, Modal, refresh
     roomPassword: last.roomPassword || '32958209',
     loopMode: last.loopMode || 'off', loopCount: String(last.loopCount || 2),
     baseAsSellable: Boolean(last.baseAsSellable),
+    sideOnly: Boolean(last.sideOnly),
     baseProjected: last.baseProjected !== false,
     friendBoards: last.friendBoards !== false,
     spenderSellPrice: String(last.spenderSellPrice || last.spenderPrice || 999999),
@@ -238,7 +241,9 @@ export default function AutoTradePage({ state, t, toast, msgText, Modal, refresh
     const d = {};
     for (const a of res.accounts) for (const p of a.bench) {
       d[a.id] = d[a.id] || {};
-      d[a.id][p.id] = { action: 'none', price: (p.roleIds || []).some(r => r !== 'sellable' && form.mainToSideRoleIds.includes(r)) ? 99999 : 20, currency: (p.roleIds || []).some(r => r !== 'sellable' && form.mainToSideRoleIds.includes(r)) ? 'TIX' : 'APK' };
+      // price from the Auto Trade pricing (Otomatik Fiyatlandırma) when the engine sent it
+      const stock = (p.roleIds || []).some(r => r !== 'sellable' && form.mainToSideRoleIds.includes(r));
+      d[a.id][p.id] = { action: 'none', price: p.listPrice?.price ?? (stock ? 99999 : 20), currency: p.listPrice?.currency ?? (stock ? 'TIX' : 'APK') };
     }
     setDecisions(d);
     setPre({ ...res, mode });
@@ -375,6 +380,7 @@ function ConfigPanel({ state, x, form, set, accounts, realMain, selected, mainSe
       <small className="at2-loop-hint">{x.loopHint}</small>
     </section>
     <section className="at2-options">
+      <label className="at2-check"><input type="checkbox" checked={form.sideOnly} onChange={e => set({ sideOnly: e.target.checked })} /><span>{x.sideOnly}</span><small>{x.sideOnlyHint}</small></label>
       <label className="at2-check"><input type="checkbox" checked={form.baseAsSellable} onChange={e => set({ baseAsSellable: e.target.checked })} /><span>{x.baseAsSellable}</span><small>{x.baseAsSellableHint}</small></label>
       <label className={`at2-check at2-sub ${form.baseAsSellable ? '' : 'off'}`}><input type="checkbox" disabled={!form.baseAsSellable} checked={form.baseProjected} onChange={e => set({ baseProjected: e.target.checked })} /><span>{x.baseProjected}</span><small>{x.baseProjectedHint}</small></label>
       <label className="at2-check"><input type="checkbox" checked={form.friendBoards} onChange={e => set({ friendBoards: e.target.checked })} /><span>{x.friendBoards}</span><small>{x.friendBoardsHint}</small></label>

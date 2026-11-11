@@ -63,6 +63,7 @@ class AppStore {
       valuePredict: path.join(baseDir, 'value-predict.json'),
       injuries: path.join(baseDir, 'injuries.json'),
       towerReport: path.join(baseDir, 'tower-report.json'),
+      rostersData: path.join(baseDir, 'rosters.json'),
       synthesisData: path.join(baseDir, 'synthesis.json'),
       playerMarketData: path.join(baseDir, 'player-market.json'),
       playerMarketAccount: path.join(
@@ -188,6 +189,8 @@ class AppStore {
   savePlayersData(v) { this._save('playersData', v); }
   getSynthesisData() { return this._get('synthesisData', null); }
   saveSynthesisData(v) { this._save('synthesisData', v); }
+  getRostersData() { return this._get('rostersData', null); }
+  saveRostersData(v) { this._save('rostersData', v); }
   getTowerReport() { return this._get('towerReport', null); }
   saveTowerReport(v) { this._save('towerReport', v); }
   getInjuries() { return this._get('injuries', null); }

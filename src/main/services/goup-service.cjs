@@ -1,4 +1,5 @@
 const { GameSocket } = require('./game-socket.cjs');
+const { WIDE, eachAtOnce, eachWithSocket } = require('./wide.cjs');
 const { isNetError } = require('./game-health.cjs');
 
 // Go-up over the game's sockets (read from the game client 2026-10-23):
@@ -112,10 +113,8 @@ class GoUpService {
   async status(accountIds) {
     const ids = accountIds || this.store.getAccounts().map(a => a.id);
     try {
-      for (const id of ids) {
-        const userId = this._userId(id);
-        if (userId) await this._read(id, userId).catch(() => null);
-      }
+      await this._anon();
+      await eachAtOnce(ids, async id => { const userId = this._userId(id); if (userId) await this._read(id, userId).catch(() => null); });
     } finally {
       if (!this.controller) this._closeAnon();
       this.onChanged();

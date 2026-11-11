@@ -4,6 +4,7 @@ import { filOf } from '../i18n-fil';
 import { roleColors } from './roleColors';
 import RatingBadge from './RatingBadge';
 import InjuryMark, { injuryOf } from './InjuryMark';
+import RostersTab from './RostersTab';
 
 const api = window.dreamteam;
 const GRADES = ['D-', 'D', 'D+', 'C-', 'C', 'C+', 'B-', 'B', 'B+', 'A-', 'A', 'A+', 'S-', 'S', 'S+'];
@@ -15,6 +16,7 @@ const gapPct = p => p.base > 0 ? Math.round(((p.value - p.base) / p.base) * 1000
 
 const TEXT = {
   tr: {
+    tabAll: 'Tüm oyuncular', tabRosters: 'Kadrolarım',
     title: 'Oyuncular', subtitle: '{count} oyuncu · son güncelleme {at} · sonraki {next}', never: 'henüz yok', refresh: 'Yenile', refreshing: 'Yenileniyor…',
     up: 'Artan', down: 'Düşen', atBase: 'Base\'de / altında', same: 'Değişmeyen',
     search: 'Oyuncu ara', team: 'Takım', position: 'Mevki', rating: 'Rating', min: 'en az', max: 'en çok', value: 'Değer', base: 'Base', change: 'Değişim', gap: 'Base farkı', roles: 'Roller', card: 'Kart',
@@ -24,6 +26,7 @@ const TEXT = {
     baseBadge: 'Base', baseHint: 'Değerinden %5 indirim düşünce Base ya da altında (75 TK altı gösterilmez)', ratingWas: 'önceki gün {g}', editRoles: 'Rolleri düzenle', addBuy: 'Auto Buy listesine ekle', addBuySel: 'Seçilileri Auto Buy listesine ekle ({n})', inBuy: 'Auto Buy listesinde', addedBuy: '{n} oyuncu Auto Buy listesine eklendi', clearSel: 'Seçimi temizle', noTeam: 'No Team', stars: '★{s}', cards: '{n} kart', modified: 'Değiştirilmiş'
   },
   en: {
+    tabAll: 'All players', tabRosters: 'My rosters',
     title: 'Players', subtitle: '{count} players · updated {at} · next {next}', never: 'not yet', refresh: 'Refresh', refreshing: 'Refreshing…',
     up: 'Up', down: 'Down', atBase: 'At / below base', same: 'Unchanged',
     search: 'Search player', team: 'Team', position: 'Position', rating: 'Rating', min: 'min', max: 'max', value: 'Value', base: 'Base', change: 'Change', gap: 'Over base', roles: 'Roles', card: 'Card',
@@ -42,6 +45,7 @@ export default function PlayersPage({ state, t, toast }) {
   const data = state.players || {};
   const list = data.players || [];
   const roles = state.cards?.roles || [];
+  const [tab, setTab] = useState('all');
   const [f, setF] = useState(EMPTY);
   const [sort, setSort] = useState({ key: 'value', dir: 'desc' });
   const [page, setPage] = useState(0);
@@ -95,9 +99,13 @@ export default function PlayersPage({ state, t, toast }) {
   const at = data.fetchedAt ? new Date(data.fetchedAt).toLocaleString() : x.never;
   const next = data.nextAt ? new Date(data.nextAt).toLocaleString() : '—';
 
+  const tabs = <div className="cards-tabs"><button className={tab === 'all' ? 'active' : ''} onClick={() => setTab('all')}>{x.tabAll}</button><button className={tab === 'rosters' ? 'active' : ''} onClick={() => setTab('rosters')}>{x.tabRosters}</button></div>;
+  if (tab === 'rosters') return <div className="page players-page"><div className="page-title"><div><h1>{x.title}</h1></div></div>{tabs}<RostersTab state={state} t={t} toast={toast} /></div>;
+
   return <div className="page players-page">
     <div className="page-title"><div><h1>{x.title}</h1><span className="subtitle">{fill(x.subtitle, { count: list.length, at, next })}</span></div>
       <div className="toolbar"><button className="btn primary" disabled={data.busy} onClick={refresh}>{data.busy ? x.refreshing : x.refresh}</button></div></div>
+    {tabs}
     {data.error && <div className="panel pl-error">{data.error}</div>}
     {!list.length ? <div className="panel empty-state">{x.noData}</div> : <>
       <div className="pl-summary">

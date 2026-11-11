@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-11-08T02:33:35.659Z",
+  "updatedAt": "2026-11-11T18:28:01.938Z",
   "questions": {
     "which team has the longest active playoff streak": {
       "question": "Which team has the longest active playoff streak?",
@@ -11,8 +11,8 @@
         "D": "Phoenix Suns"
       },
       "answerText": "Philadelphia 76ers",
-      "learnedAt": "2026-11-06T03:15:28.390Z",
-      "seen": 154
+      "learnedAt": "2026-11-11T01:13:26.636Z",
+      "seen": 271
     },
     "how long is an nba shot clock": {
       "question": "How long is an NBA shot clock?",
@@ -23,8 +23,8 @@
         "D": "35 seconds"
       },
       "answerText": "24 seconds",
-      "learnedAt": "2026-11-06T03:15:28.686Z",
-      "seen": 158
+      "learnedAt": "2026-11-11T01:13:26.976Z",
+      "seen": 270
     },
     "who won the 2023 nba mvp award": {
       "question": "Who won the 2023 NBA MVP award?",
@@ -35,8 +35,8 @@
         "D": "Jayson Tatum"
       },
       "answerText": "Joel Embiid",
-      "learnedAt": "2026-11-06T03:15:27.016Z",
-      "seen": 162
+      "learnedAt": "2026-11-11T01:13:26.609Z",
+      "seen": 286
     },
     "which teams mascot is named benny the bull": {
       "question": "Which team's mascot is named 'Benny the Bull'?",
@@ -47,8 +47,8 @@
         "D": "Dallas Mavericks"
       },
       "answerText": "Chicago Bulls",
-      "learnedAt": "2026-11-06T03:15:28.755Z",
-      "seen": 139
+      "learnedAt": "2026-11-11T01:13:26.711Z",
+      "seen": 257
     },
     "which player has the most career tripledoubles": {
       "question": "Which player has the most career triple-doubles?",
@@ -59,8 +59,8 @@
         "D": "LeBron James"
       },
       "answerText": "Russell Westbrook",
-      "learnedAt": "2026-11-06T03:15:28.582Z",
-      "seen": 139
+      "learnedAt": "2026-11-11T01:13:25.432Z",
+      "seen": 242
     },
     "who is the current nba commissioner": {
       "question": "Who is the current NBA Commissioner?",
@@ -71,8 +71,8 @@
         "D": "Rob Manfred"
       },
       "answerText": "Adam Silver",
-      "learnedAt": "2026-11-06T03:15:28.648Z",
-      "seen": 148
+      "learnedAt": "2026-11-11T01:13:26.663Z",
+      "seen": 262
     },
     "what is the distance of the nba 3point line at the top of the arc": {
       "question": "What is the distance of the NBA 3-point line at the top of the arc?",
@@ -83,8 +83,8 @@
         "D": "25 feet"
       },
       "answerText": "23 feet 9 inches",
-      "learnedAt": "2026-11-06T03:15:28.706Z",
-      "seen": 160
+      "learnedAt": "2026-11-11T01:13:26.631Z",
+      "seen": 257
     },
     "which team has won the most nba championships": {
       "question": "Which team has won the most NBA championships?",
@@ -95,8 +95,8 @@
         "D": "Golden State Warriors"
       },
       "answerText": "Boston Celtics",
-      "learnedAt": "2026-11-06T03:15:27.160Z",
-      "seen": 135
+      "learnedAt": "2026-11-11T01:13:26.709Z",
+      "seen": 247
     },
     "who was the 1 overall pick in the 2023 nba draft": {
       "question": "Who was the #1 overall pick in the 2023 NBA Draft?",
@@ -107,8 +107,8 @@
         "D": "Amen Thompson"
       },
       "answerText": "Victor Wembanyama",
-      "learnedAt": "2026-11-06T03:15:27.607Z",
-      "seen": 164
+      "learnedAt": "2026-11-11T01:13:27.005Z",
+      "seen": 289
     },
     "how many teams are currently in the nba": {
       "question": "How many teams are currently in the NBA?",
@@ -119,8 +119,8 @@
         "D": "34"
       },
       "answerText": "30",
-      "learnedAt": "2026-11-06T03:15:27.436Z",
-      "seen": 156
+      "learnedAt": "2026-11-11T01:13:26.865Z",
+      "seen": 266
     },
     "which team is known as the lake show": {
       "question": "Which team is known as 'The Lake Show'?",
@@ -131,8 +131,8 @@
         "D": "Utah Jazz"
       },
       "answerText": "Los Angeles Lakers",
-      "learnedAt": "2026-11-06T03:15:28.651Z",
-      "seen": 149
+      "learnedAt": "2026-11-11T01:13:26.974Z",
+      "seen": 266
     },
     "the spurs play in which texas city": {
       "question": "The Spurs play in which Texas city?",
@@ -143,8 +143,8 @@
         "D": "Austin"
       },
       "answerText": "San Antonio",
-      "learnedAt": "2026-11-06T03:15:28.263Z",
-      "seen": 127
+      "learnedAt": "2026-11-11T01:13:26.611Z",
+      "seen": 250
     },
     "who is the nbas alltime leading scorer": {
       "question": "Who is the NBA's all-time leading scorer?",
@@ -155,8 +155,8 @@
         "D": "Michael Jordan"
       },
       "answerText": "LeBron James",
-      "learnedAt": "2026-11-06T03:15:27.195Z",
-      "seen": 150
+      "learnedAt": "2026-11-11T01:13:26.978Z",
+      "seen": 274
     },
     "which team was formerly known as the seattle supersonics": {
       "question": "Which team was formerly known as the Seattle SuperSonics?",
@@ -167,8 +167,8 @@
         "D": "New Orleans Pelicans"
       },
       "answerText": "Oklahoma City Thunder",
-      "learnedAt": "2026-11-06T03:15:28.582Z",
-      "seen": 151
+      "learnedAt": "2026-11-11T01:13:26.964Z",
+      "seen": 277
     },
     "which player has won the most nba mvp awards": {
       "question": "Which player has won the most NBA MVP awards?",
@@ -179,8 +179,8 @@
         "D": "Magic Johnson"
       },
       "answerText": "Kareem Abdul-Jabbar",
-      "learnedAt": "2026-11-06T03:15:28.711Z",
-      "seen": 147
+      "learnedAt": "2026-11-11T01:13:26.958Z",
+      "seen": 267
     },
     "how many timeouts does each team get in regulation": {
       "question": "How many timeouts does each team get in regulation?",
@@ -191,8 +191,8 @@
         "D": "8"
       },
       "answerText": "7",
-      "learnedAt": "2026-11-06T03:15:28.319Z",
-      "seen": 174
+      "learnedAt": "2026-11-11T01:13:27.027Z",
+      "seen": 303
     },
     "who holds the record for most assists in a single game": {
       "question": "Who holds the record for most assists in a single game?",
@@ -203,8 +203,8 @@
         "D": "John Stockton"
       },
       "answerText": "Scott Skiles",
-      "learnedAt": "2026-11-06T03:15:28.705Z",
-      "seen": 151
+      "learnedAt": "2026-11-11T01:13:26.691Z",
+      "seen": 265
     },
     "who holds the record for most points scored in a single nba game": {
       "question": "Who holds the record for most points scored in a single NBA game?",
@@ -215,8 +215,8 @@
         "D": "LeBron James"
       },
       "answerText": "Wilt Chamberlain",
-      "learnedAt": "2026-11-06T03:15:28.649Z",
-      "seen": 159
+      "learnedAt": "2026-11-11T01:13:26.866Z",
+      "seen": 269
     },
     "which team won the first nba championship": {
       "question": "Which team won the first NBA championship?",
@@ -227,8 +227,8 @@
         "D": "New York Knicks"
       },
       "answerText": "Philadelphia Warriors",
-      "learnedAt": "2026-11-06T03:15:26.461Z",
-      "seen": 131
+      "learnedAt": "2026-11-11T01:13:27.019Z",
+      "seen": 249
     },
     "what team drafted kobe bryant": {
       "question": "What team drafted Kobe Bryant?",
@@ -239,8 +239,8 @@
         "D": "New Jersey Nets"
       },
       "answerText": "Charlotte Hornets",
-      "learnedAt": "2026-11-06T03:15:28.587Z",
-      "seen": 141
+      "learnedAt": "2026-11-11T01:13:26.972Z",
+      "seen": 260
     },
     "how many seconds does a team have to advance the ball past halfcourt": {
       "question": "How many seconds does a team have to advance the ball past half-court?",
@@ -251,8 +251,8 @@
         "D": "12 seconds"
       },
       "answerText": "8 seconds",
-      "learnedAt": "2026-11-06T03:15:28.342Z",
-      "seen": 175
+      "learnedAt": "2026-11-11T01:13:26.621Z",
+      "seen": 280
     },
     "what is the record for most 3pointers made in a single season": {
       "question": "What is the record for most 3-pointers made in a single season?",
@@ -263,8 +263,8 @@
         "D": "James Harden"
       },
       "answerText": "Stephen Curry",
-      "learnedAt": "2026-11-06T03:15:28.731Z",
-      "seen": 155
+      "learnedAt": "2026-11-11T01:13:26.700Z",
+      "seen": 260
     },
     "what is the maximum number of players on an nba roster": {
       "question": "What is the maximum number of players on an NBA roster?",
@@ -275,8 +275,8 @@
         "D": "20"
       },
       "answerText": "15",
-      "learnedAt": "2026-11-06T03:15:28.306Z",
-      "seen": 149
+      "learnedAt": "2026-11-11T01:13:27.008Z",
+      "seen": 240
     },
     "which player has the most nba finals mvp awards": {
       "question": "Which player has the most NBA Finals MVP awards?",
@@ -287,8 +287,8 @@
         "D": "LeBron James"
       },
       "answerText": "Michael Jordan",
-      "learnedAt": "2026-11-06T03:15:28.592Z",
-      "seen": 168
+      "learnedAt": "2026-11-11T01:13:26.949Z",
+      "seen": 269
     },
     "which player has won the most sixth man of the year awards": {
       "question": "Which player has won the most Sixth Man of the Year awards?",
@@ -299,8 +299,8 @@
         "D": "Kevin McHale"
       },
       "answerText": "Lou Williams",
-      "learnedAt": "2026-11-06T03:15:28.585Z",
-      "seen": 156
+      "learnedAt": "2026-11-11T01:13:26.670Z",
+      "seen": 261
     },
     "who is the oldest player to score 60 points in a game": {
       "question": "Who is the oldest player to score 60+ points in a game?",
@@ -311,8 +311,8 @@
         "D": "Dirk Nowitzki"
       },
       "answerText": "Kobe Bryant",
-      "learnedAt": "2026-11-06T03:15:28.574Z",
-      "seen": 132
+      "learnedAt": "2026-11-11T01:13:26.671Z",
+      "seen": 248
     },
     "how long is each quarter in an nba game": {
       "question": "How long is each quarter in an NBA game?",
@@ -323,8 +323,8 @@
         "D": "20 minutes"
       },
       "answerText": "12 minutes",
-      "learnedAt": "2026-11-06T03:15:28.138Z",
-      "seen": 132
+      "learnedAt": "2026-11-11T01:13:26.629Z",
+      "seen": 244
     },
     "which team holds the record for most wins in a regular season": {
       "question": "Which team holds the record for most wins in a regular season?",
@@ -335,8 +335,8 @@
         "D": "2016-17 Golden State Warriors"
       },
       "answerText": "2015-16 Golden State Warriors",
-      "learnedAt": "2026-11-06T03:15:28.242Z",
-      "seen": 161
+      "learnedAt": "2026-11-11T01:13:26.987Z",
+      "seen": 266
     },
     "what is the longest winning streak in nba history": {
       "question": "What is the longest winning streak in NBA history?",
@@ -347,8 +347,8 @@
         "D": "Philadelphia 76ers"
       },
       "answerText": "Los Angeles Lakers",
-      "learnedAt": "2026-11-06T03:15:28.262Z",
-      "seen": 134
+      "learnedAt": "2026-11-11T01:13:27.217Z",
+      "seen": 249
     },
     "what is the restricted area under the basket called": {
       "question": "What is the restricted area under the basket called?",
@@ -359,8 +359,8 @@
         "D": "The Arc"
       },
       "answerText": "The Paint",
-      "learnedAt": "2026-11-06T03:15:28.575Z",
-      "seen": 140
+      "learnedAt": "2026-11-11T01:13:26.620Z",
+      "seen": 243
     },
     "how many players from each team are on the court at once": {
       "question": "How many players from each team are on the court at once?",
@@ -371,8 +371,8 @@
         "D": "7"
       },
       "answerText": "5",
-      "learnedAt": "2026-11-06T03:15:28.128Z",
-      "seen": 151
+      "learnedAt": "2026-11-11T01:13:27.033Z",
+      "seen": 273
     },
     "how wide is an nba basketball court": {
       "question": "How wide is an NBA basketball court?",
@@ -383,8 +383,8 @@
         "D": "60 feet"
       },
       "answerText": "50 feet",
-      "learnedAt": "2026-11-06T03:15:28.697Z",
-      "seen": 150
+      "learnedAt": "2026-11-11T01:13:26.684Z",
+      "seen": 251
     },
     "which team won the 2023 nba championship": {
       "question": "Which team won the 2023 NBA Championship?",
@@ -395,8 +395,8 @@
         "D": "Los Angeles Lakers"
       },
       "answerText": "Denver Nuggets",
-      "learnedAt": "2026-11-06T03:15:26.156Z",
-      "seen": 149
+      "learnedAt": "2026-11-11T01:13:26.632Z",
+      "seen": 251
     },
     "how many nba teams are in california": {
       "question": "How many NBA teams are in California?",
@@ -407,8 +407,8 @@
         "D": "5"
       },
       "answerText": "4",
-      "learnedAt": "2026-11-06T03:15:28.265Z",
-      "seen": 150
+      "learnedAt": "2026-11-11T01:13:26.607Z",
+      "seen": 247
     },
     "what is the miami heats home arena called": {
       "question": "What is the Miami Heat's home arena called?",
@@ -419,8 +419,8 @@
         "D": "Biscayne Arena"
       },
       "answerText": "Kaseya Center",
-      "learnedAt": "2026-11-06T03:15:28.752Z",
-      "seen": 136
+      "learnedAt": "2026-11-11T01:13:26.630Z",
+      "seen": 258
     },
     "what is the minimum age to enter the nba draft": {
       "question": "What is the minimum age to enter the NBA Draft?",
@@ -431,8 +431,8 @@
         "D": "21"
       },
       "answerText": "19",
-      "learnedAt": "2026-11-06T03:15:28.589Z",
-      "seen": 129
+      "learnedAt": "2026-11-11T01:13:26.997Z",
+      "seen": 248
     },
     "which player won the 2023 nba finals mvp": {
       "question": "Which player won the 2023 NBA Finals MVP?",
@@ -443,8 +443,8 @@
         "D": "Devin Booker"
       },
       "answerText": "Nikola Jokic",
-      "learnedAt": "2026-11-06T03:15:26.455Z",
-      "seen": 148
+      "learnedAt": "2026-11-11T01:13:26.676Z",
+      "seen": 277
     },
     "which teams colors are purple and gold": {
       "question": "Which team's colors are purple and gold?",
@@ -455,8 +455,8 @@
         "D": "Utah Jazz"
       },
       "answerText": "Los Angeles Lakers",
-      "learnedAt": "2026-11-06T03:15:28.652Z",
-      "seen": 163
+      "learnedAt": "2026-11-11T01:13:27.025Z",
+      "seen": 280
     },
     "the toronto raptors are the only nba team based in which country": {
       "question": "The Toronto Raptors are the only NBA team based in which country?",
@@ -467,8 +467,8 @@
         "D": "England"
       },
       "answerText": "Canada",
-      "learnedAt": "2026-11-06T03:15:26.609Z",
-      "seen": 139
+      "learnedAt": "2026-11-11T01:13:27.030Z",
+      "seen": 243
     },
     "what city do the thunder play in": {
       "question": "What city do the Thunder play in?",
@@ -479,8 +479,8 @@
         "D": "Kansas City"
       },
       "answerText": "Oklahoma City",
-      "learnedAt": "2026-11-06T03:15:28.581Z",
-      "seen": 161
+      "learnedAt": "2026-11-11T01:13:26.860Z",
+      "seen": 285
     },
     "which team plays at the chase center": {
       "question": "Which team plays at the Chase Center?",
@@ -491,8 +491,8 @@
         "D": "Phoenix Suns"
       },
       "answerText": "Golden State Warriors",
-      "learnedAt": "2026-11-06T03:15:28.584Z",
-      "seen": 154
+      "learnedAt": "2026-11-11T01:13:27.007Z",
+      "seen": 258
     },
     "which team has the most expensive arena naming rights deal": {
       "question": "Which team has the most expensive arena naming rights deal?",
@@ -503,8 +503,8 @@
         "D": "Miami Heat (FTX)"
       },
       "answerText": "Golden State Warriors (Chase)",
-      "learnedAt": "2026-11-06T03:15:27.273Z",
-      "seen": 148
+      "learnedAt": "2026-11-11T01:13:26.612Z",
+      "seen": 262
     },
     "how many personal fouls lead to disqualification in the nba": {
       "question": "How many personal fouls lead to disqualification in the NBA?",
@@ -515,8 +515,8 @@
         "D": "8"
       },
       "answerText": "6",
-      "learnedAt": "2026-11-06T03:15:28.264Z",
-      "seen": 151
+      "learnedAt": "2026-11-11T01:13:27.000Z",
+      "seen": 263
     },
     "which team plays at madison square garden": {
       "question": "Which team plays at Madison Square Garden?",
@@ -527,8 +527,8 @@
         "D": "Philadelphia 76ers"
       },
       "answerText": "New York Knicks",
-      "learnedAt": "2026-11-06T03:15:28.139Z",
-      "seen": 146
+      "learnedAt": "2026-11-11T01:13:27.021Z",
+      "seen": 251
     },
     "who has the most career steals in nba history": {
       "question": "Who has the most career steals in NBA history?",
@@ -539,8 +539,8 @@
         "D": "Jason Kidd"
       },
       "answerText": "John Stockton",
-      "learnedAt": "2026-11-06T03:15:28.730Z",
-      "seen": 163
+      "learnedAt": "2026-11-11T01:13:27.035Z",
+      "seen": 255
     },
     "in what year was the nba founded": {
       "question": "In what year was the NBA founded?",
@@ -551,8 +551,8 @@
         "D": "1960"
       },
       "answerText": "1946",
-      "learnedAt": "2026-11-06T03:15:28.129Z",
-      "seen": 167
+      "learnedAt": "2026-11-11T01:13:26.998Z",
+      "seen": 294
     },
     "what happens when a game is tied after regulation": {
       "question": "What happens when a game is tied after regulation?",
@@ -563,8 +563,8 @@
         "D": "Best of 3 free throws"
       },
       "answerText": "5-minute overtime",
-      "learnedAt": "2026-11-06T03:15:26.611Z",
-      "seen": 154
+      "learnedAt": "2026-11-11T01:13:27.004Z",
+      "seen": 269
     },
     "who was the youngest player to score 30000 career points": {
       "question": "Who was the youngest player to score 30,000 career points?",
@@ -575,8 +575,8 @@
         "D": "Kevin Durant"
       },
       "answerText": "LeBron James",
-      "learnedAt": "2026-11-06T03:15:28.673Z",
-      "seen": 160
+      "learnedAt": "2026-11-11T01:13:27.051Z",
+      "seen": 273
     },
     "who has the highest career free throw percentage": {
       "question": "Who has the highest career free throw percentage?",
@@ -587,8 +587,8 @@
         "D": "Ray Allen"
       },
       "answerText": "Stephen Curry",
-      "learnedAt": "2026-11-06T03:15:28.128Z",
-      "seen": 124
+      "learnedAt": "2026-11-11T01:13:26.669Z",
+      "seen": 238
     },
     "who has the most blocks in a single season": {
       "question": "Who has the most blocks in a single season?",
@@ -599,8 +599,8 @@
         "D": "David Robinson"
       },
       "answerText": "Mark Eaton",
-      "learnedAt": "2026-11-06T03:15:27.528Z",
-      "seen": 140
+      "learnedAt": "2026-11-11T01:13:26.638Z",
+      "seen": 257
     }
   }
 }

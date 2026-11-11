@@ -2,6 +2,7 @@ import { Fragment, useEffect, useState } from 'react';
 import { filOf } from '../i18n-fil';
 import SortTable from './SortTable';
 import { useGroupedRows } from './AccountGroups';
+import Big3AutoTab from './Big3AutoTab';
 
 const api = window.dreamteam;
 const fill = (s, p = {}) => String(s).replace(/\{(\w+)\}/g, (_, k) => p[k] ?? '');
@@ -9,7 +10,7 @@ const fill = (s, p = {}) => String(s).replace(/\{(\w+)\}/g, (_, k) => p[k] ?? ''
 const TEXT = {
   tr: {
     title: 'Ofis', subtitle: 'Koç ve Big Three · bilet hiçbir zaman harcanmaz',
-    tabs: { coach: 'Koç', big3: 'Big Three' },
+    tabs: { coach: 'Koç', big3: 'Big Three', big3auto: 'Big 3 otomatik' },
     read: 'Durumu oku', reading: 'Okunuyor…', readHint: 'Hesapların koç, taktik ve Big3 bilgisi okunur. Oyun isterse hesaba kısa süreliğine bağlanılır.',
     account: 'Hesap', auto: 'Otomatik', autoShort: 'Oto', autoHint: 'İşaretli hesaplarda uygulama 10 dakikada bir bakar: biten antrenmanı alır, ücretsiz hak varsa yenisini başlatır.',
     run: 'Şimdi çalıştır', notRead: 'Okunmadı', busy: 'Çalışıyor…', left: '{t} kaldı', ready: 'Bitti · alınacak', none: '—', restart: 'Bu bölüm uygulama yeniden başlatılınca çalışır.',
@@ -35,7 +36,7 @@ const TEXT = {
   },
   en: {
     title: 'Office', subtitle: 'Coach and Big Three · tickets are never spent',
-    tabs: { coach: 'Coach', big3: 'Big Three' },
+    tabs: { coach: 'Coach', big3: 'Big Three', big3auto: 'Big 3 automatic' },
     read: 'Read status', reading: 'Reading…', readHint: 'Reads the coach, tactics and Big3 of the accounts. If the game asks for it, the account is signed in for a moment.',
     account: 'Account', auto: 'Automatic', autoShort: 'Auto', autoHint: 'On ticked accounts the app looks every 10 minutes: it claims a finished training and starts a new one when a free attempt is left.',
     run: 'Run now', notRead: 'Not read', busy: 'Working…', left: '{t} left', ready: 'Done · to claim', none: '—', restart: 'This part works after the app is restarted.',
@@ -223,7 +224,8 @@ export default function OfficePage({ state, t, toast }) {
   return <div className="page office-page">
     <div className="page-title"><div><h1>{x.title}</h1><span className="subtitle">{x.subtitle}</span></div></div>
     <div className="dp-tabs">{Object.keys(x.tabs).map(id => <button key={id} className={tab === id ? 'active' : ''} onClick={() => choose(id)}>{x.tabs[id]}</button>)}</div>
-    <div className="panel pg-bar"><span className="pg-hint">{x.autoHint}</span><span className="sp" /><span className="pg-hint">{x.readHint}</span><button className="btn primary" disabled={reading || !api.office} onClick={read}>{reading ? x.reading : x.read}</button></div>
+    {tab === 'big3auto' && <Big3AutoTab state={state} t={t} toast={toast} />}
+    {tab !== 'big3auto' && <div className="panel pg-bar"><span className="pg-hint">{x.autoHint}</span><span className="sp" /><span className="pg-hint">{x.readHint}</span><button className="btn primary" disabled={reading || !api.office} onClick={read}>{reading ? x.reading : x.read}</button></div>}
     {tab === 'coach' && <div className="panel table-panel dp-table"><SortTable><thead><tr><th className="select-col" title={x.autoHint}>{x.autoShort}</th><th>{x.account}</th><th>{x.coach.coach}</th><th>{x.coach.offense}</th><th>{x.coach.defense}</th><th>{x.coach.cards}</th><th>{x.coach.today}</th><th>{x.coach.training}</th><th /></tr></thead>
       <tbody>{grp(accounts, coachRow, groupRow(9, id => coachAuto.includes(id), setCoachGroup))}</tbody></SortTable></div>}
     {tab === 'big3' && <>
@@ -233,6 +235,6 @@ export default function OfficePage({ state, t, toast }) {
       {mode === 'super' && <div className="panel table-panel dp-table"><SortTable>{big3Head(x.big3.trio)}
         <tbody>{grp(accounts, superRow, groupRow(9, id => superAuto.includes(id), setSuperGroup))}</tbody></SortTable></div>}
     </>}
-    <details className="panel pvp-how"><summary>{t.lang === 'tr' ? 'Nasıl çalışır?' : 'How does it work?'}</summary><ul>{section.how.map(l => <li key={l}>{l}</li>)}</ul></details>
+    {tab !== 'big3auto' && <details className="panel pvp-how"><summary>{t.lang === 'tr' ? 'Nasıl çalışır?' : 'How does it work?'}</summary><ul>{section.how.map(l => <li key={l}>{l}</li>)}</ul></details>}
   </div>;
 }

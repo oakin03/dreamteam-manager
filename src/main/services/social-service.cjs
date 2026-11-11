@@ -1,4 +1,5 @@
 const { GameSocket } = require('./game-socket.cjs');
+const { WIDE, eachAtOnce, eachWithSocket } = require('./wide.cjs');
 
 // Friends, private chat, blocked players and the mail box (read from the game client
 // and tried live 2026-10-25). Everything goes over /socket/:
@@ -73,7 +74,7 @@ function parseUnread(counts, total) {
   const sum = Object.values(by).reduce((a, b) => a + b, 0);
   return { total: Number(total) || sum, by };
 }
-const POLL_PARALLEL = 6;
+const POLL_PARALLEL = WIDE; // every account at once (user 2026-11-11)
 const itemName = it => it?.itemDetail?.name || it?.metadata?.name || it?.item?.name || it?.itemName || it?.name || it?.itemType || '?';
 
 class SocialService {

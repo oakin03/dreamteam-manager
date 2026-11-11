@@ -9,6 +9,8 @@ const TEXT = {
   tr: {
     intro: 'Sentez, Kartlar sayfasında seçili ana hesabın My Player Cards kartlarıyla yapılır. X oyunculara dokunulmaz. Seviyeler sırayla (1★→2★, sonra 2★→3★…) denenir; yol üzerinde gelen ya da geri verilen kartlar da kullanılır. Bitince kartlar yeniden taranır.',
     levels: 'Denenecek seviyeler', team: 'Takımlı oyuncuları sentezle', teamHint: 'Aynı oyuncudan aynı seviyede en az 4 kart varsa 4\'erli birleştirir (9 kart → 2 sentez). 1★→2★ her zaman başarılı, 2★ ve üstü %75.',
+    maxedInfo: 'Dahil edilen oyuncular ({n})', maxedNone: 'Son Kartlar taramasında 5★ oyuncu yok.', name: 'İsim', teamCol: 'Takım', starsCol: 'Yıldız (aktif)',
+    maxed: '5★ oyuncuların kartlarını takımsız say', maxedHint: '5★ aktifleştirilmiş oyuncuların 1–4★ kartları da takımsız oyuncu gibi birleştirilir (son Kartlar taramasındaki yıldızlara göre).',
     noTeam: 'Takımsız oyuncuları birleştir', noTeamHint: 'Her sentezde en çok kartı olan 4 farklı No Team oyuncudan birer kart kullanır (oyunun sırası: adet, sonra isim). Başarılıysa rastgele bir üst seviye kart gelir; 4 farklı oyuncu kalmayınca biter.',
     waiting: 'Oyun bekletiyor · {s} sn', stop: 'Durdur', running: 'Çalışıyor · {lv}★→{next}★', done: 'Tamamlandı', stopped: 'Durduruldu', error: 'Hata', live: 'Şu an', lastResult: 'Son işlem', used: 'Kullanılan 4 kart', got: 'Gelen kart', fail: 'Başarısız', returned: 'geri verildi', none: '—',
     history: 'Sentez geçmişi (bu çalıştırma)', obtained: 'Elde edilen kartlar', obtainedHint: 'Bu çalıştırmada gelen ve hâlâ sende olan kartlar; sonradan başka sentezde kullanılanlar listeden düşer.', noObtained: 'Henüz kart elde edilmedi.',
@@ -17,6 +19,8 @@ const TEXT = {
   en: {
     intro: 'Synthesis uses the My Player Cards of the main account selected on the Cards page. X players are never touched. Levels run in order (1★→2★, then 2★→3★…); cards made or given back on the way are used too. The cards are scanned again at the end.',
     levels: 'Levels to try', team: 'Synthesize team players', teamHint: 'Combines 4 cards of the same player at the same level (9 cards → 2 syntheses). 1★→2★ always works, 2★ and up 75%.',
+    maxedInfo: 'Players included ({n})', maxedNone: 'No 5★ players in the last Cards scan.', name: 'Name', teamCol: 'Team', starsCol: 'Stars (active)',
+    maxed: 'Count the cards of 5★ players as No Team', maxedHint: 'The 1–4★ cards of players activated to 5★ are combined like No Team cards too (stars from the last Cards scan).',
     noTeam: 'Combine No Team players', noTeamHint: 'Each synthesis uses one card each of the 4 different No Team players with the most cards (the game\'s order: quantity, then name). Success gives a random next-level card; it ends when fewer than 4 different players are left.',
     waiting: 'The game asks to wait · {s} s', stop: 'Stop', running: 'Running · {lv}★→{next}★', done: 'Completed', stopped: 'Stopped', error: 'Error', live: 'Now', lastResult: 'Last synthesis', used: 'The 4 cards used', got: 'Card received', fail: 'Failed', returned: 'given back', none: '—',
     history: 'Synthesis history (this run)', obtained: 'Cards obtained', obtainedHint: 'Cards this run gave you that you still own; cards used again later drop off the list.', noObtained: 'No cards obtained yet.',
@@ -33,6 +37,8 @@ export default function SynthesisTab({ state, t, toast }) {
   const run = sy.run;
   const running = Boolean(sy.running);
   const [levels, setLevels] = useState(() => new Set(LEVELS));
+  const [infoOpen, setInfoOpen] = useState(false);
+  const maxedPlayers = (state.cards?.players || []).filter(p => !p.x && !p.noTeam && Number(p.stars) >= 5).sort((a, b) => String(a.teamName || a.team || '').localeCompare(String(b.teamName || b.team || '')) || String(a.name).localeCompare(String(b.name)));
   const toggle = l => setLevels(s => { const n = new Set(s); n.has(l) ? n.delete(l) : n.add(l); return n; });
   const start = async mode => { try { await api.synthesis.start({ mode, levels: [...levels].sort() }); } catch (e) { toast(e.message, 'error'); } };
   const cur = run?.current;
@@ -45,7 +51,12 @@ export default function SynthesisTab({ state, t, toast }) {
     <div className="synth-controls">
       <div className="panel synth-levels"><b>{x.levels}</b><div className="synth-level-list">{LEVELS.map(l => <label key={l} className={levels.has(l) ? 'on' : ''}><input type="checkbox" disabled={running} checked={levels.has(l)} onChange={() => toggle(l)} /><span>{stars(l)} → {stars(l + 1)}</span></label>)}</div></div>
       <div className="panel synth-action"><button className="btn primary" disabled={running || !levels.size} onClick={() => start('team')}>{x.team}</button><small>{x.teamHint}</small></div>
-      <div className="panel synth-action"><button className="btn accent" disabled={running || !levels.size} onClick={() => start('noTeam')}>{x.noTeam}</button><small>{x.noTeamHint}</small></div>
+      <div className="panel synth-action"><button className="btn accent" disabled={running || !levels.size} onClick={() => start('noTeam')}>{x.noTeam}</button><small>{x.noTeamHint}</small>
+        <label className="switchline synth-maxed" title={x.maxedHint}><input type="checkbox" disabled={running} checked={Boolean(sy.maxedAsNoTeam)} onChange={e => api.settings.update({ synthMaxedNoTeam: e.target.checked }).catch(err => toast(err.message, 'error'))} /><span>{x.maxed}</span></label>
+        <span className="synth-info" onMouseEnter={() => setInfoOpen(true)} onMouseLeave={() => setInfoOpen(false)} onClick={() => setInfoOpen(o => !o)}><b className="info-dot" aria-label={fill(x.maxedInfo, { n: maxedPlayers.length })}>i</b>
+          {infoOpen && <div className="synth-info-pop panel"><b>{fill(x.maxedInfo, { n: maxedPlayers.length })}</b>
+            {maxedPlayers.length ? <table><thead><tr><th>{x.name}</th><th>{x.teamCol}</th><th>{x.starsCol}</th></tr></thead><tbody>{maxedPlayers.map(p => <tr key={p.playerId || p.key}><td>{p.name}</td><td>{p.teamName || p.team || '—'}</td><td className="star-value">{stars(Number(p.stars))}</td></tr>)}</tbody></table> : <p className="muted-text">{x.maxedNone}</p>}
+          </div>}</span><small>{x.maxedHint}</small></div>
     </div>
 
     {run && <div className={`panel synth-live ${tone}`}>

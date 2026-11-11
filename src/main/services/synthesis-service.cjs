@@ -40,8 +40,9 @@ function waitSeconds(r) {
 }
 
 class SynthesisService {
-  constructor({ store, activity, sessions, onChanged, onDone, createSocket, now = () => Date.now(), timing = {} }) {
+  constructor({ store, activity, sessions, cards = null, onChanged, onDone, createSocket, now = () => Date.now(), timing = {} }) {
     this.store = store;
+    this.cards = cards;            // last Cards scan: the stars of the team players
     this.activity = activity;
     this.sessions = sessions;
     this.onChanged = onChanged || (() => {});
@@ -54,7 +55,7 @@ class SynthesisService {
   }
 
   snapshot() {
-    return { running: Boolean(this.controller), run: this.run ? JSON.parse(JSON.stringify(this.run)) : null, summary: this.store.getSynthesisData?.()?.summary || {} };
+    return { running: Boolean(this.controller), run: this.run ? JSON.parse(JSON.stringify(this.run)) : null, summary: this.store.getSynthesisData?.()?.summary || {}, maxedAsNoTeam: this.store.getSettings?.()?.synthMaxedNoTeam === true };
   }
 
   _account() {
@@ -137,6 +138,10 @@ class SynthesisService {
     this.anon = await GameSocket.open({ createSocket: this.createSocket, signal });
     this.conn = await GameSocket.open({ createSocket: this.createSocket, cookie: session.cookieHeader, signal });
     this.registered = false;
+    const maxed = this.store.getSettings?.()?.synthMaxedNoTeam === true
+      ? new Set((this.cards?.snapshot?.()?.players || []).filter(p => !p.x && Number(p.stars) >= 5).map(p => p.playerId).filter(Boolean))
+      : new Set();
+    if (this.run.mode === 'noTeam' && maxed.size) this._log(account, 'info', 'sy.maxedNoTeam', { count: maxed.size }, `The cards of ${maxed.size} 5★ player(s) count as No Team`);
     try {
       let steps = 0;
       for (const level of this.run.levels) {
@@ -147,6 +152,9 @@ class SynthesisService {
           if (++steps > MAX_STEPS) throw new Error('Too many syntheses in one run.');
           const raw = await this._rawInventory(signal);
           const stacks = R.stacksFrom(raw);
+          // option (user 2026-11-09): the cards of a player activated to 5★ are of no use to it
+          // any more, so in "noTeam" mode they count as No Team cards
+          if (this.run.mode === 'noTeam' && maxed.size) for (const s of stacks) if (maxed.has(s.playerId)) s.noTeam = true;
           const pick = this.run.mode === 'team'
             ? (s => s ? [s, s, s, s] : null)(R.teamCandidates(stacks, level)[0])
             : R.noTeamPick(stacks, level);

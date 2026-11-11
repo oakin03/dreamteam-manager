@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import SortTable from './SortTable';
 import { filOf } from '../i18n-fil';
-import { GroupedPicks } from './AccountGroups';
+import { GroupedPicks, useGroupedRows, groupRowOf, asAccounts } from './AccountGroups';
 
 const api = window.dreamteam;
 const TEXT = {
@@ -44,6 +44,7 @@ const fill = (s, p = {}) => String(s).replace(/\{(\w+)\}/g, (_, k) => p[k] ?? ''
 const TOWERS = ['Challenger', 'Threat', 'Rival'];
 
 export default function TowerPage({ state, t, toast }) {
+  const grp = useGroupedRows('tower-run');
   const x = TEXT[t.lang] || TEXT.en;
   const tw = state.tower || {};
   const accounts = state.accounts || [];
@@ -75,13 +76,13 @@ export default function TowerPage({ state, t, toast }) {
 
     {live && <><h3 className="section-title">{running ? x.live : x.last}</h3>
       <div className="panel table-panel"><SortTable><thead><tr>{running && <th></th>}<th>{x.account}</th><th>{x.status}</th><th>{x.now}</th>{TOWERS.map(n => <th key={n}>{n}</th>)}</tr></thead>
-        <tbody>{rows.map(r => <tr key={r.accountId} className={`tw-row ${r.status}`}>
+        <tbody>{grp(asAccounts(rows), r => <tr key={r.accountId} className={`tw-row ${r.status}`}>
           {running && <td>{activeIds.includes(r.accountId) && <input type="checkbox" checked={stopPick.has(r.accountId)} onChange={() => setStopPick(s => { const n = new Set(s); n.has(r.accountId) ? n.delete(r.accountId) : n.add(r.accountId); return n; })} />}</td>}
           <td><b>{r.name}</b>{r.wins + r.losses > 0 && <small className="cell-sub">{fill(x.wl, { w: r.wins, l: r.losses })}</small>}</td>
           <td><span className={`pill ${TONE[r.status] || 'muted'}`}><i />{x.st[r.status] || r.status}</span></td>
           <td>{r.status === 'playing' || r.status === 'starting' ? <b className="tw-now">{fill(x.playing, { tower: r.tower, floor: r.floor })}</b> : r.status === 'error' || r.status === 'salaryCap' ? <span className="bad-text">{r.message}</span> : <span className="muted-text">—</span>}</td>
           {TOWERS.map(n => { const tt = (r.towers || []).find(v => v.label.toLowerCase() === n.toLowerCase()); return <td key={n}><TowerCell tt={tt} x={x} active={r.tower === n && (r.status === 'playing' || r.status === 'starting')} /></td>; })}
-        </tr>)}</tbody></SortTable></div></>}
+        </tr>, groupRowOf(3 + TOWERS.length + (running ? 1 : 0)))}</tbody></SortTable></div></>}
 
     <LastRun report={!running ? tw.lastReport : null} x={x} />
     {!live && !tw.lastReport && <p className="muted-text">{x.none}</p>}
@@ -103,10 +104,11 @@ function TowerCell({ tt, x, active }) {
 
 // Wins per account per tower in the last run.
 function LastRun({ report, x }) {
+  const grp = useGroupedRows('tower-last');
   if (!report?.rows?.length) return null;
   return <><h3 className="section-title">{x.last} <small>{new Date(report.startedAt).toLocaleString()} → {new Date(report.finishedAt).toLocaleTimeString()}</small></h3>
     <div className="panel table-panel"><SortTable><thead><tr><th>{x.account}</th><th>{x.result}</th>{TOWERS.map(n => <th key={n}>{n}</th>)}</tr></thead>
-      <tbody>{report.rows.map(r => <tr key={r.accountId}><td><b>{r.name}</b></td><td><span className={`pill ${TONE[r.status] || 'muted'}`}><i />{x.st[r.status] || r.status}</span></td>
+      <tbody>{grp(asAccounts(report.rows), r => <tr key={r.accountId}><td><b>{r.name}</b></td><td><span className={`pill ${TONE[r.status] || 'muted'}`}><i />{x.st[r.status] || r.status}</span></td>
         {TOWERS.map(n => { const tt = (r.towers || []).find(v => v.label.toLowerCase() === n.toLowerCase()); return <td key={n}>{tt ? <span className="tw-sum"><b className="green-text">{tt.wins}</b> / <b className="bad-text">{tt.losses}</b> <small className="muted-text">· {tt.startFloor ?? '?'} → {tt.state === 'done' ? tt.maxFloor : tt.floor}{tt.reason ? ` · ${x.reason[tt.reason] || tt.reason}` : ''}</small></span> : '—'}</td>; })}
-      </tr>)}</tbody></SortTable></div></>;
+      </tr>, groupRowOf(2 + TOWERS.length))}</tbody></SortTable></div></>;
 }

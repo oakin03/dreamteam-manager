@@ -51,7 +51,7 @@ function fakeGame({ cards, failNext = 0, failAsSuccess = false, lieLevel = false
 function service(game) {
   const logs = []; let data = null; let rescans = 0;
   const store = {
-    getAccounts: () => [{ id: 'm', name: 'Yozgt66ers' }], getAccountProfile: () => ({ mainAccountId: 'm' }),
+    getAccounts: () => [{ id: 'm', name: 'Yozgt66ers' }], getAccountProfile: () => ({ mainAccountId: 'm' }), getSettings: () => ({}),
     getSynthesisData: () => data, saveSynthesisData: v => { data = JSON.parse(JSON.stringify(v)); }
   };
   const svc = new SynthesisService({ store, activity: { add: e => logs.push(e) }, onChanged() {}, onDone: async () => { rescans++; }, sessions: { get: async () => ({ userId: 'u', cookieHeader: 'c' }) }, createSocket: game.createSocket, timing: { gapMs: 1 } });
@@ -150,4 +150,23 @@ test('the inventory decides: a "success" that made no card one level up is a fai
   const run = svc.snapshot().run;
   assert.deepEqual(run.counts[2], { ok: 1, fail: 1 }, 'first (lying) one failed, the second really made a 3★');
   assert.ok(logs.some(l => l.code === 'sy.fail' && l.params.byInventory === true));
+});
+
+test('option on: the 1-4★ cards of a 5★ team player join the No Team synthesis; off: they are left alone', async () => {
+  const cards = [
+    { inv: 'k', pid: 'keon', name: 'Keon Ellis', level: 1, qty: 3, team: true },
+    { inv: 'f', pid: 'full', name: 'Four Star', level: 1, qty: 5, team: true },
+    ...['A', 'B', 'C'].map((n, i) => ({ inv: 'n' + i, pid: 'n' + i, name: n, level: 1, qty: 1 }))
+  ];
+  for (const on of [false, true]) {
+    const game = fakeGame({ cards });
+    const { svc } = service(game);
+    svc.store.getSettings = () => ({ synthMaxedNoTeam: on });
+    svc.cards = { snapshot: () => ({ players: [{ playerId: 'keon', stars: 5 }, { playerId: 'full', stars: 4 }] }) };
+    svc.start({ mode: 'noTeam', levels: [1] });
+    await svc.done;
+    const used = game.calls.filter(c => c.event === 'starcard:synthesize').flatMap(c => c.payload.selectedCards.map(s => s.linkedPlayerId));
+    if (on) assert.ok(used.includes('keon') && !used.includes('full'), JSON.stringify(used));
+    else assert.equal(used.length, 0, 'only 3 No Team players without the option');
+  }
 });

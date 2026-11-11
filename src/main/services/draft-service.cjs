@@ -1,5 +1,6 @@
 const { GameSocket } = require('./game-socket.cjs');
 const { isNetError } = require('./game-health.cjs');
+const { TradeGameAccount, sleep } = require('./trade-game-client.cjs');
 
 // Live Draft over the game's /draft-socket/. Room states and attempts are read
 // without logging in; joining and picking use the account's session cookie (no
@@ -101,7 +102,6 @@ class DraftService {
   async watch() {
     this.watchers += 1;
     if (this.watchers === 1) {
-      await this._refreshAttempts().catch(() => {});
       const tick = async () => {
         // While the game is unreachable the 2 s polling pauses; the shared check probes instead.
         if (this.gameHealth?.isDown()) { this.error = 'game unreachable'; }
@@ -111,7 +111,10 @@ class DraftService {
         this.onChanged();
         if (this.watchers > 0 || this.joined.size) this.poll = setTimeout(tick, POLL_MS);
       };
-      tick();
+      // the rooms first (user 2026-11-09: the page waited for every account's attempts before
+      // showing which rooms are open); the attempts follow in the background
+      await tick();
+      this._refreshAttempts().catch(() => {});
     }
     return this.snapshot();
   }
@@ -145,13 +148,15 @@ class DraftService {
   // the draft starts and when it ends.
   async _refreshAttempts(ids = this._accounts().map(a => a.id)) {
     const anon = await this._anon();
-    for (const id of ids) {
-      const userId = this._userId(id);
-      if (!userId) continue;
-      const r = await anon.ack('getDraftAttempts', { userId }, { timeoutMs: 8000 }).catch(() => null);
-      if (r?.success) this.attempts[id] = { draftAttempts: r.draftAttempts, rookieDraftAttempts: r.rookieDraftAttempts, at: new Date(this.now()).toISOString() };
+    const list = ids.filter(id => this._userId(id));
+    // 10 at a time on the same socket, the page updates after every group
+    for (let i = 0; i < list.length; i += 10) {
+      await Promise.all(list.slice(i, i + 10).map(async id => {
+        const r = await anon.ack('getDraftAttempts', { userId: this._userId(id) }, { timeoutMs: 8000 }).catch(() => null);
+        if (r?.success) this.attempts[id] = { draftAttempts: r.draftAttempts, rookieDraftAttempts: r.rookieDraftAttempts, at: new Date(this.now()).toISOString() };
+      }));
+      this.onChanged();
     }
-    this.onChanged();
   }
 
   async join(accountId, slotNumber) {
@@ -379,6 +384,105 @@ class DraftService {
       if (!drafted[accountId]?.length) delete drafted[accountId];
       this._saveDrafted(drafted);
       this.onChanged();
+    }
+    return this.snapshot();
+  }
+
+  _dropDrafted(accountId, ids) {
+    const drafted = this._drafted();
+    drafted[accountId] = (drafted[accountId] || []).filter(p => !ids.includes(p.id));
+    if (!drafted[accountId].length) delete drafted[accountId];
+    this._saveDrafted(drafted);
+    this.onChanged();
+  }
+  _rowName(accountId, id) { return (this._drafted()[accountId] || []).find(p => p.id === id)?.name || id; }
+  _mainId() { return this.store.getAccountProfile?.()?.mainAccountId || null; }
+
+  // Kov / Tümünü kov (user 2026-11-11): the game's FIRE for drafted players (the page asks first).
+  async firePlayers(accountId, playerIds) {
+    const account = this._accounts().find(a => a.id === accountId);
+    if (!account) throw new Error('Account not found.');
+    const ids = [...new Set(playerIds || [])];
+    if (!ids.length) throw new Error('Player not found.');
+    const t = await TradeGameAccount.open({ account, sessions: this.sessions, createSocket: this.createSocket });
+    const gone = [];
+    let failed = null;
+    try {
+      for (const id of ids) {
+        const name = this._rowName(accountId, id);
+        const r = await t.fire(id).catch(error => ({ success: false, error: error.message }));
+        // already off the roster (fired by hand / sold) counts as gone
+        const ok = r?.success || /not (found|in)/i.test(String(r?.error || r?.message || ''));
+        if (ok) gone.push(id); else failed = r?.error || r?.message || 'Fire refused';
+        this._log(ok ? 'success' : 'warning', ok ? 'df.fired' : 'df.fireFailed', { name, error: r?.error || r?.message || '' }, ok ? `${name} fired` : `${name} could not be fired: ${r?.error || r?.message || ''}`, accountId);
+      }
+    } finally {
+      t.close();
+      if (gone.length) this._dropDrafted(accountId, gone);
+    }
+    if (failed) throw new Error(failed);
+    return this.snapshot();
+  }
+
+  // Karta çevir (user 2026-11-11): the drafted players go to main in a trade room (main gives
+  // nothing back), then main turns them into star cards (Make). On main itself only the Make.
+  async toCards(accountId, playerIds) {
+    const mainId = this._mainId();
+    if (!mainId) throw new Error('No Main account is set.');
+    const accounts = this._accounts();
+    const side = accounts.find(a => a.id === accountId);
+    const main = accounts.find(a => a.id === mainId);
+    if (!side || !main) throw new Error('Account not found.');
+    const ids = [...new Set(playerIds || [])];
+    if (!ids.length) throw new Error('Player not found.');
+    const names = ids.map(id => this._rowName(accountId, id)).join(', ');
+    const m = await TradeGameAccount.open({ account: main, sessions: this.sessions, createSocket: this.createSocket });
+    let s = null, roomId = null;
+    try {
+      if (accountId !== mainId) {
+        s = await TradeGameAccount.open({ account: side, sessions: this.sessions, createSocket: this.createSocket });
+        const password = String(Math.floor(100000 + Math.random() * 900000));
+        roomId = await s.createRoom('Draft', password);
+        const sideJoined = s.expect('joinedRoomData', d => d?.roomId === roomId);
+        const room = await m.joinRoom(roomId, password);
+        await sideJoined.catch(() => null);
+        const sel = ids.map(id => (room.hostPlayers || []).find(p => p.id === id));
+        if (sel.some(p => !p)) throw new Error('A drafted player is not on this account any more.');
+        const upd = m.expect('tradeSelectionUpdate', d => d?.roomId === roomId && (d.hostSelectedPlayers || []).length === sel.length);
+        s.select(roomId, sel);
+        await upd;
+        await sleep(300);
+        for (let attempt = 1; ; attempt++) {
+          const both = m.expect('acceptTradeUpdate', d => d?.hostAccepted && d?.guestAccepted, 7000);
+          s.accept(roomId);
+          await sleep(250);
+          m.accept(roomId);
+          try { await both; break; } catch (error) { if (attempt >= 3) throw error; }
+        }
+        const resultP = m.expect('tradeResult', () => true).catch(error => ({ success: false, message: error.message }));
+        m.confirm(roomId, sel, []);
+        const result = await resultP;
+        // the game does not always answer: main's roster decides
+        const mr = (await m.roster().catch(() => null))?.players || {};
+        const onMain = new Set([...(mr.starters || []), ...(mr.bench || [])].map(p => p.id));
+        if (!ids.every(id => onMain.has(id))) throw new Error(`Trade to main failed: ${result?.message || 'the players did not move'}`);
+        this._log('success', 'df.toMain', { names, main: main.name }, `${names} → ${main.name}`, accountId);
+      }
+      const r = await m.makeCards(ids);
+      if (!r?.success) {
+        if (accountId !== mainId) this._dropDrafted(accountId, ids); // they are on main now
+        throw new Error(`Make failed on ${main.name}: ${r?.message || r?.error || 'no answer'}`);
+      }
+      this._log('success', 'df.carded', { names, count: ids.length }, `${ids.length} drafted player(s) turned into star cards · ${names}`, mainId);
+      this._dropDrafted(accountId, ids);
+    } catch (error) {
+      this._log('error', 'df.cardFailed', { names, error: error.message }, `Turning into cards failed: ${error.message}`, accountId);
+      throw error;
+    } finally {
+      if (roomId) s?.cancelRoom(roomId);
+      m.leave();
+      s?.close();
+      m.close();
     }
     return this.snapshot();
   }

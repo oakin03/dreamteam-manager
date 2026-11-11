@@ -1,4 +1,5 @@
 const { GameSocket } = require('./game-socket.cjs');
+const { WIDE, eachAtOnce, eachWithSocket } = require('./wide.cjs');
 const { OwnedSwap } = require('./owned-swap.cjs');
 
 // Market (City -> Market building) without a browser: everything below is the
@@ -13,7 +14,7 @@ const { OwnedSwap } = require('./owned-swap.cjs');
 // is repeated after that wait. Removing a listing fails with "You already own
 // this player." while the same player is already in the roster.
 const PAGE_SIZE = 8;
-const ACCOUNT_CONCURRENCY = 4;
+const ACCOUNT_CONCURRENCY = WIDE; // every account at once (user 2026-11-11)
 const MAX_ATTEMPTS = 5;
 const CURRENCY = { APK_TICKET: 'APK', TICKET: 'TIX' };
 const PAYMENT_MODE = { APK: 'APK_TICKET', TIX: 'TICKET' };

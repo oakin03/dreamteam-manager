@@ -15,13 +15,20 @@ function fakeGame(opts = {}) {
     fmDone: Boolean(opts.fmDone), matches: opts.matches ? opts.matches.map(m => ({ ...m })) : [],
     active: null, pending: null, hidden: 0, claimed: new Set(opts.claimed || []), claimCooldownOnce: Boolean(opts.claimCooldownOnce), activeLeft: 0, pendingPolls: 0, otherMatch: opts.otherMatch || 0,
     mails: (opts.mails || []).map(m => ({ ...m })),
-    registered: false, donations: []
+    registered: false, donations: [],
+    afterDone: 0, gmDone: opts.gmDone ?? true, parties: (opts.parties || []).map(p => ({ ...p, members: p.members.map(m => ({ ...m })) })), myParty: null, gmPolls: 0
   };
   const tasks = () => [
     { taskId: 't-pk', task: { key: 'win_1_match' }, completed: Boolean(opts.pkDone), isClaimed: state.claimed.has('t-pk') },
-    { taskId: 't-fm', task: { key: 'friendly_match' }, completed: state.fmDone, isClaimed: state.claimed.has('t-fm') }
+    { taskId: 't-fm', task: { key: 'friendly_match' }, completed: state.fmDone, isClaimed: state.claimed.has('t-fm') },
+    { taskId: 't-gm', task: { key: 'group_match' }, completed: state.gmDone, isClaimed: true }
   ];
+  // Group Match parties: the leader finds the match when the party is full and ready; the
+  // match is found after a few polls and the task completes after a few more
+  const partyOf = id => state.parties.find(p => p.party_id === id);
+  const mine = () => state.parties.find(p => p.members.some(m => m.userId === USER)) || null;
   const sim = (event, p) => {
+    const payload = p;
     if (event === 'getUserActiveMatch') {
       if (state.otherMatch > 0) { state.otherMatch--; return { success: true, match: { match_id: 'match-1', type: 'QP' } }; }
       // Like the game: a joined match can take a few polls to show up.
@@ -43,6 +50,31 @@ function fakeGame(opts = {}) {
     }
     if (event === 'createFM') { state.pending = { match_id: 'fm-own', host: USER, status: 'waiting', type: 'FM' }; return { success: true, matchId: 'fm-own' }; }
     if (event === 'cancelMatch') { state.pending = null; return { success: true }; }
+    if (event === 'requestPartyList') return { success: true, parties: state.parties };
+    if (event === 'getMyParty') {
+      const p = mine();
+      if (p && p.status === 'open' && p.members.length >= 3 && p.members.every(m => m.ready) && p.leader !== USER && opts.otherLeaderFinds) p.status = 'searching';
+      if (p && p.status === 'searching' && ++state.gmPolls > 2) p.status = 'matched';
+      else if (p && p.status === 'matched' && ++state.gmPolls > 4) {
+        state.gmDone = true;
+        if (++state.afterDone > (opts.matchedAfterDone || 0)) { p.status = 'open'; p.members.forEach(m => { m.ready = m.userId === p.leader; }); }
+      }
+      return { success: true, party: p };
+    }
+    if (event === 'kickPartyMember') { const p = mine(); p.members = p.members.filter(m => m.userId !== payload.targetId); (state.kicked ||= []).push(payload.targetId); return { success: true, party: p }; }
+    if (event === 'joinParty') {
+      const p = partyOf(payload.partyId);
+      if (opts.overCap) return { success: false, error: 'Trophy6 is over the salary cap. Total: 9000, Cap: 8000' };
+      if (opts.partyJoinFails?.includes(p.party_id)) return { success: false, error: 'Party is full' };
+      p.members.push({ userId: USER, teamName: 'Trophy6', ready: false });
+      if (opts.fillOnJoin) while (p.members.length < 3) p.members.push({ userId: 'x' + p.members.length, ready: true });
+      return { success: true, party: p };
+    }
+    if (event === 'createParty') { const p = { party_id: 'party-own', mode: 'GROUP', leader: USER, leaderName: 'Trophy6', members: [{ userId: USER, ready: true }], status: 'open', hasPassword: false, maxMembers: 3 }; state.parties.push(p); return { success: true, party: p }; }
+    if (event === 'setPartyReady') { const p = mine(); p.members.find(m => m.userId === USER).ready = payload.ready; return { success: true, party: p }; }
+    if (event === 'findPartyMatch') { const p = mine(); p.status = 'searching'; return { success: true, party: p }; }
+    if (event === 'cancelPartySearch') { const p = mine(); p.status = 'open'; return { success: true }; }
+    if (event === 'leaveParty') { const p = mine(); if (p?.status === 'matched') return { success: false, error: 'Nobody can leave while the games are being played' }; if (p) p.members = p.members.filter(m => m.userId !== USER); (state.left ||= []).push(p?.party_id); return { success: true, party: null }; }
     return { success: false, error: 'unknown' };
   };
   const main = (event, p, reply) => {
@@ -117,6 +149,7 @@ function routine(game, { selected = ['a1'], timing = {} } = {}) {
   const mem = { settings: { dailyRoutineAccountIds: selected }, daily: { version: 1, accounts: {} } };
   const store = {
     getSettings: () => mem.settings, getAccounts: () => [{ id: 'a1', name: 'Trophy6' }],
+    getAccountProfile: () => ({ accounts: { a1: { userId: USER }, a2: { userId: 'our2' } } }),
     getDailyRoutine: () => mem.daily, saveDailyRoutine: v => { mem.daily = v; }
   };
   const s = new DailyRoutineService({
@@ -135,7 +168,7 @@ test('fresh day: claims, signs in, starts tasks, joins an open match and waits f
   const game = fakeGame({ matches: [fm('fm-locked', { hasPassword: true }), fm('fm-full'), fm('fm-open'), fm('fm-started', { status: 'started', opponent: 'x' })], joinFails: ['fm-full'] });
   const { s, logs, mem } = routine(game);
   const results = await s.runIfDue(account);
-  assert.deepEqual(results, { signIn: 'claimed', signIn600: 'signed', tasks: 'started', donate: 'noAlliance', friendly: 'played' });
+  assert.deepEqual(results, { signIn: 'claimed', signIn600: 'signed', tasks: 'started', donate: 'noAlliance', friendly: 'played', group: 'already' });
   const joins = game.calls.filter(c => c.event === 'joinFM').map(c => c.payload.matchId);
   assert.deepEqual(joins, ['fm-full', 'fm-open'], 'never tries the passworded or started match');
   assert.ok(!game.calls.some(c => c.event === 'createFM'));
@@ -164,7 +197,7 @@ test('only passworded matches: creates one, waits for an opponent, plays it', as
 test('everything already done today: no writes, still marked done', async () => {
   const game = fakeGame({ signInClaimed: true, signed600: true, tasksStarted: true, fmDone: true });
   const { s, logs } = routine(game);
-  assert.deepEqual(await s.runIfDue(account), { signIn: 'already', signIn600: 'already', tasks: 'already', donate: 'noAlliance', friendly: 'already' });
+  assert.deepEqual(await s.runIfDue(account), { signIn: 'already', signIn600: 'already', tasks: 'already', donate: 'noAlliance', friendly: 'already', group: 'already' });
   assert.ok(!game.calls.some(c => ['claimSignInReward', 'startDailyTasks', 'joinFM', 'createFM'].includes(c.event)));
   assert.equal(codes(logs).at(-1), 'dr.done');
 });
@@ -416,4 +449,113 @@ test('the donation uses a connection another service registered for the account 
   assert.equal(other.closed, undefined, 'the borrowed connection stays open');
   other.close();
   GameSocket._resetKicks();
+});
+
+const party = (id, members, extra = {}) => ({ party_id: id, mode: 'GROUP', leader: members[0].userId, leaderName: 'L-' + id, members, status: 'open', hasPassword: false, maxMembers: 3, createdAt: 1, ...extra });
+test('Group Match: joins the open party of one of our accounts first (no password), readies up, plays, then leaves the party', async () => {
+  const game = fakeGame({ fmDone: true, tasksStarted: true, gmDone: false, otherLeaderFinds: true, fillOnJoin: true, parties: [
+    party('p-locked', [{ userId: 'z1', ready: true }, { userId: 'z2', ready: true }], { hasPassword: true }),
+    party('p-stranger', [{ userId: 's1', ready: true }, { userId: 's2', ready: true }]),
+    party('p-ours', [{ userId: 'our2', ready: true }])
+  ] });
+  const { s, logs } = routine(game);
+  const results = await s.runIfDue(account);
+  assert.equal(results.group, 'played', JSON.stringify(logs.map(l => l.message)));
+  const joins = game.calls.filter(c => c.event === 'joinParty').map(c => c.payload.partyId);
+  assert.deepEqual(joins, ['p-ours'], 'only a party led by one of ours; strangers\' parties are never joined');
+  assert.ok(game.calls.some(c => c.event === 'setPartyReady' && c.payload.ready === true));
+  assert.ok(game.state.left?.includes('p-ours'), 'left the party afterwards (Quick Play needs it) ' + JSON.stringify(game.calls.filter(c => c.path === '/simulation-socket/').map(c => c.event).slice(-8)));
+  assert.ok(codes(logs).includes('dr.gmJoined') && codes(logs).includes('dr.gmDone'));
+});
+
+test('Group Match: no joinable party → creates one; as leader of a full ready party it finds the match', async () => {
+  const game = fakeGame({ fmDone: true, tasksStarted: true, gmDone: false, parties: [party('p-full', [{ userId: 'a', ready: true }, { userId: 'b', ready: true }, { userId: 'c', ready: true }])] });
+  const { s, logs } = routine(game);
+  const run = s.runIfDue(account);
+  // two strangers join our party meanwhile
+  const fill = setInterval(() => { const p = game.state.parties.find(x => x.party_id === 'party-own'); if (p) { clearInterval(fill); p.members.push({ userId: 'm1', ready: true }, { userId: 'm2', ready: true }); } }, 5);
+  const results = await run;
+  assert.equal(results.group, 'played', JSON.stringify(logs.map(l => l.message)));
+  assert.ok(game.calls.some(c => c.event === 'createParty'));
+  assert.ok(game.calls.some(c => c.event === 'findPartyMatch'));
+  assert.ok(codes(logs).includes('dr.gmCreated') && codes(logs).includes('dr.gmFind'));
+});
+
+test('Group Match: a party not matched in time is left and the search starts again', async () => {
+  const game = fakeGame({ fmDone: true, tasksStarted: true, gmDone: false, parties: [party('p-afk', [{ userId: 'our2', ready: true }], { createdAt: NOW })] });
+  let clock = NOW;
+  const { s, logs } = routine(game, { timing: { partyWaitMs: 50, groupTotalMs: 400 } });
+  s.now = () => (clock += 5);
+  const results = await s.runIfDue(account);
+  assert.equal(results.group, 'failed');
+  assert.ok(codes(logs).includes('dr.gmNoMatch'));
+  assert.ok(game.state.left?.includes('p-afk'));
+  assert.ok(!game.state.parties.some(p => p.members.some(m => m.userId === USER)), 'not left in any party');
+});
+
+test('Group Match: the party is left only after its games end (it cannot be left while matched)', async () => {
+  const game = fakeGame({ fmDone: true, tasksStarted: true, gmDone: false, otherLeaderFinds: true, fillOnJoin: true, matchedAfterDone: 3, parties: [party('p-ours', [{ userId: 'our2', ready: true }])] });
+  const { s, logs } = routine(game);
+  const results = await s.runIfDue(account);
+  assert.equal(results.group, 'played');
+  assert.ok(game.state.left?.includes('p-ours'), JSON.stringify(logs.map(l => l.code)));
+  assert.ok(!game.state.parties.some(p => p.members.some(m => m.userId === USER)), 'not in any party any more');
+  assert.ok(codes(logs).includes('dr.gmLeft'));
+});
+
+test('Group Match: as leader of a full party, a member who does not get ready is put out', async () => {
+  const game = fakeGame({ fmDone: true, tasksStarted: true, gmDone: false, parties: [] });
+  const { s, logs } = routine(game, { timing: { unreadyKickMs: 20 } });
+  const t0 = Date.now();
+  s.now = () => NOW + (Date.now() - t0);
+  const run = s.runIfDue(account);
+  let added = false;
+  const fill = setInterval(() => {
+    const p = game.state.parties.find(x => x.party_id === 'party-own');
+    if (!p) return;
+    if (!added) { added = true; p.members.push({ userId: 'afk', teamName: 'Afk', ready: false }, { userId: 'm2', ready: true }); }
+    else if (game.state.kicked?.includes('afk') && p.members.length < 3) { clearInterval(fill); p.members.push({ userId: 'm3', ready: true }); }
+  }, 5);
+  const results = await run;
+  clearInterval(fill);
+  assert.equal(results.group, 'played', JSON.stringify(logs.map(l => l.message)));
+  assert.deepEqual(game.state.kicked, ['afk']);
+  assert.ok(codes(logs).includes('dr.gmKicked'));
+});
+
+test('Group Match: over the salary cap → stops at once with the game message, no endless join tries', async () => {
+  const game = fakeGame({ fmDone: true, tasksStarted: true, gmDone: false, overCap: true, parties: [party('p1', [{ userId: 'our2', ready: true }], { createdAt: NOW }), party('p2', [{ userId: 'our2', ready: true }], { createdAt: NOW })] });
+  const { s, logs } = routine(game);
+  const results = await s.runIfDue(account);
+  assert.equal(results.group, 'failed');
+  assert.equal(game.calls.filter(c => c.event === 'joinParty').length, 1);
+  assert.ok(logs.some(l => /salary cap/.test(l.message)));
+});
+
+test('a routine done earlier: an account still sitting in its Group Match party leaves it on the next check', async () => {
+  const game = fakeGame({ fmDone: true, tasksStarted: true, gmDone: true, parties: [party('p-stale', [{ userId: USER, ready: true }, { userId: 'x', ready: false }, { userId: 'y', ready: false }])] });
+  const { s, mem } = routine(game);
+  const cycle = s.cycle();
+  mem.daily.accounts.a1 = { cycle, doneAt: new Date(NOW).toISOString(), results: { group: 'played' } };
+  await s.runIfDue(account);
+  assert.ok(game.state.left?.includes('p-stale'));
+  const again = game.calls.filter(c => c.event === 'getMyParty').length;
+  await s.runIfDue(account);
+  assert.equal(game.calls.filter(c => c.event === 'getMyParty').length, again, 'checked once per day');
+});
+
+test('Group Match: only parties led by our accounts are joined; none of ours open → our own party (strangers may join it)', async () => {
+  const game = fakeGame({ fmDone: true, tasksStarted: true, gmDone: false, fillOnJoin: true, parties: [
+    party('p-stranger', [{ userId: 's1', ready: true }, { userId: 's2', ready: true }], { createdAt: NOW }),
+    party('p-member', [{ userId: 's3', ready: true }, { userId: 'our2', ready: true }], { createdAt: NOW }),
+    party('p-ours', [{ userId: 'our2', ready: true }], { createdAt: NOW })
+  ] });
+  const { s, logs } = routine(game, { timing: { idleLeaderMs: 30, groupTotalMs: 2000 } });
+  const t0 = Date.now();
+  s.now = () => NOW + (Date.now() - t0);
+  await s.runIfDue(account);
+  const joins = game.calls.filter(c => c.event === 'joinParty').map(c => c.payload.partyId);
+  assert.deepEqual(joins, ['p-ours'], 'a stranger-led party is never joined, even with one of ours inside');
+  assert.ok(game.calls.some(c => c.event === 'createParty'), 'nothing of ours left: our own party');
+  assert.ok(codes(logs).includes('dr.gmCreated'));
 });

@@ -34,14 +34,18 @@ const { MarketService } = require('./services/market-service.cjs');
 const { GameSessions } = require('./services/game-sessions.cjs');
 // The old browser Player Market (player-market-*.cjs) is kept on disk but no longer used.
 const { PlayersService } = require('./services/players-service.cjs');
+const { RostersService } = require('./services/rosters-service.cjs');
+const { BagService } = require('./services/bag-service.cjs');
 const { DraftService } = require('./services/draft-service.cjs');
 const { syncMcpConfig } = require('./services/mcp-sync.cjs');
 const { TournamentService } = require('./services/tournament-service.cjs');
+const { TournamentLevelService } = require('./services/tournament-level-service.cjs');
 const { DailyRoutineService } = require('./services/daily-routine-service.cjs');
 const { PvpService } = require('./services/pvp-service.cjs');
 const { GoUpService } = require('./services/goup-service.cjs');
 const { DailyBossService, EliteAscentService, ProfessionalService } = require('./services/proving-service.cjs');
 const { OfficeService, MagicTeamService } = require('./services/office-service.cjs');
+const { Big3Auto } = require('./services/big3-auto.cjs');
 const { SkillsService } = require('./services/skills-service.cjs');
 const { TkTransferService } = require('./services/tk-transfer-service.cjs');
 const { ApkTransferService } = require('./services/apk-transfer-service.cjs');
@@ -82,6 +86,9 @@ let autoTrade;
 let market;
 let gameSessions;
 let players;
+let rosters;
+let bag;
+let lastRostersRevision = -1;
 let draft;
 let pvp;
 let goup;
@@ -95,6 +102,7 @@ let activate;
 let props;
 let eliteAscent;
 let office;
+let big3;
 let magicTeam;
 let magicDone = null;
 let skills;
@@ -123,6 +131,7 @@ let lastBuyRevision = -1;
 let lastDraftRevision = -1;
 let lastPlayersKey = null;
 let tournament;
+let tournamentLevel;
 let dailyRoutine;
 let equipment;
 let signup;
@@ -171,11 +180,14 @@ function snapshot({ incremental = false } = {}) {
     },
     rewards: dailyRewards?.snapshot() || {},
     tournament: tournament?.snapshot() || { runtime: { status: 'idle' }, accounts: {}, events: [] },
+    tournamentLevel: tournamentLevel?.snapshot() || null,
+    bag: bag?.snapshot() || null,
     dailyRoutine: dailyRoutine?.snapshot() || { selected: [], accounts: {} },
     pvp: pvp?.snapshot() || { running: false, run: null, lastReport: null },
     dailyBoss: dailyBoss?.snapshot() || { running: false, run: null, info: {}, bosses: [] },
     eliteAscent: eliteAscent?.snapshot() || { running: false, run: null, info: {} },
     office: office?.snapshot() || { info: {}, busy: [], auto: { coach: [], big3: {} } },
+    big3: big3?.snapshot() || null,
     magicTeam: magicTeam?.snapshot() || { running: false, run: null, info: {} },
     skills: skills?.snapshot() || { busy: [] },
     professional: professional?.snapshot() || { running: false, run: null, info: {} },
@@ -206,6 +218,7 @@ function snapshot({ incremental = false } = {}) {
   // 640 players: sent when the list or the roles changed.
   const playersKey = players ? `${players.revision}:${store.revision('cardMetadata')}:${store.revision('cardRoles')}:${store.revision('cards')}` : null;
   if (players && (!incremental || lastPlayersKey !== playersKey)) { state.players = players.snapshot(); lastPlayersKey = playersKey; }
+  if (rosters && (!incremental || lastRostersRevision !== rosters.revision)) { state.rosters = rosters.snapshot(); lastRostersRevision = rosters.revision; }
   if (injuries && (!incremental || lastInjuryRevision !== injuries.revision)) { state.injuries = injuries.snapshot(); lastInjuryRevision = injuries.revision; }
   if (valuePredict && (!incremental || lastVpRevision !== valuePredict.revision)) { state.valuePredict = valuePredict.snapshot(); lastVpRevision = valuePredict.revision; }
   if (buy && (!incremental || lastBuyRevision !== buy.revision)) { state.buy = buy.snapshot(); lastBuyRevision = buy.revision; }
@@ -694,9 +707,11 @@ function initServices() {
   trading = new TradingHallService({ store, credentials, browserService, activity, onChanged: emitState });
   dailyRewards = new DailyRewardService({ store, activity, engine, sessions: gameSessions, gameHealth, isPaused: () => Boolean(globalPause), onChanged: emitState });
   const friendNet = new FriendNetwork({ store, sessions: gameSessions, activity, perSide: () => autoTrade?.lastConfig?.spendersPerSide, onChanged: () => { if (autoTrade) autoTrade.revision++; emitState(); } });
-  autoTrade = new AutoTradeEngine({ friendNet, pauseAccount: pauseAccountForTrade, onSpenderListed: e => buy?.recordListed?.(e), gameHealth, store, credentials, activity, sessions: gameSessions, accountProfile, onChanged: emitState, onAttention: autoTradeAttention, onScout: (id, reply) => scout.showSocketScout?.(id, reply), onCycleEnd: () => cards.refresh() });
+  autoTrade = new AutoTradeEngine({ cardBusy: () => Boolean(synthesis?.snapshot().running || activate?.snapshot().running), friendNet, pauseAccount: pauseAccountForTrade, onSpenderListed: e => buy?.recordListed?.(e), gameHealth, store, credentials, activity, sessions: gameSessions, accountProfile, onChanged: emitState, onAttention: autoTradeAttention, onScout: (id, reply) => scout.showSocketScout?.(id, reply), onCycleEnd: () => cards.refresh() });
   market = new MarketService({ store, activity, accountProfile, sessions: gameSessions, onChanged: emitState });
   const alertedDays = new Map(); // playerId -> day already reported
+  rosters = new RostersService({ store, activity, onChanged: emitState });
+  bag = new BagService({ store, activity, gameHealth, sessions: gameSessions, onChanged: emitState });
   players = new PlayersService({
     store, activity, onChanged: emitState,
     onRefreshed: (list, previousById, { day }) => {
@@ -710,7 +725,7 @@ function initServices() {
       valuePredict?.refresh({ automatic: true }).catch(() => {});
     }
   });
-  synthesis = new SynthesisService({ store, activity, sessions: gameSessions, onChanged: emitState, onDone: () => cards.refresh() });
+  synthesis = new SynthesisService({ store, activity, sessions: gameSessions, cards, onChanged: emitState, onDone: () => cards.refresh() });
   props = new PropService({ store, activity, sessions: gameSessions, onChanged: emitState });
   activate = new ActivateService({ store, activity, sessions: gameSessions, cards, onChanged: emitState });
   tower = new TowerService({ store, activity, gameHealth, sessions: gameSessions, onChanged: emitState });
@@ -720,6 +735,8 @@ function initServices() {
   dailyBoss = new DailyBossService({ store, activity, gameHealth, sessions: gameSessions, onChanged: emitState });
   eliteAscent = new EliteAscentService({ store, activity, gameHealth, sessions: gameSessions, onChanged: emitState });
   office = new OfficeService({ store, activity, gameHealth, sessions: gameSessions, onChanged: emitState });
+  big3 = new Big3Auto({ store, activity, office, gameHealth, isPaused: () => Boolean(globalPause), onChanged: emitState });
+  office.big3AutoOn = () => big3.enabled();
   magicTeam = new MagicTeamService({ store, activity, gameHealth, sessions: gameSessions, onChanged: emitState });
   skills = new SkillsService({ store, activity, sessions: gameSessions, onChanged: emitState });
   professional = new ProfessionalService({ store, activity, gameHealth, sessions: gameSessions, onChanged: emitState });
@@ -755,6 +772,8 @@ function initServices() {
     }
   });
   tournament = new TournamentService({ store, credentials, browserService, accountProfile, activity, sessions: gameSessions, onChanged: emitState });
+  tournamentLevel = new TournamentLevelService({ store, activity, tournament, onChanged: emitState, createSocket: (url, options) => tournament.createSocket(url, options) });
+  tournamentLevel.start();
   scheduler.registerBuiltin('tournament-register', (accountIds, { signal }) => tournament.runAndWait(accountIds, { signal }));
   scheduler.registerBuiltin('market-claim', async (accountIds, { signal }) => {
     const onAbort = () => market.stop();
@@ -773,6 +792,7 @@ function initServices() {
   injuries.start();
   dailyRewards.start();
   office.start();
+  big3.start();
   gameEvents = new GameEvents({ store, activity, onChat: emitState, onSalaryUpdate: async () => { await players.refresh({ automatic: true, pushed: true }); await accountHealth.refresh(); } });
   gameEvents.start();
   social = new SocialService({ store, activity, sessions: gameSessions, onChanged: emitState });
@@ -976,6 +996,8 @@ function registerIpc() {
   ipcMain.handle('equipment:prepare', async (_event, collectionId, slot) => equipment.prepareCollection(collectionId, slot || null));
   ipcMain.handle('tournament:start', async (_event, accountIds) => tournament.start(accountIds));
   ipcMain.handle('tournament:stop', async () => tournament.stop());
+  ipcMain.handle('tournament-level:check', async (_event, { swap } = {}) => tournamentLevel.check({ swap: Boolean(swap) }));
+  ipcMain.handle('tournament-level:auto', async (_event, { on } = {}) => tournamentLevel.setAuto(Boolean(on)));
   ipcMain.handle('tournament:refresh', async () => tournament.refreshEvents());
 
   ipcMain.handle('auto-trade:preflight', async (_event, options) => ({ conflicts: autoTradeConflicts(options.accountIds || []), ...(await autoTrade.preflight(options)) }));
@@ -1103,6 +1125,10 @@ function registerIpc() {
   ipcMain.handle('settings:open-data-folder', async () => shell.openPath(dataDir));
   ipcMain.handle('activity:clear', async () => { activity.clear(); return true; });
   ipcMain.handle('players:refresh', async () => players.refresh());
+  ipcMain.handle('rosters:refresh', async () => rosters.refresh());
+  ipcMain.handle('bag:read', async (_event, { accountIds } = {}) => bag.read(Array.isArray(accountIds) ? accountIds : null));
+  ipcMain.handle('bag:use', async (_event, { accountIds, itemId } = {}) => bag.use(Array.isArray(accountIds) ? accountIds : [], { itemId: itemId || null }));
+  ipcMain.handle('bag:status', async (_event, { accountId } = {}) => { await bag.status(accountId); return bag.snapshot(); });
   ipcMain.handle('vp:refresh', async () => valuePredict.refresh());
   ipcMain.handle('injuries:refresh', async () => injuries.refresh());
   ipcMain.handle('buy:buy', async (_event, { accountId, ticket }) => buy.buy(accountId, ticket));
@@ -1167,6 +1193,10 @@ function registerIpc() {
   ipcMain.handle('magic:start', async (_event, plan) => startProvingManual(magicTeam, plan, 'Magic Team', 'mt', p => { magicDone = p; }));
   ipcMain.handle('magic:stop', async () => { magicTeam.stop(); return magicTeam.snapshot(); });
   ipcMain.handle('magic:status', async (_event, accountIds) => magicTeam.status(Array.isArray(accountIds) ? accountIds : null));
+  ipcMain.handle('big3:scan', async (_event, { accountIds } = {}) => big3.scanAccounts(Array.isArray(accountIds) ? accountIds : null));
+  ipcMain.handle('big3:setup', async (_event, { accountIds } = {}) => big3.setup(Array.isArray(accountIds) ? accountIds : []));
+  ipcMain.handle('big3:enable', async (_event, { on } = {}) => big3.setEnabled(Boolean(on)));
+  ipcMain.handle('big3:bonus', async (_event, { accountId, type } = {}) => big3.setBonus(accountId, type));
   ipcMain.handle('office:status', async (_event, { accountIds, teamIds } = {}) => office.status(accountIds, { teamIds: teamIds || {} }));
   ipcMain.handle('office:select-coach', async (_event, { accountId, coachId }) => { await office.selectCoach(accountId, coachId); return office.snapshot(); });
   ipcMain.handle('office:coach-tick', async (_event, { accountId }) => ({ result: await office.coachTick(accountId, { manual: true }), snapshot: office.snapshot() }));
@@ -1202,6 +1232,8 @@ function registerIpc() {
   ipcMain.handle('slot:scan', async (_event, ids) => dailySlot.scan(Array.isArray(ids) ? ids : []));
   ipcMain.handle('slot:spin', async (_event, ids) => dailySlot.spin(Array.isArray(ids) ? ids : []));
   ipcMain.handle('slot:stop', async () => { dailySlot.stop(); return dailySlot.snapshot(); });
+  ipcMain.handle('cheer:start', async (_event, { fromIds, targetIds } = {}) => cheer.start(Array.isArray(fromIds) ? fromIds : [], Array.isArray(targetIds) ? targetIds : []));
+  ipcMain.handle('cheer:stop', async () => cheer.stopRun());
   ipcMain.handle('cheer:send', async (_event, { fromIds, targetId } = {}) => cheer.cheer(Array.isArray(fromIds) ? fromIds : [], targetId));
   ipcMain.handle('chat:start', async (_event, config) => { chat.runAndWait(config || {}).catch(() => {}); await new Promise(r => setTimeout(r, 50)); if (!chat.snapshot().running) throw new Error(chat.snapshot().lastReport?.lastError || 'Chat could not start.'); return chat.snapshot(); });
   ipcMain.handle('chat:stop', async () => { chat.stop(); return chat.snapshot(); });
@@ -1211,6 +1243,20 @@ function registerIpc() {
   ipcMain.handle('draft:pick', async (_event, { accountId, playerId }) => draft.pick(accountId, playerId));
   ipcMain.handle('draft:list-players', async (_event, { accountId, items }) => draft.listPlayers(accountId, items));
   ipcMain.handle('draft:clear-drafted', async (_event, accountId) => draft.clearDrafted(accountId));
+  // Kov / Karta çevir on drafted players: like a quick hand action, the accounts' other services
+  // step aside for it; an account Auto Trade is working on right now is not touched.
+  const draftHand = async (ids, fn) => {
+    const busy = ids.filter(id => autoTrade?.usesAccount?.(id));
+    if (busy.length) throw new Error(`Auto Trade is using ${busy.map(id => store.getAccounts().find(a => a.id === id)?.name || id).join(', ')} right now · try again when it is done.`);
+    const resumes = [];
+    try { for (const id of ids) resumes.push(await pauseAccountForBuy(id, 'Draft')); return await fn(); }
+    finally { for (const r of resumes.reverse()) await r().catch(() => {}); }
+  };
+  ipcMain.handle('draft:fire-players', async (_event, { accountId, playerIds }) => draftHand([accountId], () => draft.firePlayers(accountId, playerIds)));
+  ipcMain.handle('draft:to-cards', async (_event, { accountId, playerIds }) => {
+    const mainId = store.getAccountProfile()?.mainAccountId;
+    return draftHand([...new Set([accountId, mainId].filter(Boolean))], () => draft.toCards(accountId, playerIds));
+  });
   ipcMain.handle('players:set-roles', async (_event, { playerId, roleIds }) => cards.setRolesById(playerId, roleIds));
 }
 
@@ -1241,6 +1287,8 @@ async function shutdownServices() {
     () => eliteAscent?.stop(),
     () => magicTeam?.stop(),
     () => office?.stop(),
+    () => tournamentLevel?.stop(),
+    () => big3?.stop(),
     () => professional?.stop(),
     () => tkTransfer?.stop(),
     () => apkTransfer?.stop(),

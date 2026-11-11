@@ -249,3 +249,44 @@ test('Cheer counts 3 a day per account, a limit reply sets 0, and the book reset
   assert.equal(svc.snapshot().left.b, 0);
   svc.stop();
 });
+
+test('Cheer for several targets: waits for the 2nd half, cheerers take turns, a target stops at 200 morale, one cheer per account per match', async () => {
+  const accs = ['A', 'B', 'C', 'D', 'E'].map(n => ({ id: n, name: n }));
+  const morale = { mA: 100, mB: 195 };
+  let quarter = 2;
+  setTimeout(() => { quarter = 3; }, 60);
+  const rooms = [];
+  const intervals = [];
+  const { createSocket, calls } = fakeSockets({
+    acks: (p, event, payload, args) => {
+      if (event === 'getUserActiveMatch') return { success: true, match: { match_id: payload.userId === 'u-A' ? 'mA' : 'mB', host: payload.userId, opponent: 'u-x', Server: 1 } };
+      if (event === 'useCheer') { morale[args[0]] += 5; return { success: true, message: 'ok' }; }
+    },
+    events: (p, event, payload, emit) => {
+      if (event === 'joinMatchRoom' && payload.userId.startsWith('u-') && ['u-A', 'u-B'].includes(payload.userId) && !rooms.includes(payload.matchId + payload.userId)) {
+        rooms.push(payload.matchId + payload.userId);
+        const tick = () => emit('matchUpdate', { quarter, isHalftime: false, hostTeam: { userId: payload.userId, morale: morale[payload.matchId] }, opponentTeam: { userId: 'u-x', morale: 50 } });
+        tick(); intervals.push(setInterval(tick, 10));
+      }
+    }
+  });
+  const saved = {};
+  const st = {
+    getAccounts: () => accs,
+    getAccountProfile: () => ({ accounts: Object.fromEntries(accs.map(a => [a.id, { userId: 'u-' + a.id }])) }),
+    getCheerReport: () => saved.cheer || null, saveCheerReport: v => { saved.cheer = JSON.parse(JSON.stringify(v)); }
+  };
+  const svc = new CheerService({ store: st, activity: activity([]), sessions: { get: async a => ({ userId: 'u-' + a.id, cookieHeader: 'c' }) }, createSocket });
+  svc.stop();
+  Object.assign(svc.timing, { pollMs: 5, afterCheerMs: 15 });
+  svc.start(['C', 'D', 'E'], ['A', 'B']);
+  await svc.done;
+  intervals.forEach(clearInterval);
+  const run = svc.snapshot().run;
+  assert.equal(run.targets.B.status, 'full', JSON.stringify(run.targets));
+  assert.equal(run.targets.B.sent, 1, 'B was at 195: one cheer, then 200 stops it');
+  assert.equal(run.targets.A.sent, 3, 'A gets the three accounts once each');
+  const cheers = calls.filter(c => c.event === 'useCheer');
+  assert.ok(cheers.length === 4);
+  assert.ok(!svc.snapshot().busy);
+});

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import PvpPanel from './PvpPanel';
 import SortTable from './SortTable';
 import { filOf } from '../i18n-fil';
-import { GroupedPicks } from './AccountGroups';
+import { GroupedPicks, useGroupedRows, groupRowOf } from './AccountGroups';
 
 const api = window.dreamteam;
 const TEXT = {
@@ -42,6 +42,7 @@ const LEAGUES = [[0, 'Rookie III'], [600, 'Rookie II'], [700, 'Rookie I'], [800,
 export const leagueOf = mmr => (mmr == null ? null : LEAGUES.filter(([min]) => mmr >= min).pop()?.[1] || LEAGUES[0][1]);
 
 export default function PvpPage({ state, t, toast, refresh }) {
+  const grp = useGroupedRows('pvp-table');
   const x = TEXT[t.lang] || TEXT.en;
   const pvp = state.pvp || {};
   const accounts = state.accounts || [];
@@ -75,13 +76,15 @@ export default function PvpPage({ state, t, toast, refresh }) {
 
     <h3 className="section-title">{x.table}</h3>
     <div className="panel table-panel pvp-table"><SortTable><thead><tr><th>{x.account}</th><th>{x.attempts}</th><th>{x.total}</th><th>{x.today}</th><th>{x.league}</th></tr></thead>
-      <tbody>{accounts.map(a => { const n = st?.attempts?.[a.id]; const mmr = st?.mmr?.[a.id]; const today = st?.today?.[a.id]; return <tr key={a.id}>
+      <tbody>{grp(accounts, a => { const n = st?.attempts?.[a.id]; const mmr = st?.mmr?.[a.id]; const today = st?.today?.[a.id]; return <tr key={a.id}>
         <td><b>{a.name}</b></td>
         <td className={n === 0 ? 'muted-text' : ''}>{n == null ? '—' : `${n}/10`}</td>
         <td className="num"><b>{mmr ?? '—'}</b></td>
         <td className={`num ${today > 0 ? 'good-text' : today < 0 ? 'bad-text' : 'muted-text'}`}>{today == null ? '—' : `${today > 0 ? '+' : ''}${today}`}</td>
         <td>{mmr == null ? '—' : <span className="pvp-league">{leagueOf(mmr)}</span>}</td>
-      </tr>; })}</tbody></SortTable></div>
+      </tr>; }, groupRowOf(5, g => { const sum = f => g.reduce((s, a) => s + (Number(f(a)) || 0), 0); const today = sum(a => st?.today?.[a.id]); return <>
+        <td>{sum(a => st?.attempts?.[a.id])}/{g.length * 10}</td><td className="num"><b>{sum(a => st?.mmr?.[a.id]) || '—'}</b></td>
+        <td className={`num ${today > 0 ? 'good-text' : today < 0 ? 'bad-text' : 'muted-text'}`}>{today > 0 ? '+' : ''}{today}</td><td /></>; }))}</tbody></SortTable></div>
 
     <PvpPanel pvp={pvp} lang={t.lang} />
 

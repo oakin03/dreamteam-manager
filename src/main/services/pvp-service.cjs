@@ -1,4 +1,5 @@
 const { GameSocket } = require('./game-socket.cjs');
+const { WIDE, eachAtOnce, eachWithSocket } = require('./wide.cjs');
 const { isNetError } = require('./game-health.cjs');
 
 // PVP Arena over the game's sockets (captured 2026-10-22):
@@ -66,21 +67,24 @@ class PvpService {
   // (read without logging in).
   async status(accountIds) {
     const out = { checkedAt: new Date(this.now()).toISOString(), active: null, attempts: {}, mmr: {}, today: {} };
-    const anon = await GameSocket.open({ createSocket: this.createSocket });
-    try {
-      const st = await anon.call('getPvpArenaStatus', {}, 'pvpArenaStatus', { timeoutMs: 10000 }).catch(() => null);
-      out.active = st ? st.isActive === true : null;
-      out.nextSession = st?.nextSession || null; // 'morning' (05:00 TR) / 'evening' (17:00 TR) while closed
-      for (const id of accountIds) {
-        const userId = this._userId(id);
-        if (!userId) continue;
-        const r = await anon.call('getUserBasicInfo', { userId }, 'userBasicInfo', { timeoutMs: 10000 }).catch(() => null);
-        const n = Number(r?.PVParenaAttempts);
-        if (Number.isFinite(n)) out.attempts[id] = n;
-        const mmr = Number(r?.mmr);
-        if (Number.isFinite(mmr)) out.mmr[id] = mmr;
-      }
-    } finally { anon.close(); }
+    const open = () => GameSocket.open({ createSocket: this.createSocket });
+    const arena = (async () => {
+      const anon = await open();
+      try {
+        const st = await anon.call('getPvpArenaStatus', {}, 'pvpArenaStatus', { timeoutMs: 10000 }).catch(() => null);
+        out.active = st ? st.isActive === true : null;
+        out.nextSession = st?.nextSession || null; // 'morning' (05:00 TR) / 'evening' (17:00 TR) while closed
+      } finally { anon.close(); }
+    })();
+    // every account at once, a socket per lane (call() answers one at a time per socket)
+    await eachWithSocket((accountIds || []).filter(id => this._userId(id)), open, async (anon, id) => {
+      const r = await anon.call('getUserBasicInfo', { userId: this._userId(id) }, 'userBasicInfo', { timeoutMs: 10000 }).catch(() => null);
+      const n = Number(r?.PVParenaAttempts);
+      if (Number.isFinite(n)) out.attempts[id] = n;
+      const mmr = Number(r?.mmr);
+      if (Number.isFinite(mmr)) out.mmr[id] = mmr;
+    });
+    await arena.catch(() => {});
     // PVP points (mmr) and today's gain: the first reading of the PVP day (19:10 TR, like the
     // attempts) is kept as the day's start
     const day = pvpDay(this.now());

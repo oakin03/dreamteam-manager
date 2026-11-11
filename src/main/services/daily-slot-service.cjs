@@ -1,4 +1,5 @@
 const { GameSocket } = require('./game-socket.cjs');
+const { WIDE, eachAtOnce, eachWithSocket } = require('./wide.cjs');
 
 // Daily Slot (Daily Sign-in window → "Daily Slot" tab; user 2026-11-07, captured live on Pipelne19):
 //   dailySlot:getStatus {userId} -> event dailySlot:status {dayKey, canSpin, pool[16]{name, rarity, chancePct…},
@@ -9,7 +10,7 @@ const { GameSocket } = require('./game-socket.cjs');
 //     button is only the page's; the result comes at once.
 // One spin a day (the game's day, dayKey). Spinning uses the account's own registered connection when
 // another service holds one (Auto Play…), never during one of its matches; otherwise it signs in.
-const CONCURRENCY = 4;
+const CONCURRENCY = WIDE; // every account at once (user 2026-11-11)
 const TIMEOUT_MS = 12000;
 const MATCH_WAIT_MS = 60 * 1000;
 const MATCH_PASSES = 15;

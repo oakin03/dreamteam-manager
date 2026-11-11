@@ -149,10 +149,15 @@ class GameSocket {
     }
     if (!this.socket.connected) {
       const socket = this.socket;
+      // a stop does not wait for the reconnect (2026-11-09: Stop hung while Tower took main)
       await new Promise((resolve, reject) => {
-        const ok = () => { clearTimeout(timer); resolve(); };
-        const timer = setTimeout(() => { socket.off('connect', ok); reject(new Error('Game socket connection timed out.')); }, DEFAULT_TIMEOUT_MS);
+        if (signal?.aborted) return reject(abortError());
+        const done = () => { clearTimeout(timer); socket.off('connect', ok); signal?.removeEventListener('abort', onAbort); };
+        const ok = () => { done(); resolve(); };
+        const onAbort = () => { done(); reject(abortError()); };
+        const timer = setTimeout(() => { done(); reject(new Error('Game socket connection timed out.')); }, DEFAULT_TIMEOUT_MS);
         socket.once('connect', ok);
+        signal?.addEventListener('abort', onAbort, { once: true });
         socket.connect();
       });
     }
