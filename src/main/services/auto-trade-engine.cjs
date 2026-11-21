@@ -22,6 +22,7 @@ const DEFAULTS = {
   loopCount: 2,
   baseAsSellable: false,             // team players signed at/below Base count as Satılabilir
   sideOnly: false,                   // only Satılabilir / Stok are signed (no Kart, no cheap players)
+  keepAutoPlay: false,               // Auto Play keeps running on the run's accounts (user 2026-11-13)
   baseProjected: true                // …compared with tomorrow's Base (Base × 0.95)
 };
 const LIST_DEFAULTS = { sellable: { price: 20, currency: 'APK' }, stock: { price: 99999, currency: 'TIX' } };
@@ -56,6 +57,8 @@ class Lock {
 
 const ACCEPT_WAIT_MS = 7000;
 const STOP_GRACE_MS = 10000;
+// what frees salary on an account: listed, traded, fired, made into cards, handed to a spender
+const ROSTER_CODES = new Set(['at2.listed', 'at2.listDone', 'at2.traded', 'at2.fired', 'at2.converted', 'at2.toSpender', 'at2.unload']);
 const STOP_DETACH_MS = 5000;
 const PREFLIGHT_PARALLEL = WIDE; // every account at once (user 2026-11-11)
 const ACCEPT_TRIES = 3;
@@ -63,7 +66,8 @@ const ACCEPT_TRIES = 3;
 class UserFixError extends Error { constructor(message, code, params) { super(message); this.userFix = true; this.code = code; this.params = params || {}; } }
 
 class AutoTradeEngine {
-  constructor({ store, credentials, activity, sessions, accountProfile, onChanged, onAttention, onScout, onCycleEnd, createSocket, gameHealth = null, friendNet = null, pauseAccount = null, onSpenderListed = null, cardBusy = null, now = () => Date.now(), timing = {} }) {
+  constructor({ store, credentials, activity, sessions, accountProfile, onChanged, onAttention, onScout, onCycleEnd, createSocket, gameHealth = null, friendNet = null, pauseAccount = null, onSpenderListed = null, cardBusy = null, onRoster = null, now = () => Date.now(), timing = {} }) {
+    this.onRoster = onRoster;               // (accountId) → its roster just got room (listed, traded, fired, made cards)
     this.pauseAccount = pauseAccount;       // (accountId, task) → resume(): Auto Play etc. step aside for a Harcayıcı
     this.onSpenderListed = onSpenderListed; // ({accountId, player, price, currency}) → the editable price table
     this.resumers = new Map();
@@ -166,7 +170,15 @@ class AutoTradeEngine {
 
   _log(level, code, params, message, accountId = null) {
     this.activity.add({ level, accountId, accountName: accountId ? this._name(accountId) : '', taskName: 'Auto Trade', code, params, message });
+    // Auto Play waiting on a salary cap retries at once (user 2026-11-13)
+    if (this.onRoster && accountId && ROSTER_CODES.has(code)) {
+      try { this.onRoster(accountId); if (code === 'at2.traded' && this.state?.config?.mainId) this.onRoster(this.state.config.mainId); } catch {}
+    }
   }
+  // Auto Play keeps running on this run's accounts (the form's option)
+  keepsAutoPlay() { return Boolean(this.controller && this.state?.config?.keepAutoPlay); }
+  // an account this run works with: one of its accounts, or a Harcayıcı it has open
+  worksWith(id) { return Boolean(this.state?.config?.accountIds?.includes(id) || this.conns.has(id)); }
 
   _step(step, stepParams = {}, accountId = null) {
     if (!this.state) return;
@@ -369,6 +381,7 @@ class AutoTradeEngine {
       loopCount: Math.max(1, Math.min(999, Math.floor(Number(cfg.loopCount) || 1))),
       baseAsSellable: Boolean(cfg.baseAsSellable),
       sideOnly: Boolean(cfg.sideOnly),
+      keepAutoPlay: Boolean(cfg.keepAutoPlay),
       baseProjected: cfg.baseProjected !== false,
       friendBoards: cfg.friendBoards !== false,
       // what a Harcayıcı lists to make room: Satılabilir and Stok each at their own default
@@ -1111,6 +1124,38 @@ class AutoTradeEngine {
       moved = true;
     }
     return moved;
+  }
+
+  // Draft "Karta çevir" while this run is on (user 2026-11-13): the drafted players of an account
+  // the run works on become its main-bound rows, so the run's own trades carry them to main and
+  // main's Make turns them into cards. false = not one of this run's accounts (the caller waits).
+  handToCards(accountId, players) {
+    const s = this.state;
+    if (!this.controller || !s || !s.config.accountIds.includes(accountId)) return false;
+    const acc = this._acc(accountId);
+    const added = [];
+    for (const p of players || []) {
+      if (!p?.id || acc.players[p.id]) continue;
+      acc.players[p.id] = { id: p.id, name: p.name, salary: Number(p.salary ?? p.value) || 0, price: Number(p.value) || null, base: Number(p.base) || null, rating: p.rating, position: p.position, dir: 'main', roleIds: [], roles: [], from: 'Draft', status: this._statusFor('main', acc.role) };
+      added.push(p.name);
+    }
+    if (added.length) {
+      this._log('info', 'at2.draftHanded', { names: added.join(', '), count: added.length }, `${added.length} drafted player(s) go to main for cards with this run · ${added.join(', ')}`, accountId);
+      this._save();
+    }
+    return true;
+  }
+
+  // Draft "Kov" while this run is on (user 2026-11-13): fired over the run's own connection of
+  // that account. null = not one of this run's accounts (the caller waits); otherwise the ids fired.
+  async fireForDraft(accountId, players) {
+    const s = this.state;
+    if (!this.controller || !s || !s.config.accountIds.includes(accountId)) return null;
+    const acc = this._acc(accountId);
+    for (const p of players || []) if (p?.id && !acc.players[p.id]) acc.players[p.id] = { id: p.id, name: p.name, salary: Number(p.salary ?? p.value) || 0, price: Number(p.value) || null, rating: p.rating, position: p.position, dir: 'none', roleIds: [], roles: [], from: 'Draft', status: 'none' };
+    const ids = (players || []).map(p => p.id).filter(Boolean);
+    try { await this.firePlayers(accountId, ids); } catch {}
+    return ids.filter(id => acc.players[id]?.status === 'fired');
   }
 
   _statusFor(dir, role) {

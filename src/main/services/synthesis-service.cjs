@@ -20,7 +20,8 @@ const R = require('./synthesis-rules.cjs');
 const GAP_MS = 8000;
 const MAX_WAITS = 4;
 const WAIT_MS = 15000;
-const MAX_STEPS = 400;
+// only a runaway guard: 400 cut real runs short ("Too many syntheses in one run", user 2026-11-17)
+const MAX_STEPS = 20000;
 
 function abortError() { const e = new Error('Aborted'); e.name = 'AbortError'; return e; }
 const sleep = (ms, signal) => new Promise((resolve, reject) => {

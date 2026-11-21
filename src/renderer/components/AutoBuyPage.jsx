@@ -12,9 +12,9 @@ const TEXT = {
     start: 'Auto Buy Başlat', stop: 'Durdur', interval: 'Tarama aralığı (sn)',
     st: { idle: 'Hazır', running: 'Çalışıyor', stopped: 'Durduruldu', error: 'Hata', noFunds: 'Durdu · bakiye yetersiz' },
     cycle: '{n}. tarama', lastScan: 'son tarama {t}', nextScan: 'sonraki {s} sn', boughtN: '{n} oyuncu alındı', spent: 'harcanan {apk} APK · {tix} TIX', noFunds: 'Hesapların {cur} miktarı yetersiz; listedeki en düşük fiyatı karşılayan hesap kalmadı.',
-    watch: 'İzleme listesi', watchHint: 'Bir oyuncu ancak Maaş ≤, Fiyat ≤ ve para birimi koşullarının hepsini sağlarsa alınır. Oyuncular sayfasından tek tek ya da toplu eklenebilir.',
+    listSearch: 'Listede ara…', noListMatch: 'Aramaya uyan oyuncu yok.', watch: 'İzleme listesi', watchHint: 'Bir oyuncu ancak Maaş ≤, Fiyat ≤ ve para birimi koşullarının hepsini sağlarsa alınır. Oyuncular sayfasından tek tek ya da toplu eklenebilir.',
     add: 'Oyuncu ekle…', player: 'Oyuncu', value: 'Değer', base: 'Base', maxSalary: 'Maaş aralığı', maxPrice: 'Fiyat ≤', addRange: '+ Maaş aralığı', addRangeHint: 'Bu oyuncu için başka bir maaş aralığı ve fiyat ekle (ör. 0–2318 bir fiyat, 2319–2347 başka fiyat)', rangeOverlap: 'Bu aralık başka bir aralıkla çakışıyor', rangeBad: 'Alt sınır üst sınırdan büyük', minPh: '0', currency: 'Para birimi', active: 'Aktif', incomplete: 'Maaş ≤, Fiyat ≤ ve adet (ya da Sınırsız) girilmeli', qty: 'Adet', unlimited: 'Sınırsız', boughtOf: '{n}/{q} alındı', boughtAll: '{n} alındı', qtyDone: 'Tamamlandı', resetCount: 'Sayacı sıfırla', needAll: 'Listedeki her aktif oyuncu için Maaş ≤, Fiyat ≤ ve adet girilmeli:', emptyWatch: 'Liste boş. Oyuncular sayfasından ya da yukarıdaki kutudan oyuncu ekle.', clearAll: 'Listeyi temizle', confirmClear: 'İzleme listesindeki tüm oyuncular silinsin mi?',
-    accounts: 'Hesap önceliği', accountsHint: 'Alım 1. hesaptan başlar; parası bitince sıradakine geçilir. Oklarla sırala, kutuyla dahil et.', include: 'Dahil', apk: 'APK', tix: 'TIX',
+    accounts: 'Hesap önceliği', accountsHint: 'Alım 1. hesaptan başlar; parası bitince sıradakine geçilir. Satırı basılı tutup sürükleyerek sırala, kutuyla dahil et.', dragHint: 'Basılı tutup sürükle', hiddenLow: '20 APK ve 20 TIX altında olan {n} hesap gösterilmiyor (alım yapamaz).', include: 'Dahil', apk: 'APK', tix: 'TIX',
     cannotBuy: '{name} ({price} {cur}) hiçbir hesapla alınamadı · {why} · tarama sürüyor',
     warnRegister: 'Auto Buy oyuna giriş yapmadan tarar; diğer otomasyonlarla aynı anda çalışır. Yalnızca oyuncu alırken ya da fiyat değiştirirken o hesaba girer: o hesapta çalışan Auto Play ve oturum açan otomasyonlar (Auto Trade, Kule) geçici olarak durdurulur, iş bitip hesap kapanınca yeniden başlatılır.'
   },
@@ -23,9 +23,9 @@ const TEXT = {
     start: 'Start Auto Buy', stop: 'Stop', interval: 'Scan every (s)',
     st: { idle: 'Ready', running: 'Running', stopped: 'Stopped', error: 'Error', noFunds: 'Stopped · not enough funds' },
     cycle: 'scan {n}', lastScan: 'last scan {t}', nextScan: 'next in {s}s', boughtN: '{n} bought', spent: 'spent {apk} APK · {tix} TIX', noFunds: 'The accounts do not have enough {cur}; no account can pay the lowest price on the list.',
-    watch: 'Watch list', watchHint: 'A player is bought only when Salary ≤, Price ≤ and the currency all hold. Add players one by one or in bulk from the Players page.',
+    listSearch: 'Search the list…', noListMatch: 'No player on the list matches.', watch: 'Watch list', watchHint: 'A player is bought only when Salary ≤, Price ≤ and the currency all hold. Add players one by one or in bulk from the Players page.',
     add: 'Add a player…', player: 'Player', value: 'Value', base: 'Base', maxSalary: 'Salary range', maxPrice: 'Price ≤', addRange: '+ Salary range', addRangeHint: 'Add another salary range with its own price for this player (e.g. 0–2318 one price, 2319–2347 another)', rangeOverlap: 'This range overlaps another one', rangeBad: 'The lower limit is above the upper limit', minPh: '0', currency: 'Currency', active: 'Active', incomplete: 'Fill in Salary ≤, Price ≤ and the quantity (or Unlimited)', qty: 'Quantity', unlimited: 'Unlimited', boughtOf: '{n}/{q} bought', boughtAll: '{n} bought', qtyDone: 'Done', resetCount: 'Reset counter', needAll: 'Salary ≤, Price ≤ and the quantity are needed for every active player:', emptyWatch: 'The list is empty. Add players from the Players page or the box above.', clearAll: 'Clear list', confirmClear: 'Remove every player from the watch list?',
-    accounts: 'Account priority', accountsHint: 'Buying starts with account 1; when it runs out of funds the next one is used. Sort with the arrows, include with the box.', include: 'Use', apk: 'APK', tix: 'TIX',
+    accounts: 'Account priority', accountsHint: 'Buying starts with account 1; when it runs out of funds the next one is used. Press and drag a row to sort, include with the box.', dragHint: 'Press and drag', hiddenLow: '{n} account(s) with less than 20 APK and 20 TIX are not shown (they cannot buy).', include: 'Use', apk: 'APK', tix: 'TIX',
     cannotBuy: 'No account could buy {name} ({price} {cur}) · {why} · still scanning',
     warnRegister: 'Auto Buy scans without signing in and runs next to the other automations. It signs in on an account only to buy or reprice: Auto Play and signed-in automations (Auto Trade, Tower) on that account are paused, then started again once the work is done and the account is closed.'
   },
@@ -57,12 +57,19 @@ export default function AutoBuyPage({ state, t, toast }) {
   const [interval, setIntervalSec] = useState(cfg.intervalSec || 10);
   const [q, setQ] = useState('');
   const run = async fn => { try { await fn(); } catch (e) { toast(e.message, 'error'); } };
-  const move = (i, d) => setOrder(o => { const n = [...o]; const j = i + d; if (j < 0 || j >= n.length) return o; [n[i], n[j]] = [n[j], n[i]]; return n; });
+  // Accounts with less than 20 APK and less than 20 TIX buy nothing: not listed (user 2026-11-13).
+  const MIN_BALANCE = 20;
+  const canBuy = id => (Number(stats[id]?.apk) || 0) >= MIN_BALANCE || (Number(stats[id]?.tix) || 0) >= MIN_BALANCE;
+  // The whole row moves: press, hold and drag it over another row (user 2026-11-13).
+  const [drag, setDrag] = useState(null);   // { id, over }
+  const moveTo = (from, to) => setOrder(o => { if (from === to) return o; const n = o.filter(id => id !== from); const at = n.indexOf(to); const i = o.indexOf(from) < o.indexOf(to) ? at + 1 : at; n.splice(i, 0, from); return n; });
   const toggleInc = id => setIncluded(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
-  const chosen = order.filter(id => included.has(id));
+  const chosen = order.filter(id => included.has(id) && canBuy(id));
+  const hiddenN = order.filter(id => accounts.some(a => a.id === id) && !canBuy(id)).length;
   // value, Base, team and rating come from the current player list (they change every day);
   // the saved copy is only the fallback
   const live = useMemo(() => new Map((state.players?.players || []).map(p => [p.id, p])), [state.players]);
+  const [listQ, setListQ] = useState('');
   const watch = useMemo(() => (b.watch || []).map(w => { const p = live.get(w.playerId); return p ? { ...w, value: p.value, base: p.base, team: p.team || w.team, rating: p.rating || w.rating, position: p.position || w.position } : w; }), [b.watch, live]);
   const suggestions = useMemo(() => {
     const s = q.trim().toLowerCase();
@@ -100,21 +107,29 @@ export default function AutoBuyPage({ state, t, toast }) {
           {suggestions.length > 0 && <div className="ab-sugg">{suggestions.map(p => <button key={p.id} onClick={() => run(async () => { await api.buy.addWatch([p]); setQ(''); })}><b>{p.name}</b><InjuryMark name={p.name} /><small>{p.team} · {p.position} · {p.rating} · {num(p.value)}</small></button>)}</div>}
           {watch.length > 0 && <button className="btn ghost small" onClick={() => { if (window.confirm(x.confirmClear)) run(() => api.buy.removeWatch(watch.map(w => w.id))); }}>{x.clearAll}</button>}
         </div>
+        {watch.length > 0 && <input className="guide-search ab-list-search" placeholder={x.listSearch} value={listQ} onChange={e => setListQ(e.target.value)} />}
+        {(() => { const ls = listQ.trim().toLocaleLowerCase('tr-TR'); const shown = ls ? watch.filter(w => `${w.name || ''} ${w.team || ''}`.toLocaleLowerCase('tr-TR').includes(ls)) : watch; return ls && !shown.length ? <div className="panel"><p className="muted-text dp-pad">{x.noListMatch}</p></div> : null; })()}
         <div className="panel table-panel">{watch.length ? <SortTable><thead><tr><th>{x.active}</th><th>{x.player}</th><th>{x.value}</th><th>{x.base}</th><th>{x.maxSalary}</th><th>{x.maxPrice}</th><th>{x.currency}</th><th>{x.qty}</th><th></th></tr></thead>
-          <tbody>{watch.map((w, i) => { const head = watch.find(o => o.playerId === w.playerId); const sib = watch.filter(o => o.playerId === w.playerId && o.currency === w.currency && o.id !== w.id); const overlap = sib.some(o => o.maxSalary !== '' && o.maxSalary != null && w.maxSalary !== '' && w.maxSalary != null && minOf(w) <= Number(o.maxSalary) && minOf(o) <= Number(w.maxSalary)); return <WatchRow key={w.id} w={w} x={x} run={run} child={head.id !== w.id} last={!watch.slice(i + 1).some(o => o.playerId === w.playerId)} overlap={overlap} sortValues={[head.enabled !== false ? 1 : 0, head.name, head.value, head.base, head.maxSalary, head.maxPrice, head.currency, unlimitedOf(head) ? Infinity : Number(head.qty)]} />; })}</tbody></SortTable> : <div className="empty">{x.emptyWatch}</div>}</div>
+          <tbody>{watch.filter(w => { const ls = listQ.trim().toLocaleLowerCase('tr-TR'); return !ls || `${w.name || ''} ${w.team || ''}`.toLocaleLowerCase('tr-TR').includes(ls); }).map((w, i, shownList) => { const head = watch.find(o => o.playerId === w.playerId); const sib = watch.filter(o => o.playerId === w.playerId && o.currency === w.currency && o.id !== w.id); const overlap = sib.some(o => o.maxSalary !== '' && o.maxSalary != null && w.maxSalary !== '' && w.maxSalary != null && minOf(w) <= Number(o.maxSalary) && minOf(o) <= Number(w.maxSalary)); return <WatchRow key={w.id} w={w} x={x} run={run} child={head.id !== w.id} last={!shownList.slice(i + 1).some(o => o.playerId === w.playerId)} overlap={overlap} sortValues={[head.enabled !== false ? 1 : 0, head.name, head.value, head.base, head.maxSalary, head.maxPrice, head.currency, unlimitedOf(head) ? Infinity : Number(head.qty)]} />; })}</tbody></SortTable> : <div className="empty">{x.emptyWatch}</div>}</div>
       </section>
 
       <section>
         <h3 className="section-title">{x.accounts}</h3>
         <p className="muted-text ab-hint">{x.accountsHint}</p>
-        <div className="panel ab-accounts">{order.map((id, i) => { const a = accounts.find(v => v.id === id); if (!a) return null; const inc = included.has(id); const rank = chosen.indexOf(id);
-          return <div key={id} className={`ab-acc ${inc ? '' : 'off'}`}>
+        <div className="panel ab-accounts">{order.map(id => { const a = accounts.find(v => v.id === id); if (!a || !canBuy(id)) return null; const inc = included.has(id); const rank = chosen.indexOf(id);
+          return <div key={id} className={`ab-acc ${inc ? '' : 'off'} ${drag?.id === id ? 'dragging' : ''} ${drag && drag.over === id && drag.id !== id ? 'drop-here' : ''}`}
+            draggable={!running} title={running ? undefined : x.dragHint}
+            onDragStart={e => { e.dataTransfer.effectAllowed = 'move'; try { e.dataTransfer.setData('text/plain', id); } catch {} setDrag({ id, over: id }); }}
+            onDragOver={e => { if (!drag) return; e.preventDefault(); if (drag.over !== id) setDrag(d => d && { ...d, over: id }); }}
+            onDrop={e => { e.preventDefault(); if (drag) moveTo(drag.id, id); setDrag(null); }}
+            onDragEnd={() => setDrag(null)}>
             <span className="ab-rank">{inc ? rank + 1 : '–'}</span>
             <input type="checkbox" checked={inc} disabled={running} onChange={() => toggleInc(id)} title={x.include} />
             <b>{a.name}</b>
             <em>{num(stats[id]?.apk)} {x.apk}</em><em>{num(stats[id]?.tix)} {x.tix}</em>
-            <span className="ab-move"><button disabled={running || i === 0} onClick={() => move(i, -1)}>↑</button><button disabled={running || i === order.length - 1} onClick={() => move(i, 1)}>↓</button></span>
+            <span className="ab-grip" aria-hidden="true">⋮⋮</span>
           </div>; })}</div>
+        {hiddenN > 0 && <p className="muted-text ab-hint">{fill(x.hiddenLow, { n: hiddenN })}</p>}
         <p className="muted-text ab-hint">{x.warnRegister}</p>
       </section>
     </div>

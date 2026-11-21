@@ -43,3 +43,17 @@ test('draft: a drafted player of main itself is only made into a card', async ()
   assert.equal(data().drafted.M, undefined);
   assert.ok(!world.calls.some(c => c.event === 'createTradeRoom'));
 });
+
+test('draft: prices come from the given pricing, queued rows are listed and handed rows leave', () => {
+  const { draft, data } = setup({ M: {}, S: { bench: [player('d1', 100), player('d2', 100)] } }, { S: [row('d1'), row('d2')] });
+  draft.priceOf = r => (r.id === 'd1' ? { price: 777, currency: 'TIX' } : null);
+  const snap = draft.snapshot();
+  assert.deepEqual(snap.drafted.S.find(p => p.id === 'd1').suggest, { price: 777, currency: 'TIX' });
+  assert.equal(snap.drafted.S.find(p => p.id === 'd2').suggest, undefined);
+  draft.queueCards('S', ['d2']);
+  assert.deepEqual(draft.queuedCards(), { S: ['d2'] });
+  draft.handedToAutoTrade('S', ['d1']);
+  assert.deepEqual(data().drafted.S.map(p => p.id), ['d2']);
+  draft.queueCards('S', ['d2'], false);
+  assert.deepEqual(draft.queuedCards(), {});
+});

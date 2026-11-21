@@ -156,12 +156,13 @@ async function prepare(ctx) {
   }
 }
 
+// The run loop decides: wait for Auto Trade to make room (ctx.capWait) or stop with an alert.
 function throwSalaryCap(ctx, reason) {
   const clean = String(reason || 'Your team is over the salary cap.').trim();
-  const message = `Quick Play stopped: ${clean}`;
-  ctx.alert?.('salary-cap', message);
-  const error = new Error(message);
+  const error = new Error(`Quick Play stopped: ${clean}`);
   error.fatal = true;
+  error.salaryCap = true;
+  error.capReason = clean;
   error.suppressEngineLog = true;
   throw error;
 }
@@ -218,6 +219,20 @@ async function doSocketAction(ctx, prepared) {
   if (response?.code === 'PK_DAILY_LIMIT' || /PK limit/i.test(reason)) return 'limit';
   // a match of this account is still running (often our own previous one): wait for its end
   if (/already in a match/i.test(reason)) return 'inMatch';
+  // an injured starter (2026-11-18): the shared guard swaps in a bench player or heals; when it
+  // cannot, Quick Play waits for it instead of asking again every few seconds
+  if (/injured and not healed/i.test(reason)) {
+    const fixed = ctx.injury ? await ctx.injury.report(reason) : false;
+    if (fixed) { ctx.log('info', 'Injured starter replaced · Quick Play tries again'); return false; }
+    return { injured: reason };
+  }
+  // an empty starter slot (a player was traded / listed / fired): the game's own AUTO LINEUP
+  // (refreshTeamPosition) fills it, then the next try plays (326 refusals on 2026-11-14..17)
+  if (/missing starter|starter positions/i.test(reason)) {
+    const fixed = await emitAck(socket, 'refreshTeamPosition', { userId }, 15000).catch(() => null);
+    ctx.log(fixed?.success ? 'info' : 'warning', fixed?.success ? 'Empty starter slot · Auto Lineup filled the lineup' : `Quick Play was not started: ${reason} · Auto Lineup failed`);
+    return false;
+  }
 
   ctx.log('warning', `Quick Play was not started: ${reason}`);
   return false;
@@ -330,6 +345,7 @@ async function run(ctx, prepared) {
   };
 
   let browserFailures = 0;
+  let capTries = 0;
   while (!ctx.signal.aborted) {
     if (ctx.gameHealth?.isDown()) { await waitForGame(); continue; }
     let success = false;
@@ -338,6 +354,17 @@ async function run(ctx, prepared) {
         ? await doSocketAction(ctx, prepared)
         : await doBrowserAction(ctx, prepared);
     } catch (error) {
+      if (error?.salaryCap) {
+        // Auto Trade works on this account: wait for it to list / trade / fire (or 2 minutes)
+        const wait = ctx.capWait ? await ctx.capWait(++capTries).catch(() => false) : false;
+        if (wait && !ctx.signal.aborted) {
+          ctx.setState({ message: `Over the salary cap · waiting for Auto Trade (${capTries}/10)` });
+          ctx.log('warning', `Over the salary cap · Auto Trade is making room, Quick Play tries again (${capTries}/10).`);
+          continue;
+        }
+        ctx.alert?.('salary-cap', error.message);
+        throw error;
+      }
       if (error?.name === 'AbortError' || error?.fatal) throw error;
       if (ctx.gameHealth && netError(error)) {
         ctx.log('warning', `Game not reachable (${error.message}) · waiting, checked every 2 minutes with one connection.`);
@@ -364,6 +391,18 @@ async function run(ctx, prepared) {
         }
       }
     }
+    if (success && success.injured) {
+      // The guard could not swap in a bench player or heal (user 2026-11-21): no silent wait that
+      // looks like running — Auto Play stops with a clear error and the page offers "Anesteziye git".
+      const names = (String(success.injured).match(/not healed:\s*([^.]*)\./i) || [])[1] || '?';
+      const error = new Error(`Quick Play stopped: injured starter ${names} · heal on Bag → Anesthesia or put a healthy player in, then start again`);
+      error.fatal = true;
+      error.code = 'injured';
+      error.params = { names };
+      error.suppressEngineLog = true;
+      ctx.alert?.('injured', error.message);
+      throw error;
+    }
     if (success === 'inMatch') {
       ctx.setState({ message: 'Waiting for the running match to end' });
       await waitMatchEnd(ctx, prepared);
@@ -376,7 +415,7 @@ async function run(ctx, prepared) {
       await ctx.sleep(Math.max(60000, at - Date.now()));
       continue;
     }
-    if (success) browserFailures = 0;
+    if (success) { browserFailures = 0; if (capTries) { ctx.log('success', 'Back under the salary cap · Quick Play continues.'); capTries = 0; } }
 
     const delay = success ? intervalMs : retryMs;
     const next = new Date(Date.now() + delay).toISOString();

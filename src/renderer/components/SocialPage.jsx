@@ -12,6 +12,7 @@ const rewardMails = mails => (mails || []).filter(m => !m.isClaimed && Array.isA
 const TEXT = {
   tr: {
     title: 'Sosyal', subtitle: 'Gelen kutusu, arkadaşlar, sohbet, istekler ve engellenenler · hesap oyundan atılmaz',
+    claimAll: 'Tüm hesapların gelen kutusunu topla', claimAllN: 'Tüm gelen kutularını topla ({n} posta)', claimingAll: 'Toplanıyor… {done}/{total}', claimedAll: '{mails} posta toplandı · {accounts} hesap', claimedNone: 'Toplanacak ödül yok', claimAllFailed: '{n} posta toplanamadı',
     account: 'Hesap', refresh: 'Yenile', loading: 'Yükleniyor…', loadedAt: '{t} güncellendi', notReady: 'Bu sayfa uygulama yeniden başlatılınca çalışır.',
     tabs: { mail: 'Gelen Kutusu', friends: 'Arkadaşlar', chat: 'Sohbet', requests: 'İstekler', blocked: 'Engellenenler' },
     overview: 'Hesaplar', badgeHint: '{r} istek · {u} okunmamış mesaj · {m} ödüllü posta',
@@ -19,12 +20,13 @@ const TEXT = {
     scout: { open: 'Scout', title: '{name} · Scout', refresh: '{m} dk sonra yenilenir', sign: 'İmzala', signed: 'İmzalandı', empty: 'Panoda oyuncu yok.', close: 'Kapat', price: 'Fiyat', done: '{name} imzalandı' },
     friends: { empty: 'Bu hesabın arkadaşı yok.', online: 'Çevrimiçi', offline: 'Çevrimdışı', chat: 'Sohbet', remove: 'Çıkar', sure: 'Emin misin?', yes: 'Evet, çıkar', no: 'Vazgeç', count: '{n}/50 arkadaş', unread: '{n} yeni' },
     chat: { pick: 'Soldan bir arkadaş seç.', empty: 'Bu sohbette mesaj yok.', placeholder: '{name} kullanıcısına yaz…', send: 'Gönder', sending: 'Gönderiliyor…', archived: 'Oyun sohbetleri her gün 19:00 civarında siler; uygulama bir gün daha saklar.', you: 'Sen', noFriends: 'Sohbet için önce arkadaş gerekir.' },
-    requests: { incoming: 'Gelen istekler', outgoing: 'Gönderilen istekler', accept: 'Kabul et', decline: 'Reddet', cancel: 'İptal et', noneIn: 'Bekleyen gelen istek yok.', noneOut: 'Bekleyen gönderilmiş istek yok.', send: 'Arkadaşlık isteği gönder', search: 'Kendi hesaplarında ara (oyunda kullanıcı arama kalktı)…', find: 'Ara', noResults: 'Bu adla takım bulunamadı.', add: 'İstek gönder', status: { PENDING: 'İstek bekliyor', ACCEPTED: 'Zaten arkadaş', BLOCKED: 'Engelli' }, level: 'Lv {n}', sent: 'Arkadaşlık isteği gönderildi' },
+    requests: { incoming: 'Gelen istekler', outgoing: 'Gönderilen istekler', accept: 'Kabul et', decline: 'Reddet', cancel: 'İptal et', noneIn: 'Bekleyen gelen istek yok.', noneOut: 'Bekleyen gönderilmiş istek yok.', send: 'Arkadaşlık isteği gönder', search: 'Takım adı (en az 2 harf)…', find: 'Ara', noResults: 'Bu adla takım bulunamadı.', add: 'İstek gönder', status: { PENDING: 'İstek bekliyor', ACCEPTED: 'Zaten arkadaş', BLOCKED: 'Engelli' }, level: 'Lv {n}', sent: 'Arkadaşlık isteği gönderildi' },
     blocked: { unblock: 'Engeli kaldır', empty: 'Engellenen oyuncu yok.' },
     done: { accept: 'İstek kabul edildi', decline: 'İstek reddedildi', cancel: 'İstek iptal edildi', remove: 'Arkadaş çıkarıldı', unblock: 'Engel kaldırıldı', claim: 'Ödüller toplandı', sent: 'Mesaj gönderildi' }
   },
   en: {
     title: 'Social', subtitle: 'Inbox, friends, chat, requests and blocked players · the account is not signed out of the game',
+    claimAll: "Claim every account's inbox", claimAllN: 'Claim every inbox ({n} mails)', claimingAll: 'Claiming… {done}/{total}', claimedAll: '{mails} mail(s) claimed · {accounts} account(s)', claimedNone: 'No rewards to claim', claimAllFailed: '{n} mail(s) could not be claimed',
     account: 'Account', refresh: 'Refresh', loading: 'Loading…', loadedAt: 'updated {t}', notReady: 'This page works after the app is restarted.',
     tabs: { mail: 'Inbox', friends: 'Friends', chat: 'Chat', requests: 'Requests', blocked: 'Blocked' },
     overview: 'Accounts', badgeHint: '{r} request(s) · {u} unread message(s) · {m} mail(s) with rewards',
@@ -32,7 +34,7 @@ const TEXT = {
     scout: { open: 'Scout', title: '{name} · Scout', refresh: 'refreshes in {m} min', sign: 'Sign', signed: 'Signed', empty: 'No players on the board.', close: 'Close', price: 'Price', done: '{name} signed' },
     friends: { empty: 'This account has no friends.', online: 'Online', offline: 'Offline', chat: 'Chat', remove: 'Remove', sure: 'Sure?', yes: 'Yes, remove', no: 'Cancel', count: '{n}/50 friends', unread: '{n} new' },
     chat: { pick: 'Pick a friend on the left.', empty: 'No messages in this chat.', placeholder: 'Write to {name}…', send: 'Send', sending: 'Sending…', archived: 'The game wipes chats every day around 19:00; the app keeps them one more day.', you: 'You', noFriends: 'A chat needs a friend first.' },
-    requests: { incoming: 'Incoming requests', outgoing: 'Sent requests', accept: 'Accept', decline: 'Decline', cancel: 'Cancel', noneIn: 'No incoming requests.', noneOut: 'No sent requests waiting.', send: 'Send a friend request', search: 'Search your own accounts (the game removed user search)…', find: 'Search', noResults: 'No team with this name.', add: 'Send request', status: { PENDING: 'Request pending', ACCEPTED: 'Already friends', BLOCKED: 'Blocked' }, level: 'Lv {n}', sent: 'Friend request sent' },
+    requests: { incoming: 'Incoming requests', outgoing: 'Sent requests', accept: 'Accept', decline: 'Decline', cancel: 'Cancel', noneIn: 'No incoming requests.', noneOut: 'No sent requests waiting.', send: 'Send a friend request', search: 'Team name (at least 2 letters)…', find: 'Search', noResults: 'No team with this name.', add: 'Send request', status: { PENDING: 'Request pending', ACCEPTED: 'Already friends', BLOCKED: 'Blocked' }, level: 'Lv {n}', sent: 'Friend request sent' },
     blocked: { unblock: 'Unblock', empty: 'No blocked players.' },
     done: { accept: 'Request accepted', decline: 'Request declined', cancel: 'Request cancelled', remove: 'Friend removed', unblock: 'Unblocked', claim: 'Rewards claimed', sent: 'Message sent' }
   },
@@ -146,6 +148,10 @@ export default function SocialPage({ state, t, toast }) {
     <div className="page-title">
       <div><h1>{x.title}</h1><span className="subtitle">{x.subtitle}</span></div>
       <div className="toolbar">
+        {/* every account's mailbox at once (user 2026-11-13) */}
+        <button className="btn success" disabled={Boolean(state.social?.claimingAll)} title={x.claimAll} onClick={async () => { try { const r = await api.social.claimAllMail(); toast(r.mails ? String(x.claimedAll).replace('{mails}', r.mails).replace('{accounts}', r.accounts) : x.claimedNone, r.mails ? 'success' : 'info'); if (r.failed) toast(String(x.claimAllFailed).replace('{n}', r.failed), 'error'); } catch (e) { toast(e.message, 'error'); } }}>
+          {state.social?.claimingAll ? String(x.claimingAll).replace('{done}', state.social.claimingAll.done).replace('{total}', state.social.claimingAll.total) : (state.social?.totals?.mail ? String(x.claimAllN).replace('{n}', state.social.totals.mail) : x.claimAll)}
+        </button>
         <label className="so-account"><span>{x.account}</span>
           <select value={accountId || ''} onChange={e => setAccountId(e.target.value)}>
             {accounts.map(a => { const k = badges[a.id] || {}; const n = (k.requests || 0) + (k.unread || 0); return <option key={a.id} value={a.id}>{a.name}{n ? ` · ${n} ●` : ''}{k.mail ? ` · ✉${k.mail}` : ''}</option>; })}

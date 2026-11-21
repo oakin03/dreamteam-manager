@@ -4,7 +4,10 @@
 // Trophy and CelticsBC on Elite Ascent floor 5 (2026-10-25) — Trophy's match "ended" after
 // 25 s as a loss. Every match start of the app therefore waits for this shared gate, which
 // keeps starts START_GAP_MS apart across all accounts and services.
-const START_GAP_MS = 1500;
+// 1500 ms made 141 accounts start over ~3.5 minutes (Daily Boss, Professional, Elite Ascent, PVP all
+// "one by one", user 2026-11-17). Only the same millisecond collides; 120 ms leaves room for network
+// jitter and starts 141 accounts in ~17 s.
+const START_GAP_MS = 120;
 
 let chain = Promise.resolve();
 let lastAt = 0;

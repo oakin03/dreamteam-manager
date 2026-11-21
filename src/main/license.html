@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8" />
+<title>DreamTeam Manager — Lisans</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: 'Segoe UI', system-ui, sans-serif; background: #0f1420; color: #e7ecf5; display: flex; align-items: center; justify-content: center; height: 100vh; }
+  .card { width: 420px; max-width: 92vw; background: #161d2e; border: 1px solid #263154; border-radius: 16px; padding: 28px; box-shadow: 0 20px 60px rgba(0,0,0,.5); }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  p { font-size: 13px; color: #9fb0cc; margin: 0 0 18px; line-height: 1.5; }
+  label { font-size: 12px; color: #9fb0cc; display: block; margin-bottom: 6px; }
+  input { width: 100%; padding: 11px 12px; font-size: 14px; letter-spacing: .5px; background: #0f1627; border: 1px solid #2b3860; border-radius: 10px; color: #fff; outline: none; }
+  input:focus { border-color: #4f7cff; }
+  button { margin-top: 16px; width: 100%; padding: 11px; font-size: 14px; font-weight: 600; background: linear-gradient(180deg,#4f7cff,#355fe0); color: #fff; border: 0; border-radius: 10px; cursor: pointer; }
+  button:disabled { opacity: .6; cursor: default; }
+  .msg { margin-top: 14px; font-size: 12.5px; min-height: 18px; }
+  .msg.err { color: #ff8a8a; }
+  .msg.ok { color: #7ee0a8; }
+  .mini { margin-top: 18px; font-size: 11px; color: #67789a; word-break: break-all; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>Lisans anahtarı</h1>
+    <p>Bu uygulamayı kullanmak için size verilen lisans anahtarını girin. Anahtar yalnızca bu bilgisayara bağlanır ve başka bir cihazda çalışmaz.</p>
+    <label>Lisans anahtarı</label>
+    <input id="key" placeholder="XXXX-XXXX-XXXX-XXXX" autocomplete="off" spellcheck="false" />
+    <button id="go">Etkinleştir</button>
+    <div class="msg" id="msg"></div>
+    <div class="mini">Cihaz kimliği: <span id="mid">—</span></div>
+  </div>
+<script>
+  const { ipcRenderer } = require('electron');
+  const keyEl = document.getElementById('key');
+  const btn = document.getElementById('go');
+  const msg = document.getElementById('msg');
+  const REASONS = {
+    'other-machine': 'Bu anahtar başka bir bilgisayara bağlı. Paylaşılan anahtarlar ikinci cihazda çalışmaz.',
+    'machine-limit': 'Bu anahtarın cihaz sınırı dolu.',
+    revoked: 'Bu anahtar iptal edilmiş.',
+    expired: 'Bu anahtarın süresi dolmuş.',
+    'not-found': 'Anahtar bulunamadı. Doğru girdiğinizden emin olun.',
+    offline: 'Lisans sunucusuna ulaşılamadı. İnternet bağlantınızı kontrol edip tekrar deneyin.',
+    blocked: 'Bu bilgisayar lisans sahibi tarafından engellendi.',
+    pending: 'Bu bilgisayar onay bekliyor. Onaylandıktan sonra tekrar deneyin.',
+    edition: 'Bu anahtar bu sürüm için değil (Pro / Basic farklı anahtar kullanır).',
+    'not-configured': 'Lisans sunucusu ayarlanmamış. Satıcınızla iletişime geçin.',
+    'not-configured': 'Lisans sunucusu henüz ayarlanmamış.',
+    refused: 'Anahtar kabul edilmedi.'
+  };
+  ipcRenderer.invoke('license:machine').then(id => { document.getElementById('mid').textContent = id; });
+  async function submit() {
+    const key = keyEl.value.trim();
+    if (!key) return;
+    btn.disabled = true; msg.className = 'msg'; msg.textContent = 'Kontrol ediliyor…';
+    const s = await ipcRenderer.invoke('license:submit', key);
+    if (s.ok) { msg.className = 'msg ok'; msg.textContent = 'Etkinleştirildi. Açılıyor…'; }
+    else { msg.className = 'msg err'; msg.textContent = REASONS[s.reason] || ('Hata: ' + (s.reason || '')); btn.disabled = false; }
+  }
+  btn.addEventListener('click', submit);
+  keyEl.addEventListener('keydown', e => { if (e.key === 'Enter') submit(); });
+</script>
+</body>
+</html>

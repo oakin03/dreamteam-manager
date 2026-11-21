@@ -106,10 +106,22 @@ class ActivityService {
     return out;
   }
 
-  _prune() {
-    const keep = new Set(this.days().slice(0, KEEP_DAYS));
-    for (const day of this.days()) if (!keep.has(day)) { try { fs.unlinkSync(path.join(this.logDir, `${day}.jsonl`)); } catch {} }
+  _prune() { this.prune(KEEP_DAYS); }
+
+  // Remove the daily archives beyond the newest `keepDays` days (the data cleanup passes its own
+  // number of days). Returns how many files and bytes went.
+  prune(keepDays = KEEP_DAYS) {
+    const out = { files: 0, bytes: 0 };
+    if (!this.logDir) return out;
+    const n = Math.max(1, Math.round(Number(keepDays) || KEEP_DAYS));
+    const keep = new Set(this.days().slice(0, n));
+    for (const day of this.days()) {
+      if (keep.has(day)) continue;
+      const file = path.join(this.logDir, `${day}.jsonl`);
+      try { const size = fs.statSync(file).size; fs.unlinkSync(file); out.files++; out.bytes += size; } catch {}
+    }
+    return out;
   }
 }
 
-module.exports = { ActivityService, trDay };
+module.exports = { ActivityService, trDay, KEEP_DAYS };

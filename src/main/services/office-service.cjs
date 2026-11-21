@@ -400,13 +400,12 @@ class MagicTeamService extends ProvingBase {
   // Trios of every account (level, Magic status) with a short sign-in.
   async status(accountIds) {
     const ids = accountIds || this.store.getAccounts().map(a => a.id);
-    await eachAtOnce(ids, async id => {
-      const account = this.store.getAccounts().find(a => a.id === id);
-      if (!account) return;
-      let c = null;
-      try { c = await this._main(account); const teams = await this._teams(c); this.info[id] = { teams: teams.filter(t => t.level > 0 || t.status !== 'LOCKED'), readAt: new Date(this.now()).toISOString() }; }
-      catch (e) { this.info[id] = { ...(this.info[id] || {}), error: e.message }; }
-      finally { if (c?.own) { try { c.gs.close(); } catch {} } }
+    // anonymous (live 2026-11-13): every account at once, no sign-in
+    const known = ids.filter(id => this.store.getAccounts().some(a => a.id === id) && this.store.getAccountProfile?.()?.accounts?.[id]?.userId);
+    await eachWithSocket(known, () => GameSocket.open({ createSocket: this.createSocket }), async (gs, id) => {
+      const c = { gs, own: false, session: { userId: this.store.getAccountProfile().accounts[id].userId } };
+      try { const teams = await this._teams(c); this.info[id] = { teams: teams.filter(t => t.level > 0 || t.status !== 'LOCKED'), readAt: new Date(this.now()).toISOString() }; }
+      catch (e) { this.info[id] = { ...(this.info[id] || {}), error: e.message }; throw e; }
     });
     this.onChanged();
     return this.snapshot();

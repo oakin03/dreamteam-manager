@@ -14,6 +14,41 @@ const { WIDE, eachAtOnce, eachWithSocket } = require('./wide.cjs');
 const READ_TIMEOUT_MS = 12000;
 const STATUS_WAIT_MS = 4000;
 const AUTH = /auth|user id is required|not authenticated|unauthor|register/i;
+// Random player cards (user 2026-11-18): every kind of "Random A Card" / "Random S (Player) Card"
+// (e.g. "Random S Player Card (3D)", "Random S+ Player Card"). The bag's Use opens one with the same
+// useInventoryItem; the answer carries the new player ({success, message, player}).
+// + the Base Salary player cards (user 2026-11-19): live name 'Base A Salary Card'; the client also
+// says 'Base Salary S Player Card'. They open with the same useInventoryItem and give a player.
+const isCard = name => { const n = String(name || ''); return /card/i.test(n) && (/random/i.test(n) || /base\s*[as]\+?\s*salary|base\s*salary\s*[as]\b/i.test(n)); };
+// The game allows one use about every 2 s ("Please wait 2 seconds before trying again.", user
+// 2026-11-20): keep the gap above it and, when it still says wait, wait that long and send again.
+const OPEN_GAP_MS = 2300;
+const WAIT_RE = /wait\s+(\d+(?:\.\d+)?)\s*(?:s\b|sec|second)/i;
+const waitMsOf = msg => { const m = String(msg || '').match(WAIT_RE); return m ? Math.ceil(Number(m[1]) * 1000) + 600 : 0; };
+const WAIT_TRIES = 5;
+// The open answer's player may carry another id than the roster (or none): the roster's new
+// players are matched to the opened ones by name, the rest in order.
+function matchOpened(got, before, after) {
+  const key = p => p?.id || p?.playerId || null;
+  const nm = p => String(p?.visualName || p?.name || '').trim().toLowerCase();
+  const fresh = before ? after.filter(p => key(p) && !before.has(key(p))) : [];
+  const byId = new Map(after.map(p => [key(p), p]));
+  const used = new Set();
+  const out = [];
+  const pending = [];
+  for (const g of got) {
+    let p = key(g.player) && byId.get(key(g.player));
+    if (!p) p = fresh.find(x => !used.has(key(x)) && nm(x) && nm(x) === nm(g.player));
+    if (!p && !before) p = after.find(x => !used.has(key(x)) && nm(x) && nm(x) === nm(g.player));
+    if (p && !used.has(key(p))) { used.add(key(p)); out.push({ p, item: g.item }); } else pending.push(g);
+  }
+  // no name match: the remaining new roster players, in order
+  for (const g of pending) {
+    const p = fresh.find(x => !used.has(key(x)));
+    if (p) { used.add(key(p)); out.push({ p, item: g.item }); }
+  }
+  return out;
+}
 const isXp = name => /x2 ?exp|2x ?exp|double ?(exp|xp)/i.test(String(name || ''));
 // "X2 EXP(1DAY)" -> 1, "7DAYS X2 EXP" -> 7
 const daysOf = name => Number(String(name || '').match(/(\d+)\s*DAYS?/i)?.[1]) || 1;
@@ -21,8 +56,9 @@ const daysOf = name => Number(String(name || '').match(/(\d+)\s*DAYS?/i)?.[1]) |
 const remainingMs = v => { const n = Number(v); if (!(n > 0)) return 0; return n > 10 * 24 * 3600 ? n : n * 1000; };
 
 class BagService {
-  constructor({ store, activity, sessions, onChanged, createSocket, gameHealth = null, now = () => Date.now(), parallel = WIDE }) {
-    Object.assign(this, { store, activity, sessions, createSocket, gameHealth, now, parallel });
+  constructor({ store, activity, sessions, onChanged, createSocket, gameHealth = null, now = () => Date.now(), parallel = WIDE, onCardPlayers = null }) {
+    Object.assign(this, { store, activity, sessions, createSocket, gameHealth, now, parallel, onCardPlayers });
+    this.opening = {}; // accountId -> { running, done, total, error }
     this.onChanged = onChanged || (() => {});
     this.bags = {};      // accountId -> { items: [{ inventoryId, itemId, name, days, quantity }], readAt, error }
     this.busy = new Set();
@@ -45,7 +81,7 @@ class BagService {
     const now = this.now();
     const boosts = {};
     for (const [id, b] of Object.entries(this._boosts())) if (b?.endsAt && Date.parse(b.endsAt) > now) boosts[id] = b;
-    return { bags: JSON.parse(JSON.stringify(this.bags)), boosts, busy: [...this.busy], reading: this.reading };
+    return { bags: JSON.parse(JSON.stringify(this.bags)), boosts, busy: [...this.busy], reading: this.reading, opening: JSON.parse(JSON.stringify(this.opening)) };
   }
 
   // Every account's X2 EXP props, a few connections at a time, no sign-in.
@@ -71,7 +107,9 @@ class BagService {
     const list = Array.isArray(d) ? d : (d?.inventory || d?.items || []);
     const items = list.filter(x => isXp(x?.item?.name) && Number(x.quantity) > 0)
       .map(x => ({ inventoryId: x.id, itemId: x.itemId || x.item?.id, name: x.item.name, days: daysOf(x.item.name), quantity: Number(x.quantity) || 0 }));
-    this.bags[id] = { items, readAt: new Date(this.now()).toISOString(), error: null };
+    const cards = list.filter(x => isCard(x?.item?.name) && Number(x.quantity) > 0)
+      .map(x => ({ inventoryId: x.id, itemId: x.itemId || x.item?.id, name: x.item.name, quantity: Number(x.quantity) || 0 }));
+    this.bags[id] = { items, cards, readAt: new Date(this.now()).toISOString(), error: null };
   }
 
   // A connection that may write: another service's registered one when live, else the cookie;
@@ -169,6 +207,108 @@ class BagService {
       this.busy.delete(id); this.onChanged();
     }
   }
+
+  async _roster(userId) {
+    const gs = await GameSocket.open({ createSocket: this.createSocket });
+    try {
+      const r = await gs.ack('getTeamOptimized', { userId }, { timeoutMs: READ_TIMEOUT_MS });
+      return [...(r?.players?.starters || []), ...(r?.players?.bench || [])];
+    } finally { try { gs.close(); } catch {} }
+  }
+
+  // Opens the Random cards on every chosen account at once (user 2026-11-18). itemIds: the kinds to
+  // open (all kinds when empty); count: at most this many per account (all when empty). The players
+  // that come out go to the list of the Bag -> Random Card tab (Draft's list, source 'card'), with
+  // Fire / To cards / List.
+  async openCards({ accountIds, itemIds = [], count = null } = {}) {
+    const out = {};
+    const ids = [...new Set(accountIds || [])].filter(id => this._account(id));
+    await eachAtOnce(ids, async id => {
+      try { out[id] = await this._openOne(id, itemIds || [], Number(count) > 0 ? Number(count) : Infinity); }
+      catch (error) {
+        out[id] = { ok: false, error: error.message, players: [] };
+        this.opening[id] = { ...(this.opening[id] || {}), running: false, error: error.message };
+        this._log(id, 'error', 'cardFailed', { error: error.message }, `Random card could not be opened: ${error.message}`);
+        this.onChanged();
+      }
+    }, this.parallel);
+    return { results: out, ...this.snapshot() };
+  }
+
+  async _openOne(id, kinds, max) {
+    const account = this._account(id);
+    if (this.busy.has(id)) throw new Error('This account is busy, try again in a moment.');
+    this.busy.add(id); this.onChanged();
+    let c = null;
+    const got = [];
+    try {
+      const anon = await GameSocket.open({ createSocket: this.createSocket });
+      try { await this._readOne(anon, id); } finally { try { anon.close(); } catch {} }
+      const items = (this.bags[id]?.cards || []).filter(x => !kinds.length || kinds.includes(x.itemId));
+      const queue = [];
+      for (const it of items) for (let i = 0; i < it.quantity && queue.length < max; i++) queue.push(it);
+      if (!queue.length) throw new Error('No Random card of the chosen kinds in the bag.');
+      this.opening[id] = { running: true, done: 0, total: queue.length, error: null, at: new Date(this.now()).toISOString() };
+      this.onChanged();
+      const userId = this._userId(id);
+      const beforeList = await this._roster(userId).catch(() => null);
+      const before = beforeList ? new Set(beforeList.map(p => p.id || p.playerId).filter(Boolean)) : null;
+      c = await this._conn(account);
+      let error = null;
+      for (const item of queue) {
+        const send = () => c.gs.call('useInventoryItem', { userId: c.userId, inventoryId: item.inventoryId, itemId: item.itemId }, 'useInventoryItemResult', { timeoutMs: READ_TIMEOUT_MS });
+        let r = await send().catch(e => ({ success: false, message: e.message }));
+        if (!r?.success && c.own && !c.registered && AUTH.test(String(r?.message || r?.error || ''))) {
+          await c.gs.register(c.userId, { owner: 'Çanta' });
+          c.registered = true;
+          r = await send().catch(e => ({ success: false, message: e.message }));
+        }
+        for (let t = 0; t < WAIT_TRIES && !r?.success && waitMsOf(r?.message || r?.error); t++) {
+          await new Promise(res => setTimeout(res, waitMsOf(r?.message || r?.error)));
+          r = await send().catch(e => ({ success: false, message: e.message }));
+        }
+        if (!r?.success) { error = r?.message || r?.error || 'The game refused it.'; break; }
+        const p = r.player || null;
+        got.push({ item: item.name, player: p });
+        this._log(id, 'success', 'cardOpened', { item: item.name, player: p?.visualName || p?.name || '?' }, `${item.name} opened · ${p?.visualName || p?.name || '?'}`);
+        this.opening[id] = { ...this.opening[id], done: got.length };
+        this.onChanged();
+        await new Promise(res => setTimeout(res, OPEN_GAP_MS));
+      }
+      // the roster is the truth for salary / value / Base (the answer may carry less)
+      let after = got.length ? await this._roster(userId).catch(() => []) : [];
+      let matched = matchOpened(got, before, after);
+      if (got.length && matched.length < got.length) {
+        // the roster may lag a moment behind the open
+        await new Promise(res => setTimeout(res, 2500));
+        after = await this._roster(userId).catch(() => after);
+        matched = matchOpened(got, before, after);
+      }
+      const rows = matched.map(m => rosterRow(m.p, m.item, this.now())).filter(r => r.id);
+      if (rows.length) this.onCardPlayers?.(id, rows);
+      if (rows.length < got.length) this._log(id, 'warning', 'cardNotListed', { n: got.length - rows.length }, `${got.length - rows.length} opened player(s) were not found in the roster, so they are not in the list`);
+      this.opening[id] = { ...this.opening[id], running: false, done: got.length, error };
+      if (error) this._log(id, 'warning', 'cardStopped', { done: got.length, total: queue.length, error }, `Random cards stopped at ${got.length}/${queue.length}: ${error}`);
+      const anon2 = await GameSocket.open({ createSocket: this.createSocket });
+      try { await this._readOne(anon2, id); } finally { try { anon2.close(); } catch {} }
+      if (!got.length && error) throw new Error(error);
+      return { ok: true, opened: got.length, total: queue.length, error, players: rows };
+    } finally {
+      if (c?.own) { try { c.gs.close(); } catch {} }
+      if (this.opening[id]) this.opening[id].running = false;
+      this.busy.delete(id); this.onChanged();
+    }
+  }
 }
 
-module.exports = { BagService, isXp, daysOf, remainingMs };
+// A player from the roster (or the open answer) as a row of the Random Card list.
+function rosterRow(p, item, now) {
+  const n = v => (v == null || v === '' ? null : Number(v));
+  return {
+    id: p.id || p.playerId, name: p.visualName || p.name || '?', rating: p.rating || null, position: p.position || null,
+    value: n(p.baseSalary ?? p.salary), salary: n(p.signedSalary ?? p.salary ?? p.baseSalary), base: n(p.newBaseSalary),
+    item, source: 'card', at: new Date(now).toISOString(), listed: false
+  };
+}
+
+module.exports = { BagService, isXp, isCard, daysOf, remainingMs, rosterRow, matchOpened, waitMsOf };

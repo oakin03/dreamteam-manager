@@ -1,4 +1,5 @@
 const { io } = require('socket.io-client');
+const { isFull } = require('../edition.cjs');
 
 // Tournaments (game: Match -> Multi Player) live on the game's /event-socket/.
 //   getActiveMultiplayerEvents        -> ack: [{ id, name, type, status, minLevel, maxLevel,
@@ -24,6 +25,9 @@ const WAIT_LOG_INTERVAL_MS = 5 * 60 * 1000;
 // Every account signs in and reads its level at the same time (user 2026-11-09). The sign-in is
 // HTTP; the Chromium fallback stays limited to 2 by GameSessions, so RAM does not grow with it.
 const AUTH_CONCURRENCY = Infinity;
+// The shared editions (pro / basic) sign in and register the accounts one by one; only the full
+// edition does them all at once (user 2026-11-21).
+const ONE_BY_ONE = !isFull;
 const FULL_RETRY_MS = 30000;
 
 function abortError() { const e = new Error('Aborted'); e.name = 'AbortError'; return e; }
@@ -130,7 +134,8 @@ function planAccount(events, { level, userId, knownTypes, refused = new Set(), f
 }
 
 class TournamentService {
-  constructor({ store, credentials, browserService, accountProfile, activity, onChanged, sessions = null, createSocket = (url, options) => io(url, options), pollMs = {} }) {
+  constructor({ store, credentials, browserService, accountProfile, activity, onChanged, sessions = null, createSocket = (url, options) => io(url, options), pollMs = {}, oneByOne = ONE_BY_ONE }) {
+    this.oneByOne = Boolean(oneByOne);
     this.store = store;
     this.credentials = credentials;
     this.browser = browserService;
@@ -333,7 +338,7 @@ class TournamentService {
 
       // Sign in and read levels, every account at once.
       let next = 0;
-      await Promise.all(Array.from({ length: Math.min(AUTH_CONCURRENCY, accounts.length) }, async () => {
+      await Promise.all(Array.from({ length: Math.min(this.oneByOne ? 1 : AUTH_CONCURRENCY, accounts.length) }, async () => {
         while (next < accounts.length) {
           const account = accounts[next++];
           if (signal.aborted) return;
@@ -396,8 +401,8 @@ class TournamentService {
             this.log(entry.joined.length ? 'success' : 'info', `Finished · ${summary || 'nothing to register'}.`, entry.account, 'tn.accountDone', { outcome: result.outcome, details: result.reason });
           }
         };
-        // every account at once (user 2026-11-09)
-        await Promise.all(active.map(one));
+        // every account at once (user 2026-11-09); one by one in the shared editions
+        if (this.oneByOne) { for (const entry of active) await one(entry); } else await Promise.all(active.map(one));
 
         if (!entries.some(entry => !entry.done)) break;
         if (Date.now() - startedAt > MAX_WAIT_MS) {

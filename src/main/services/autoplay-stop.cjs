@@ -74,18 +74,19 @@ class AutoPlayStop {
         stopped.push({ accountId: account.id, taskId: active.taskId, taskName: active.taskName, visibleBrowser: Boolean(active.visibleBrowser), config: active.config || null });
         try { await this.engine.stopAccount(account.id, { reason: 'Daily Auto Play stop', quiet: true }); } catch {}
       }
-      this._save({ stopDate: clock.date, resumeDate: state.resumeDate, stopped });
+      this._save({ stopDate: clock.date, stoppedAt: Date.now(), resumeDate: state.resumeDate, stopped });
       this._log(stopped.length ? 'warning' : 'info', 'ap.dailyStop', { time: cfg.stopAt, count: stopped.length }, `Daily stop at ${cfg.stopAt} (TR) · ${stopped.length} account(s) stopped`);
       if (stopped.length) this.onAttention?.('autoPlayStop', String(stopped.length));
       return;
     }
     if (cfg.enabled && cfg.resumeEnabled && state.stopDate === clock.date && state.stopped.length && due(clock, cfg.resumeAt, state.resumeDate)) {
       let started = 0;
+      const since = Number(state.stoppedAt) || Date.now();
       for (const item of state.stopped) {
         if (!this.store.getAccounts().some(a => a.id === item.accountId)) continue;
         const w = this.engine.workers.get(item.accountId);
         if (w && ACTIVE.includes(w.status)) continue;
-        try { await this.engine.startAccount(item.accountId, item.taskId, { visibleBrowser: item.visibleBrowser, forceFresh: false, config: item.config }); started++; } catch {}
+        try { const r = await this.engine.startAccount(item.accountId, item.taskId, { visibleBrowser: item.visibleBrowser, forceFresh: false, config: item.config, since }); if (!r?.skipped) started++; } catch {}
       }
       this._save({ ...state, resumeDate: clock.date, stopped: [] });
       this._log('success', 'ap.dailyResume', { time: cfg.resumeAt, count: started }, `Auto Play started again at ${cfg.resumeAt} (TR) · ${started} account(s)`);

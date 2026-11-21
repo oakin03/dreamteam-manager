@@ -286,6 +286,23 @@ class SocialService {
       if (!uid || uid === userId) continue;
       out.push({ id: uid, teamName: a.name, level: this.store.getAccountProfile?.()?.accounts?.[a.id]?.level ?? null, own: true, friendshipStatus: friendIds.has(uid) ? 'ACCEPTED' : pendingIds.has(uid) ? 'PENDING' : 'NONE' });
     }
+    // the game's own search is back (searchUsers {userId, teamName} -> searchResults, answers without a
+    // sign-in, 2026-11-17: "takım adı arıyorsun ama bulamıyor"): every team, with its friendship status
+    if (q.length >= 2) {
+      let gs = null;
+      try {
+        gs = await GameSocket.open({ createSocket: this.createSocket });
+        const r = await gs.call('searchUsers', { userId, teamName: String(text).trim() }, 'searchResults', { timeoutMs: TIMEOUT_MS });
+        const have = new Set(out.map(u => u.id));
+        for (const u of r?.users || []) {
+          if (!u?.id || u.id === userId || have.has(u.id)) continue;
+          const status = friendIds.has(u.id) ? 'ACCEPTED' : pendingIds.has(u.id) ? 'PENDING' : (u.friendshipStatus || 'NONE');
+          out.push({ id: u.id, teamName: u.teamName, avatarUrl: u.avatarUrl || null, level: u.level ?? null, online: Boolean(u.online), isBot: Boolean(u.isBot), own: Boolean(this._accounts().some(a => this._userId(a.id) === u.id)), friendshipStatus: status, friendshipId: u.friendshipId || null });
+        }
+      } catch (error) {
+        this._log?.(id, 'warning', 'so.searchFailed', { error: error.message }, 'Team search failed: ' + error.message);
+      } finally { try { gs?.close(); } catch {} }
+    }
     this.searched = { ...(this.searched || {}), ...Object.fromEntries(out.map(u => [u.id, u.teamName])) };
     return out;
   }
@@ -332,6 +349,47 @@ class SocialService {
     const items = [...totals].map(([n, q]) => `${q} ${n}`).join(', ');
     this._log(id, 'success', 'ml.claimed', { count: targets.length || 1, items: items || '—' }, `Mail rewards claimed · ${targets.length || 1} mail(s)${items ? ` · ${items}` : ''}`);
     return this.view(id);
+  }
+
+  // Every account's mailbox rewards at once (user 2026-11-13: with many accounts claiming one by
+  // one took too long). Mailboxes are read without signing in; an account with reward mails claims
+  // all of them together over its cookie connection (no register, nobody signed out).
+  async claimAllMail() {
+    if (this.claimingAll) throw new Error('Already claiming every mailbox.');
+    const accounts = this._accounts().filter(a => this._userId(a.id));
+    this.claimingAll = { total: accounts.length, done: 0, mails: 0, accounts: 0, failed: 0 };
+    this.onChanged?.();
+    const totals = new Map();
+    try {
+      await eachWithSocket(accounts, () => GameSocket.open({ createSocket: this.createSocket }), async (gs, a) => {
+        try {
+          const list = unclaimedMails(await this._mails(gs, this._userId(a.id)));
+          if (!list.length) return;
+          const w = await this._writer(a.id);
+          const res = await Promise.all(list.map(m => w.gs.ack('claimMailItems', { mailId: m.id }, { timeoutMs: TIMEOUT_MS }).catch(error => ({ success: false, error: error.message }))));
+          const ok = list.filter((m, i) => res[i]?.success);
+          if (ok.length < list.length) this.claimingAll.failed += list.length - ok.length;
+          if (!ok.length) return;
+          this.claimingAll.mails += ok.length;
+          this.claimingAll.accounts += 1;
+          const mine = new Map();
+          for (const m of ok) for (const it of m.items || []) { const n = itemName(it), q = Number(it.quantity ?? it.amount) || 1; mine.set(n, (mine.get(n) || 0) + q); totals.set(n, (totals.get(n) || 0) + q); }
+          const items = [...mine].map(([n, q]) => `${q} ${n}`).join(', ');
+          this._log(a.id, 'success', 'ml.claimed', { count: ok.length, items: items || '—' }, `Mail rewards claimed · ${ok.length} mail(s)${items ? ` · ${items}` : ''}`);
+          if (this.badges[a.id]) this.badges[a.id] = { ...this.badges[a.id], mail: list.length - ok.length };
+        } finally {
+          this.claimingAll.done += 1;
+          this.onChanged?.();
+        }
+      });
+      const items = [...totals].map(([n, q]) => `${q} ${n}`).join(', ');
+      const r = { ...this.claimingAll, items };
+      this._log(null, r.mails ? 'success' : 'info', 'ml.claimedAll', { mails: r.mails, accounts: r.accounts, items: items || '—' }, `Every mailbox claimed · ${r.mails} mail(s) on ${r.accounts} account(s)${items ? ` · ${items}` : ''}`);
+      return r;
+    } finally {
+      this.claimingAll = null;
+      this.onChanged?.();
+    }
   }
 
   // ---------- archive ----------
@@ -433,7 +491,7 @@ class SocialService {
   snapshot() {
     const totals = { requests: 0, unread: 0, mail: 0 };
     for (const b of Object.values(this.badges)) { totals.requests += b.requests || 0; totals.unread += b.unread || 0; totals.mail += b.mail || 0; }
-    return { badges: this.badges, totals, polledAt: this.polledAt };
+    return { badges: this.badges, totals, polledAt: this.polledAt, claimingAll: this.claimingAll ? { ...this.claimingAll } : null };
   }
 
   start() {

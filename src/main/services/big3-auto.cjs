@@ -38,9 +38,13 @@ function bestThree(players, starterIds) {
   return list.slice(0, 3);
 }
 
-// What set-up does for an account: 'big3' | 'superKeep' | 'superCreate' | 'none'.
-function planOf({ trio, superBig3, best }) {
+// What set-up does for an account: 'big3' | 'superKeep' | 'superCreate' | 'rebuild' | 'none'.
+// 'rebuild' (user 2026-11-13): the Super Big 3 lost players from the roster (starters changed) and
+// can neither train nor give its bonus; the game's lineup change puts the 3 best starters in, which
+// resets its level, XP and bonuses to 0.
+function planOf({ trio, superBig3, best, broken = false }) {
   if (trio) return 'big3';
+  if (superBig3 && broken) return best.length === 3 ? 'rebuild' : 'none';
   if (superBig3) return 'superKeep';
   if (best.length === 3) return 'superCreate';
   return 'none';
@@ -93,7 +97,7 @@ class Big3Auto {
     const teams = (await this._ackAnon(gs, 'big3:getTeams', { userId }))?.teams || [];
     const trio = teams.filter(t => t.ownsTrio).sort((a, b) => (Number(b.level) || 0) - (Number(a.level) || 0))[0] || null;
     const sp = await this._ackAnon(gs, 'superBig3:getUserProgress', { userId });
-    const superBig3 = sp?.success && sp.progress?.id ? { ...sp.progress, players: (sp.playerInfo || []).map(p => p.visualName || p.name) } : null;
+    const superBig3 = sp?.success && sp.progress?.id ? { ...sp.progress, players: (sp.playerInfo || []).map(p => p.visualName || p.name), names: Object.fromEntries((sp.playerInfo || []).map(p => [p.id, p.visualName || p.name])) } : null;
     return { type, trio, superBig3 };
   }
 
@@ -112,13 +116,18 @@ class Big3Auto {
           const players = (await this._ackAnon(gs, 'superBig3:getUserPlayers', { userId }))?.players || [];
           const roster = await this._ackAnon(gs, 'getTeamOptimized', { userId });
           const starters = new Set((roster?.players?.starters || []).map(p => p.id));
-          const best = v.superBig3 ? [] : bestThree(players, starters);
-          const plan = planOf({ trio: v.trio, superBig3: v.superBig3, best });
+          const inRoster = new Set([...(roster?.players?.starters || []), ...(roster?.players?.bench || [])].map(p => p.id));
+          const missing = v.superBig3 ? (v.superBig3.playerIds || []).filter(pid => !inRoster.has(pid)).map(pid => v.superBig3.names?.[pid] || '?') : [];
+          // the league Big 3 is active but its trio is not owned any more
+          const lostTrio = v.type === 'BIG3' && !v.trio;
+          const best = bestThree(players, starters);
+          const plan = planOf({ trio: v.trio, superBig3: v.superBig3, best, broken: missing.length > 0 });
           const done = (plan === 'big3' && v.type === 'BIG3') || (plan === 'superKeep' && v.type === 'SUPERBIG3');
           this.scan.rows[id] = {
             name: this._account(id).name, type: v.type, plan, done,
             trio: v.trio ? { id: v.trio.id, team: v.trio.team, level: Number(v.trio.level) || 0 } : null,
-            superBig3: v.superBig3 ? { id: v.superBig3.id, level: Number(v.superBig3.level) || 0, players: v.superBig3.players } : null,
+            superBig3: v.superBig3 ? { id: v.superBig3.id, level: Number(v.superBig3.level) || 0, players: v.superBig3.players, missing } : null,
+            broken: missing.length > 0 || lostTrio, lostTrio,
             best: best.map(p => ({ id: p.id, name: p.visualName || p.name, rating: p.rating, offense: p.offense, defense: p.defense }))
           };
         } catch (error) {
@@ -150,7 +159,7 @@ class Big3Auto {
   // Carries out the scanned plan for the chosen accounts (only those not done yet).
   async setup(accountIds) {
     if (this.setupBusy) throw new Error('Big 3 set-up is already running.');
-    const ids = (accountIds || []).filter(id => this.scan.rows[id] && !this.scan.rows[id].done && ['big3', 'superKeep', 'superCreate'].includes(this.scan.rows[id].plan));
+    const ids = (accountIds || []).filter(id => this.scan.rows[id] && !this.scan.rows[id].done && ['big3', 'superKeep', 'superCreate', 'rebuild'].includes(this.scan.rows[id].plan));
     if (!ids.length) throw new Error('Nothing to activate: scan first, or every account is already set.');
     this.setupBusy = true;
     this.onChanged();
@@ -175,6 +184,15 @@ class Big3Auto {
             if (row.plan === 'big3') {
               await activate('big3:activate', { userId }, 'superBig3:deactivate');
               this._log(id, 'success', 'big3On', { team: row.trio.team }, `Big 3 activated · ${row.trio.team}`);
+            } else if (row.plan === 'rebuild') {
+              // the lineup change: level, XP, bonuses and a running training go back to 0
+              const r = await this._ack(c, 'superBig3:updatePlayers', { userId, superBig3Id: row.superBig3.id, playerIds: row.best.map(p => p.id) });
+              if (!r?.success) throw new Error(r?.error || r?.message || 'the Super Big 3 could not be rebuilt');
+              if (row.type !== 'SUPERBIG3') await activate('superBig3:activate', { userId, superBig3Id: row.superBig3.id }, 'big3:deactivate');
+              const old = row.superBig3.players.join(', ');
+              row.superBig3 = { id: row.superBig3.id, level: 0, players: row.best.map(p => p.name), missing: [] };
+              row.broken = false;
+              this._log(id, 'success', 'rebuilt', { from: old, players: row.best.map(p => p.name).join(', ') }, `Super Big 3 rebuilt · ${old} → ${row.best.map(p => p.name).join(', ')} (level 0)`);
             } else if (row.plan === 'superKeep') {
               await activate('superBig3:activate', { userId, superBig3Id: row.superBig3.id }, 'big3:deactivate');
               this._log(id, 'success', 'superOn', { players: row.superBig3.players.join(', ') }, `Super Big 3 activated · ${row.superBig3.players.join(', ')}`);
@@ -316,8 +334,14 @@ class Big3Auto {
             gs ||= await this._anon();
             await this._one(id, gs);
           } catch (error) {
-            this._set(id, { status: 'error', message: error.message, nextAt: this.now() + ERROR_RETRY_MS });
-            this._log(id, 'warning', 'failed', { error: error.message }, `Big 3 training: ${error.message}`);
+            if (/required players|missing \d+ player/i.test(error.message)) {
+              const was = this.accounts[id]?.status === 'broken';
+              this._set(id, { status: 'broken', message: error.message, nextAt: this.now() + RECHECK_MS });
+              if (!was) this._log(id, 'warning', 'broken', { error: error.message }, `Big 3 is broken (players left the roster) · rebuild it on the Big 3 tab: ${error.message}`);
+            } else {
+              this._set(id, { status: 'error', message: error.message, nextAt: this.now() + ERROR_RETRY_MS });
+              this._log(id, 'warning', 'failed', { error: error.message }, `Big 3 training: ${error.message}`);
+            }
             try { gs?.close(); } catch {}
             gs = null;
           } finally { this.working.delete(id); }

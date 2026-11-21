@@ -102,14 +102,15 @@ export default function HomePage({ state, t, go, msgText, toast = () => {} }) {
   const events = useMemo(() => {
     const list = [];
     const add = (min, label, tone) => { if (min != null) list.push({ min, label, tone }); };
-    if (settings.dailyPvp?.enabled !== false) add(toMin(settings.dailyPvp?.at || '05:01'), x.ev.pvp, 'info');
+    if (settings.dailyPvp?.enabled !== false) add(toMin(settings.dailyPvp?.at || '05:01'), x.ev.pvp, 'info'); // @strip(basic)
     add(11 * 60 + 5, x.ev.salary, 'muted');
-    if (settings.autoPlayStop?.enabled) add(toMin(settings.autoPlayStop.stopAt), x.ev.stop, 'bad');
+    if (settings.autoPlayStop?.enabled) add(toMin(settings.autoPlayStop.stopAt), x.ev.stop, 'bad'); // @strip(basic)
     add(15 * 60, x.ev.tournament, 'warn');
-    if (settings.dailyTournament?.enabled !== false) add(toMin(settings.dailyTournament?.at || '15:48'), x.ev.tReg, 'warn');
-    if (settings.autoPlayStop?.enabled && settings.autoPlayStop?.resumeEnabled) add(toMin(settings.autoPlayStop.resumeAt), x.ev.resume, 'good');
+    if (settings.dailyTournament?.enabled !== false) add(toMin(settings.dailyTournament?.at || '15:48'), x.ev.tReg, 'warn'); // @strip(basic)
+    if (settings.autoPlayStop?.enabled && settings.autoPlayStop?.resumeEnabled) add(toMin(settings.autoPlayStop.resumeAt), x.ev.resume, 'good'); // @strip(basic)
     add(19 * 60, x.ev.reset, 'accent');
     add(19 * 60 + 10, x.ev.reset2, 'muted');
+    // @strip-begin(basic)
     for (const s of state.schedules || []) {
       if (!s.enabled || s.completed) continue;
       const at = Date.parse(s.startAt);
@@ -117,6 +118,7 @@ export default function HomePage({ state, t, go, msgText, toast = () => {} }) {
       if (/günlük|daily/i.test(s.name || '')) continue; // the daily lines are already on the axis
       add(trMinutes(at), s.taskName || s.name, 'info');
     }
+    // @strip-end
     list.sort((a, b) => a.min - b.min);
     // two label rows so neighbours never overlap
     // Four label slots (two above the axis, two below); each label takes the first
@@ -155,7 +157,7 @@ export default function HomePage({ state, t, go, msgText, toast = () => {} }) {
   const pl = state.players || {};
   const plist = pl.players || [];
   const cards = state.cards || {};
-  const next = (state.schedules || []).filter(s => s.enabled && !s.completed && Date.parse(s.startAt) > now).sort((a, b) => Date.parse(a.startAt) - Date.parse(b.startAt))[0];
+  const next = (state.schedules || []).filter(s => s.enabled && !s.completed && Date.parse(s.startAt) > now).sort((a, b) => Date.parse(a.startAt) - Date.parse(b.startAt))[0]; // @strip(basic)
   const risers = useMemo(() => [...plist].filter(p => p.change > 0).sort((a, b) => b.change - a.change).slice(0, 6), [plist]);
   const fallers = useMemo(() => [...plist].filter(p => p.change < 0).sort((a, b) => a.change - b.change).slice(0, 6), [plist]);
   // at Base, or still reachable with the 5% signing discount (Lv30+); the day it dropped there
@@ -249,7 +251,7 @@ export default function HomePage({ state, t, go, msgText, toast = () => {} }) {
       {sys('eq', 'equipment', x.equipment, eq.job ? 'running' : 'idle', eq.accountId ? fill(x.equipmentLine, { name: accounts.find(a => a.id === eq.accountId)?.name || '' }) : x.equipmentIdle)}
       {sys('pl', 'players', x.players, pl.busy ? 'running' : 'idle', plist.length ? fill(x.playersLine, { up: plist.filter(p => p.change > 0).length, down: plist.filter(p => p.change < 0).length, base: atBase.length }) : x.playersNever)}
       {sys('cd', 'cards', x.cards, ['starting', 'running'].includes(cards.scanRuntime?.status) ? 'running' : 'idle', fill(x.cardsLine, { players: (cards.players || []).length, teams: (cards.teams || []).length }))}
-      {sys('sc', 'autoplay', x.schedule, 'idle', next ? fill(x.scheduleLine, { name: next.name || next.taskName, at: new Date(next.startAt).toLocaleString([], { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' }) }) : x.scheduleNone)}
+      {sys('sc', 'autoplay', x.schedule, 'idle', next ? fill(x.scheduleLine, { name: next.name || next.taskName, at: new Date(next.startAt).toLocaleString([], { hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' }) }) : x.scheduleNone)}{/* @strip(basic) */}
     </div>
 
     {plist.length > 0 && <div className="home-players">

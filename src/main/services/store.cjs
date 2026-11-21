@@ -60,6 +60,7 @@ class AppStore {
       socialArchive: path.join(baseDir, 'social-archive.json'),
       chatHistory: path.join(baseDir, 'chat-history.json'),
       buyData: path.join(baseDir, 'buy.json'),
+      scoutHunter: path.join(baseDir, 'scout-hunter.json'), // @strip(basic)
       valuePredict: path.join(baseDir, 'value-predict.json'),
       injuries: path.join(baseDir, 'injuries.json'),
       towerReport: path.join(baseDir, 'tower-report.json'),
@@ -132,12 +133,19 @@ class AppStore {
   getAccountProfileRaw() { return this._get('accountProfile', { version: 1, mainAccountId: null, accounts: {} }); }
   // What every automation reads: `mainAccountId` is the Main account, or the "2. Main"
   // account while there is no Main (user 2026-10-31). `realMainAccountId` is the Main role.
+  // Kept while neither the profile nor the account list changed: services call this thousands of
+  // times a second (tournament live, 2026-11-17: ~128×141 calls per tournament per tick froze the app).
   getAccountProfile() {
     const raw = this.getAccountProfileRaw();
-    const ids = new Set(this.getAccounts().map(a => a.id));
+    const accounts = this.getAccounts();
+    const memo = this._profileMemo;
+    if (memo && memo.raw === raw && memo.accounts === accounts) return memo.value;
+    const ids = new Set(accounts.map(a => a.id));
     const main = ids.has(raw.mainAccountId) ? raw.mainAccountId : null;
     const second = ids.has(raw.secondMainId) ? raw.secondMainId : null;
-    return { ...raw, mainAccountId: main || second || null, realMainAccountId: main, secondMainId: second };
+    const value = { ...raw, mainAccountId: main || second || null, realMainAccountId: main, secondMainId: second };
+    this._profileMemo = { raw, accounts, value };
+    return value;
   }
   saveAccountProfile(v) { this._save('accountProfile', v); }
   getSchedules() { return this._get('schedules', []); }
@@ -197,6 +205,8 @@ class AppStore {
   saveInjuries(v) { this._save('injuries', v); }
   getValuePredict() { return this._get('valuePredict', null); }
   saveValuePredict(v) { this._saveDeferred('valuePredict', v); }
+  getScoutHunter() { return this._get('scoutHunter', null); } // @strip(basic)
+  saveScoutHunter(v) { this._saveDeferred('scoutHunter', v); } // @strip(basic)
   getBuyData() { return this._get('buyData', null); }
   saveBuyData(v) { this._saveDeferred('buyData', v); }
   getPvpReport() { return this._get('pvpReport', null); }

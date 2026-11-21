@@ -248,6 +248,7 @@ tr.row-dragging .row-handle{background:var(--bg-fff1e7);color:var(--fg-b94d08);b
 .market-relist-table tr.group-row td{background:var(--bg-f6f8fb);font-size:11px}.market-relist-table tr.group-row small{color:var(--fg-8a95a6);margin-left:6px}
 .market-relist-table tr.row-muted td{opacity:.55}
 .price-input{width:92px;height:30px;border:1px solid var(--bd-d7dde6);border-radius:7px;padding:0 8px;font-size:11.5px;font-weight:700;color:var(--fg-253248)}.price-input.changed{border-color:var(--bd-f0a35e);background:var(--bg-fff8f2)}
+.bulk-price{padding:10px 12px;margin-bottom:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:12px}.bulk-price select{height:30px;border:1px solid var(--bd-d7dde6);border-radius:7px;padding:0 6px}.bulk-price small{flex-basis:100%}
 .currency-toggle{display:inline-flex;border:1px solid var(--bd-d7dde6);border-radius:7px;overflow:hidden}.currency-toggle button{height:28px;padding:0 9px;border:0;background:var(--bg-ffffff);color:var(--fg-667085);font-size:11px;font-weight:900;cursor:pointer}.currency-toggle button.on{background:var(--bg-273f82);color:var(--fg-ffffff)}.currency-toggle button:disabled{cursor:not-allowed;opacity:.7}
 .relist-msg{max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
@@ -1145,3 +1146,90 @@ td.good-text b,td.bad-text b{font-weight:800}
 .ch-morale b { position: relative; display: block; text-align: center; font-size: 11px; line-height: 16px; }
 
 .tl-warn { display: inline-block; margin: 0 8px 2px 0; white-space: nowrap; }
+
+/* Big 3 tab: broken Super Big 3 (players left the roster) */
+tr.b3-broken td{background:color-mix(in srgb, var(--bg-fff0ee) 70%, transparent)}
+
+/* Auto Buy account priority: whole rows drag (user 2026-11-13) */
+.ab-acc{grid-template-columns:26px 20px 1fr auto auto 18px;cursor:grab;user-select:none}.ab-acc:active{cursor:grabbing}.ab-acc.dragging{opacity:.4}.ab-acc.drop-here{box-shadow:inset 0 2px 0 var(--bd-ff7a1a)}.ab-grip{color:var(--fg-8a95a6);font-weight:900;letter-spacing:-2px;text-align:center}
+
+/* a page shown as a tab of another page (2026-11-13) */
+.embedded-page>.page{padding:0;margin:0;max-width:none}
+
+/* Settings → menu layout: drag and drop (2026-11-13) */
+.nav-item-edit{cursor:grab;user-select:none;display:flex;align-items:center;justify-content:space-between;gap:8px}.nav-item-edit:active{cursor:grabbing}.nav-item-edit.dragging,.nav-group-edit.dragging{opacity:.4}.nav-item-edit.drop-here{box-shadow:inset 0 2px 0 var(--bd-ff7a1a)}.nav-group-edit.drop-here,.nav-empty.drop-here{outline:2px dashed var(--bd-ff7a1a);outline-offset:2px}.nav-grip{cursor:grab;color:var(--fg-8a95a6);font-weight:900;letter-spacing:-2px;padding:0 4px}.nav-empty{padding:10px;border:1px dashed var(--bd-d9dee7);border-radius:8px;color:var(--fg-8a95a6);font-size:11.5px;text-align:center}
+
+/* Draft → drafted players: price, currency and the buttons fit (2026-11-13) */
+.df-drafted table td,.df-drafted table th{padding-left:8px;padding-right:8px}
+.df-drafted .eq-small{width:78px}
+.df-drafted select{width:64px}
+.df-drafted td.actions{white-space:nowrap;width:1%}
+.df-drafted td.actions .btn.small{height:28px;padding:0 9px}
+.df-drafted .pl-roles{flex-wrap:wrap;max-width:170px}
+.df-drafted .at2-list-head .toolbar{flex-wrap:wrap}
+.df-drafted table{table-layout:auto}
+.df-drafted td:nth-child(2){min-width:220px}
+
+/* TK / APK transfer: account and group boxes alike, numbers on one line (2026-11-13) */
+.tk-sides label,.tk-sides .grp-chip{min-height:42px;border-radius:8px;box-sizing:border-box}
+.tk-sides label b{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tk-sides label .num{white-space:nowrap;font-size:11px;line-height:1.2}
+.tk-sides .grp-chip{display:flex;padding:7px 10px;border:1px solid var(--d-line);background:var(--d-surface)}
+.tk-sides .grp-chip>button{flex:1;display:flex;align-items:center;gap:6px;text-align:left}
+.tk-sides .grp-chip.on{border-color:var(--d-accent);background:var(--d-accent-soft)}
+.tk-sides .grp-items{grid-column:1/-1;display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:6px}
+.tk-live>.empty{min-height:56px}
+
+/* Settings refresh (2026-11-13): two cards on top, the menu editor full width, factory reset last */
+.settings-page .settings-top{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.3fr);gap:12px;margin-bottom:12px}
+.settings-page .setting-card{padding:16px 18px;display:grid;gap:10px;align-content:start}
+.settings-page .setting-card>b{font-size:14px;letter-spacing:.2px}
+.settings-links{display:flex;gap:8px;flex-wrap:wrap;margin-top:2px}
+.settings-page .nav-editor{margin-bottom:12px}
+.settings-page .factory-card{border-color:var(--bd-f2d0cc)}
+.settings-page .factory-card>b{color:var(--fg-b13b30)}
+.nav-groups{grid-template-columns:repeat(auto-fill,minmax(230px,1fr))!important}
+.nav-group-head{grid-template-columns:22px minmax(0,1fr) 28px!important}
+.nav-group-head input{width:100%;min-width:0;height:30px;border:1px solid var(--bd-d7dde6);border-radius:7px;padding:0 8px;font-weight:700;background:var(--bg-ffffff);color:var(--fg-253248)}
+.nav-item-edit{padding:7px 8px!important;font-size:12.5px}
+.nav-item-edit:hover{border-color:var(--bd-aeb9ca)}
+@media(max-width:1100px){.settings-page .settings-top{grid-template-columns:1fr}}
+
+/* Rotasyon panel (2026-11-13) */
+.rot-modes{padding:14px 16px;display:grid;gap:8px;margin-bottom:12px}.rot-mode-list{display:flex;flex-wrap:wrap;gap:8px 18px}
+/* Equipment bulk (2026-11-13) */
+.eq-kinds{display:inline-flex;gap:10px;align-items:center}.eq-kinds label{display:inline-flex;gap:4px;align-items:center;flex-direction:row}
+.eq-slot-cell select{max-width:170px;height:28px;font-size:11px}.eq-on{display:inline-flex;gap:4px;align-items:center;font-size:11.5px;white-space:nowrap}
+.eq-confirm{display:flex;gap:8px;align-items:center;padding:10px 12px;margin-bottom:10px}
+.sk-plan select{max-width:230px;height:28px;font-size:11.5px}.sk-got{display:flex;flex-wrap:wrap;gap:4px 12px;margin-top:4px;font-size:11px}.sk-got .ok{color:var(--good,#1d8a4e);font-weight:600}
+/* Tournament live (2026-11-13) */
+.tl-event{flex-wrap:wrap;gap:10px}.tl-next{color:var(--accent,#e8722c)}.tl-walk{flex-basis:100%;font-size:11.5px}.tl-walk summary{cursor:pointer}.tl-walk div{display:flex;flex-wrap:wrap;gap:4px 14px;margin-top:4px}.tl-walk .ours{font-weight:700;color:var(--accent,#e8722c)}
+.tl-hist{display:flex;flex-wrap:wrap;gap:3px 8px;font-size:11px}.tl-hist .w{color:var(--good,#1d8a4e)}.tl-hist .l{color:var(--bad,#c0392b)}
+.tl-rot{display:inline-flex;gap:5px;align-items:center;font-size:11px;white-space:nowrap}
+.tl-bar{padding:8px 10px;border-bottom:1px solid var(--bd-e6eaf0,#e6eaf0)}
+.tl-table{width:100%;border-collapse:collapse;font-size:12px}.tl-table th,.tl-table td{padding:7px 8px;text-align:left;border-bottom:1px solid var(--bd-eef1f5,#eef1f5)}
+.tl-row{cursor:pointer}.tl-row:hover{background:var(--bg-f7f9fc,#f7f9fc)}.tl-out td{opacity:.75}.tl-arrow{width:16px;color:var(--muted,#8a94a6)}
+.tl-score.w b{color:var(--good,#1d8a4e)}.tl-score.l b{color:var(--bad,#c0392b)}
+.tl-detail td{background:var(--bg-f7f9fc,#f7f9fc)}.tl-matches{display:flex;flex-direction:column;gap:4px;padding:2px 0 2px 40px}
+.tl-match{display:grid;grid-template-columns:70px minmax(120px,240px) 90px auto;gap:10px;align-items:center}.tl-match .tl-s{font-variant-numeric:tabular-nums}
+.tl-match.w .tl-s{color:var(--good,#1d8a4e)}.tl-match.l .tl-s{color:var(--bad,#c0392b)}.tl-match.live .tl-s{color:var(--accent,#e8722c)}
+/* 2026-11-18: Scout Hunter refresh options, pricing roles, Auto Buy list search */
+.hunter-refresh{display:grid;gap:10px;padding:12px 14px;margin:10px 0}.hunter-opt label{display:inline-flex;align-items:center;gap:6px;cursor:pointer}
+.check-row{display:flex;align-items:center;gap:7px;font-size:12px;cursor:pointer;padding:3px 0}
+.role-pick{display:grid;gap:4px;margin:8px 0 12px}
+.at2-role-cell{white-space:normal}.role-chip{display:inline-flex;align-items:center;gap:3px;border:1px solid var(--line);border-radius:999px;padding:1px 4px 1px 8px;margin:1px 4px 1px 0;font-size:11px;font-weight:700;background:var(--line-2)}.role-chip .link-btn{padding:0 3px;font-weight:900}
+.role-add{height:24px;font-size:11px;border:1px dashed var(--line);border-radius:7px;background:transparent;color:var(--ink-2)}
+.ab-list-search{margin:6px 0 8px;max-width:320px}
+
+.at2-bulk{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:6px 0}.at2-bulk .btn.at2-fire{color:var(--d-bad)}
+
+.labor-pick{display:grid;gap:6px}.labor-form{display:flex;flex-wrap:wrap;gap:10px;align-items:center}.labor-form label{display:inline-flex;gap:6px;align-items:center}.bag-cards-bar{flex-wrap:wrap;gap:8px}
+
+/* scrolling on the compositor (user 2026-11-18: the wheel was sometimes not taken while the page re-rendered) */
+.shell>main,.table-panel{will-change:scroll-position}
+
+.open-acc-status{display:inline-flex;align-items:center;gap:6px;font-size:12px}
+
+.apk-calc{display:grid;gap:6px;margin-top:10px;padding:10px 12px;border:1px solid var(--bd-e4e7ec);border-radius:9px}.apk-calc-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.apk-calc-line{display:grid;gap:2px}
+
+.game-down-retry{margin-left:6px;font-weight:800;text-decoration:underline;color:inherit;background:none;border:0;cursor:pointer;padding:0}

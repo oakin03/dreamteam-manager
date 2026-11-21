@@ -1,3 +1,4 @@
+require('../src/main/services/game-socket.cjs').GameSocket.retries = 0; // these tests count refused connects one by one
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');

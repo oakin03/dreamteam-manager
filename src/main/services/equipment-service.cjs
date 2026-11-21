@@ -188,6 +188,7 @@ class EquipmentService {
       materials: this.raw ? materialSummary(this.raw.inventory) : null,
       hasRecipes: Boolean(this.recipes),
       collections: this.collections ? collectionRows(this.collections) : [],
+      roster: this.raw ? rosterRows(this.raw) : [],
       refineConfig: this.refineConfig,
       batch: this.batch ? { running: this.batch.running, mode: this.batch.mode, total: this.batch.total, done: this.batch.done, account: this.batch.account, results: this.batch.results.slice(-200) } : null
     };
@@ -635,6 +636,343 @@ EquipmentService.prototype.stopBatch = function stopBatch() {
   return this.stop();
 };
 
+// ---- Roster: equip / unequip (game client 2026-11-13) -----------------------------------
+//   equipment:equipItem {playerId, inventoryId, equipmentSlot}   -> equipment:equipmentUpdated
+//   equipment:unequipItem {playerId, equipmentSlot}              -> equipment:unequipItemResult
+//   equipment:quickEquip {playerId}                              -> equipment:quickEquipResult
+//   equipment:unequipSelected {userId, playerId}                 -> equipment:unequipSelectedResult
+//   equipment:unequipAll {userId}                                -> equipment:unequipAllResult
+const SLOT_KEYS = { HEADBAND: 'headbandInventoryId', JERSEY: 'jerseyInventoryId', SLEEVES: 'sleevesInventoryId', PANTS: 'pantsInventoryId', SHOES: 'shoesInventoryId' };
+function rosterRows(data) {
+  return (data?.players || []).map(p => ({
+    playerId: p.playerId,
+    name: p.player?.visualName || p.player?.name || '?',
+    position: p.player?.position || '',
+    rating: p.player?.rating || '',
+    slot: p.slot || null,
+    benchSlot: p.benchSlot ?? null,
+    gear: Object.fromEntries(Object.entries(SLOT_KEYS).map(([type, key]) => [type, p[key] || null]))
+  })).sort((a, b) => (a.slot ? 0 : 1) - (b.slot ? 0 : 1) || ['PG', 'SG', 'SF', 'PF', 'C'].indexOf(a.slot) - ['PG', 'SG', 'SF', 'PF', 'C'].indexOf(b.slot) || (a.benchSlot || 0) - (b.benchSlot || 0));
+}
+
+EquipmentService.prototype._equipWrite = async function _equipWrite(event, payload, reply, signal) {
+  // The answer event is not always sent; a missing answer is checked against the bag instead.
+  let r = null;
+  try { r = await this._write(event, payload, reply, signal); } catch (error) { if (error?.name === 'AbortError') throw error; r = { timeout: true, error: error.message }; }
+  if (r && r.success === false) throw new Error(r.message || r.error || 'Refused by the game');
+  await this._loadInventory(signal);
+  return r;
+};
+
+EquipmentService.prototype.equip = function equip(playerId, inventoryId) {
+  this._requireOpen();
+  return this._exclusive('equip', async signal => {
+    const g = this._gear(inventoryId);
+    const p = rosterRows(this.raw).find(x => x.playerId === playerId);
+    if (!p) throw new Error('Player not found in the roster.');
+    if (g.equipped) throw new Error('This item is already equipped.');
+    this._set({ step: 'equip', stepParams: { name: g.name, player: p.name } });
+    await this._equipWrite('equipment:equipItem', { playerId, inventoryId, equipmentSlot: g.type }, 'equipment:equipmentUpdated', signal);
+    const now = rosterRows(this.raw).find(x => x.playerId === playerId);
+    if (now?.gear[g.type] !== inventoryId) throw new Error(`${g.name} could not be equipped.`);
+    this._log('success', 'eq.equipped', { name: g.name, player: p.name }, `${g.name} → ${p.name}`);
+    return true;
+  });
+};
+
+EquipmentService.prototype.unequip = function unequip(playerId, slot) {
+  this._requireOpen();
+  return this._exclusive('equip', async signal => {
+    const p = rosterRows(this.raw).find(x => x.playerId === playerId);
+    if (!p) throw new Error('Player not found in the roster.');
+    this._set({ step: 'unequip', stepParams: { player: p.name } });
+    if (slot) await this._equipWrite('equipment:unequipItem', { playerId, equipmentSlot: slot }, 'equipment:unequipItemResult', signal);
+    else await this._equipWrite('equipment:unequipSelected', { userId: this.userId, playerId }, 'equipment:unequipSelectedResult', signal);
+    this._log('success', 'eq.unequipped', { player: p.name, slot: slot || '*' }, `${p.name}: gear taken off`);
+    return true;
+  });
+};
+
+EquipmentService.prototype.quickEquip = function quickEquip(playerIds) {
+  this._requireOpen();
+  return this._exclusive('equip', async signal => {
+    const ids = playerIds?.length ? playerIds : rosterRows(this.raw).map(p => p.playerId);
+    for (const playerId of ids) {
+      if (signal.aborted) throw abortError();
+      const p = rosterRows(this.raw).find(x => x.playerId === playerId);
+      this._set({ step: 'quickEquip', stepParams: { player: p?.name || '' } });
+      await this._equipWrite('equipment:quickEquip', { playerId }, 'equipment:quickEquipResult', signal);
+    }
+    this._log('success', 'eq.quickEquipped', { count: ids.length }, `Quick equip · ${ids.length} player(s)`);
+    return true;
+  });
+};
+
+EquipmentService.prototype.unequipAll = function unequipAll() {
+  this._requireOpen();
+  return this._exclusive('equip', async signal => {
+    this._set({ step: 'unequip', stepParams: { player: '*' } });
+    await this._equipWrite('equipment:unequipAll', { userId: this.userId }, 'equipment:unequipAllResult', signal);
+    this._log('success', 'eq.unequippedAll', {}, 'All gear taken off');
+    return true;
+  });
+};
+
+// ---- Several pieces in a row (user 2026-11-13): "seçilenleri +7 yap" -------------------------
+// mode enhance: up to +target; refine: up to refine level target; enchant: until the enchant % is
+// at least target (at most maxTries scrolls a piece). One piece after the other, the game's
+// cooldown kept by _write. A piece that runs out of stone / ore / scroll ends the run.
+const MAX_REFINE_TRIES = 200;
+EquipmentService.prototype.strengthenMany = function strengthenMany({ ids = [], mode = 'enhance', target, maxTries = 20 } = {}) {
+  this._requireOpen();
+  const goal = Number(target);
+  if (!Number.isFinite(goal) || goal < 1) throw new Error('Enter a target.');
+  if (!ids.length) throw new Error('Select at least one item.');
+  return this._exclusive(mode === 'enchant' ? 'enchant' : mode === 'refine' ? 'refine' : 'enhance', async signal => {
+    const rows = [];
+    this._set({ lastResult: { kind: 'many', mode, target: goal, rows, running: true } });
+    for (const [i, id] of ids.entries()) {
+      if (signal.aborted) throw abortError();
+      let g;
+      try { g = this._gear(id); } catch { rows.push({ id, name: '?', result: 'missing' }); continue; }
+      this._set({ step: 'many', stepParams: { done: i, total: ids.length, name: g.name } });
+      const row = { id, name: g.name, rarity: g.rarity, from: mode === 'refine' ? g.refine : mode === 'enchant' ? g.enchantPct : g.level, result: 'ok' };
+      try {
+        if (mode === 'enhance') {
+          if (g.level >= goal) row.result = 'already';
+          else { const r = await this._enhanceTo(id, Math.min(12, goal), signal); row.to = r.level; row.tries = r.tries; if (r.noStone) row.result = 'noStone'; }
+        } else if (mode === 'refine') {
+          row.to = await this._refineTo(id, goal, signal, row);
+        } else {
+          row.to = await this._enchantTo(id, goal, Math.max(1, Number(maxTries) || 1), signal, row);
+        }
+      } catch (error) {
+        if (error?.name === 'AbortError') throw error;
+        row.result = 'error'; row.detail = error.message;
+      }
+      rows.push(row);
+      this._set({ lastResult: { kind: 'many', mode, target: goal, rows: [...rows], running: true } });
+      if (['noStone', 'noOre', 'noScroll'].includes(row.result)) break;
+    }
+    const ok = rows.filter(r => r.result === 'ok' || r.result === 'already').length;
+    this._log(ok === ids.length ? 'success' : 'warning', 'eq.manyDone', { mode, ok, total: ids.length, target: goal }, `${mode} · ${ok}/${ids.length} piece(s) reached ${goal}`);
+    this._set({ lastResult: { kind: 'many', mode, target: goal, rows, running: false } });
+    return rows;
+  });
+};
+
+EquipmentService.prototype._refineTo = async function _refineTo(id, goal, signal, row) {
+  let g = this._gear(id);
+  if (g.refine >= goal) { row.result = 'already'; return g.refine; }
+  for (let tries = 0; g.refine < goal; tries++) {
+    if (signal.aborted) throw abortError();
+    if (tries >= MAX_REFINE_TRIES) { row.result = 'error'; row.detail = `${MAX_REFINE_TRIES} tries`; break; }
+    const d = await this._call('refine:getDetails', { inventoryId: id }, 'refine:detailsSuccess', signal).catch(() => null);
+    if (d?.isMaxLevel || (d && !d.next)) { row.result = 'max'; break; }
+    const ore = materialSummary(this.raw.inventory).ore;
+    if (d?.next?.stoneCost && ore < d.next.stoneCost) { row.result = 'noOre'; break; }
+    this._set({ step: 'refine', stepParams: { name: g.name, level: g.refine } });
+    const r = await this._write('refine:item', { inventoryId: id }, 'refine:itemSuccess', signal);
+    if (!r?.success && !r?.updatedOre && !r?.updatedInventory) {
+      if (/not enough|insufficient|ore/i.test(String(r?.message || r?.error))) { row.result = 'noOre'; break; }
+      throw new Error(r?.message || r?.error || 'Refine refused');
+    }
+    if (r?.updatedInventory) this._applyGear(r.updatedInventory);
+    if (r?.updatedOre?.id) this._applyStone(r.updatedOre);
+    row.tries = tries + 1;
+    if (r?.downgraded) row.downgrades = (row.downgrades || 0) + 1;
+    g = this._gear(id);
+    if (r?.newRefineLevel != null && g.refine !== r.newRefineLevel) { const raw = this.raw.inventory.find(x => x.id === id); if (raw) raw.refineLevel = r.newRefineLevel; g = this._gear(id); }
+  }
+  await this._loadInventory(signal);
+  g = this._gear(id);
+  this._log(g.refine >= goal ? 'success' : 'warning', 'eq.refineDone', { name: g.name, from: row.from, level: g.refine, tries: row.tries || 0 }, `${g.name} refine ${row.from} → ${g.refine}`);
+  return g.refine;
+};
+
+EquipmentService.prototype._enchantTo = async function _enchantTo(id, goal, maxTries, signal, row) {
+  let g = this._gear(id);
+  if (!['EPIC', 'LEGENDARY', 'MYTHIC'].includes(g.rarity)) { row.result = 'notEnchantable'; return g.enchantPct; }
+  if (g.enchantPct >= goal) { row.result = 'already'; return g.enchantPct; }
+  let tries = 0;
+  while (g.enchantPct < goal && tries < maxTries) {
+    if (signal.aborted) throw abortError();
+    if (!materialSummary(this.raw.inventory).scroll) { row.result = 'noScroll'; break; }
+    this._set({ step: 'enchant', stepParams: { name: g.name } });
+    const r = await this._write('enchantItem', { userId: this.userId, inventoryId: id }, 'enchantItemResult', signal);
+    if (!r?.success) throw new Error(r?.message || r?.error || 'Enchant refused');
+    tries++;
+    if (r.updatedInventory) this._applyGear(r.updatedInventory);
+    if (r.updatedScroll?.id) this._applyStone(r.updatedScroll);
+    g = this._gear(id);
+  }
+  row.tries = tries;
+  if (row.result === 'ok' && g.enchantPct < goal) row.result = 'notReached';
+  await this._loadInventory(signal);
+  g = this._gear(id);
+  this._log(g.enchantPct >= goal ? 'success' : 'warning', 'eq.enchantDone', { name: g.name, pct: g.enchantPct, tries }, `${g.name} enchant ${g.enchantPct}% · ${tries} scroll(s)`);
+  return g.enchantPct;
+};
+
+// ---- Materials on many accounts at once (user 2026-11-13) ------------------------------------
+// "Common'dan Rare'e kadar hepsini yükselt": every step from `from` to `to` crafts all it can
+// (Uncommon shows the Common → Uncommon recipe), at most 100 a craft (the game's limit), with
+// the write cooldown between crafts. Every account at the same time, each on its own connection.
+function materialPlan(recipes, kinds, from, to) {
+  const a = RARITIES.indexOf(from); const b = RARITIES.indexOf(to);
+  if (a < 0 || b <= a) throw new Error('Choose a higher target rarity.');
+  const steps = [];
+  for (let i = a; i < b; i++) {
+    for (const kind of kinds) {
+      const name = `${titleCase(RARITIES[i + 1])} ${kind}`;
+      const r = recipes.find(x => x.type === 'MATERIAL' && x.name === name);
+      if (r && r.ingredients.length === 1) steps.push({ kind, from: RARITIES[i], to: RARITIES[i + 1], recipeId: r.id, per: r.ingredients[0].quantity, name });
+    }
+  }
+  return steps;
+}
+EquipmentService.prototype._upgradeMaterials = async function _upgradeMaterials(kinds, from, to, signal) {
+  await this._connect(signal);
+  await this._loadInventory(signal);
+  if (!this.recipes) {
+    const recipes = await this._call('craft:getCraftingRecipes', undefined, 'craft:craftingRecipes', signal);
+    if (Array.isArray(recipes)) this.recipes = recipes;
+  }
+  const made = [];
+  for (const step of materialPlan(recipeRows(this.recipes), kinds, from, to)) {
+    let total = 0;
+    for (;;) {
+      if (signal.aborted) throw abortError();
+      const m = materialSummary(this.raw.inventory);
+      const have = (step.kind === 'Fabric' ? m.fabric : m.stone)[step.from] || 0;
+      const n = Math.min(MAX_PER_ACTION, Math.floor(have / step.per));
+      if (n < 1) break;
+      await this._craft(step.recipeId, n, signal);
+      total += n;
+    }
+    if (total) made.push({ name: step.name, count: total });
+  }
+  return made;
+};
+EquipmentService.prototype.batchMaterials = async function batchMaterials({ accountIds = [], kinds = ['Fabric', 'Refine Stone'], from = 'COMMON', to = 'RARE' } = {}) {
+  if (this.batch?.running) throw new Error('A batch is already running.');
+  const accounts = [...new Set(accountIds)].filter(id => this.store.getAccounts().some(a => a.id === id));
+  if (!accounts.length) throw new Error('Choose at least one account.');
+  const ks = kinds.filter(k => ['Fabric', 'Refine Stone'].includes(k));
+  if (!ks.length) throw new Error('Choose Fabric or Refine Stone.');
+  if (RARITIES.indexOf(to) <= RARITIES.indexOf(from)) throw new Error('Choose a higher target rarity.');
+  const results = []; const active = new Set(); const workers = new Map();
+  this.batch = { running: true, mode: 'materials', total: accounts.length, done: 0, account: null, results, stop: false, workers };
+  this.onChanged?.();
+  const name = id => this.store.getAccounts().find(a => a.id === id)?.name || id;
+  const showActive = () => { this.batch.account = [...active].map(name).join(', ') || null; this.onChanged?.(); };
+  const runAccount = async accountId => {
+    if (this.batch.stop) return;
+    const own = this.accountId === accountId;
+    const eq = own ? this : new EquipmentService({ store: this.store, activity: this.activity, sessions: this.sessions, createSocket: this.createSocket, fetchImpl: this.fetch, writeGapScale: this.writeGapScale });
+    if (!own) { eq.recipes = this.recipes; eq.accountId = accountId; workers.set(accountId, eq); }
+    active.add(accountId); showActive();
+    const row = { account: name(accountId), set: '', result: 'skipped', detail: '' };
+    try {
+      const made = await eq._exclusive('craft', signal => eq._upgradeMaterials(ks, from, to, signal));
+      if (made?.stopped) row.result = 'stopped';
+      else { row.result = made.length ? 'upgraded' : 'nothing'; row.detail = made.map(m => `${m.count} × ${m.name}`).join(', '); }
+    } catch (error) { row.result = 'error'; row.detail = error.message; }
+    finally {
+      results.push(row); this.batch.done++;
+      if (!own) { if (!this.recipes && eq.recipes) this.recipes = eq.recipes; await eq.close().catch(() => {}); workers.delete(accountId); }
+      active.delete(accountId); showActive();
+    }
+  };
+  try { await Promise.all(accounts.map(runAccount)); }
+  finally {
+    const ok = results.filter(r => r.result === 'upgraded').length;
+    this.activity.add({ level: 'success', accountId: null, accountName: '', taskName: 'Equipment', code: 'eq.materialsDone', params: { ok, accounts: accounts.length }, message: `Materials upgraded on ${ok}/${accounts.length} account(s)` });
+    this.batch = { ...this.batch, running: false, account: null, workers: null };
+    this.onChanged?.();
+  }
+  return results;
+};
+
+// Dismantle (user 2026-11-18): every gear piece in the bag that is BELOW both limits — level under
+// maxPlus and rarity under maxRarity (+7 & Epic → up to +6 and up to Rare). Worn pieces are never
+// touched (the game refuses them too). The game's own button sends at most 20 pieces at a time:
+//   dismantle:dismantleMultiple {userId, itemIds} (ack) -> {success, rewards[], message}
+const DISMANTLE_CHUNK = 20;
+function dismantlePick(gear, maxPlus, maxRarity) {
+  const cap = RARITIES.indexOf(String(maxRarity || '').toUpperCase());
+  const plus = Math.floor(Number(maxPlus));
+  if (cap < 0 || !Number.isFinite(plus)) return [];
+  return (gear || []).filter(g => !g.equipped && g.level < plus && RARITIES.indexOf(String(g.rarity).toUpperCase()) < cap);
+}
+EquipmentService.prototype._dismantle = async function _dismantle(maxPlus, maxRarity, signal) {
+  const conn = await this._connect(signal);
+  this._set({ step: 'bag' });
+  await this._loadInventory(signal);
+  const pick = dismantlePick(gearRows(this.raw), maxPlus, maxRarity);
+  const got = new Map();
+  let done = 0;
+  for (let i = 0; i < pick.length; i += DISMANTLE_CHUNK) {
+    if (signal.aborted) throw abortError();
+    const chunk = pick.slice(i, i + DISMANTLE_CHUNK);
+    const wait0 = (this.lastWriteAt || 0) + DEFAULT_WRITE_GAP_MS * this.writeGapScale - Date.now();
+    if (wait0 > 0) await sleep(wait0, signal);
+    this._set({ step: 'dismantle', stepParams: { done, total: pick.length } });
+    const r = await conn.ack('dismantle:dismantleMultiple', { userId: this.userId, itemIds: chunk.map(g => g.id) }, { timeoutMs: TIMEOUT_MS, signal });
+    this.lastWriteAt = Date.now();
+    if (!r?.success) throw new Error(r?.message || r?.error || 'Dismantle refused');
+    done += chunk.length;
+    for (const w of r.rewards || []) { const n = w?.item?.name || w?.name || w?.itemName || '?'; got.set(n, (got.get(n) || 0) + (Number(w?.quantity ?? w?.amount) || 1)); }
+  }
+  if (done) await this._loadInventory(signal);
+  return { count: done, rewards: [...got].map(([name, quantity]) => ({ name, quantity })) };
+};
+EquipmentService.prototype.batchDismantle = async function batchDismantle({ accountIds = [], maxPlus, maxRarity } = {}) {
+  if (this.batch?.running) throw new Error('A batch is already running.');
+  const accounts = [...new Set(accountIds)].filter(id => this.store.getAccounts().some(a => a.id === id));
+  if (!accounts.length) throw new Error('Choose at least one account.');
+  const plus = Math.floor(Number(maxPlus));
+  if (!(plus >= 1 && plus <= 30)) throw new Error('Choose the + limit.');
+  if (!RARITIES.includes(String(maxRarity || '').toUpperCase())) throw new Error('Choose the rarity limit.');
+  const rarity = String(maxRarity).toUpperCase();
+  const results = []; const active = new Set(); const workers = new Map();
+  this.batch = { running: true, mode: 'dismantle', total: accounts.length, done: 0, account: null, results, stop: false, workers };
+  this.onChanged?.();
+  const name = id => this.store.getAccounts().find(a => a.id === id)?.name || id;
+  const showActive = () => { this.batch.account = [...active].map(name).join(', ') || null; this.onChanged?.(); };
+  this.activity.add({ level: 'info', accountId: null, accountName: '', taskName: 'Equipment', code: 'eq.dismantleStart', params: { plus: plus - 1, rarity: titleCase(RARITIES[RARITIES.indexOf(rarity) - 1] || 'COMMON'), accounts: accounts.length }, message: `Dismantle started · up to +${plus - 1} and below ${titleCase(rarity)} · ${accounts.length} account(s)` });
+  const runAccount = async accountId => {
+    if (this.batch.stop) return;
+    const own = this.accountId === accountId;
+    const eq = own ? this : new EquipmentService({ store: this.store, activity: this.activity, sessions: this.sessions, createSocket: this.createSocket, fetchImpl: this.fetch, writeGapScale: this.writeGapScale });
+    if (!own) { eq.accountId = accountId; workers.set(accountId, eq); }
+    active.add(accountId); showActive();
+    const row = { account: name(accountId), set: '', result: 'skipped', detail: '' };
+    try {
+      const r = await eq._exclusive('dismantle', signal => eq._dismantle(plus, rarity, signal));
+      if (r?.stopped) row.result = 'stopped';
+      else {
+        row.result = r.count ? 'dismantled' : 'nothing';
+        row.detail = r.count ? `${r.count} · ${r.rewards.map(w => `${w.quantity} × ${w.name}`).join(', ')}` : '';
+        if (r.count) this.activity.add({ level: 'success', accountId, accountName: name(accountId), taskName: 'Equipment', code: 'eq.dismantled', params: { count: r.count, rewards: r.rewards.map(w => `${w.quantity} × ${w.name}`).join(', ') }, message: `Dismantled ${r.count} piece(s) · ${r.rewards.map(w => `${w.quantity} × ${w.name}`).join(', ')}` });
+      }
+    } catch (error) { row.result = 'error'; row.detail = error.message; }
+    finally {
+      results.push(row); this.batch.done++;
+      if (!own) { await eq.close().catch(() => {}); workers.delete(accountId); }
+      active.delete(accountId); showActive();
+    }
+  };
+  try { await Promise.all(accounts.map(runAccount)); }
+  finally {
+    const ok = results.filter(r => r.result === 'dismantled').length;
+    this.activity.add({ level: 'success', accountId: null, accountName: '', taskName: 'Equipment', code: 'eq.dismantleDone', params: { ok, accounts: accounts.length }, message: `Dismantle done on ${ok}/${accounts.length} account(s)` });
+    this.batch = { ...this.batch, running: false, account: null, workers: null };
+    this.onChanged?.();
+  }
+  return results;
+};
+
 function onlySlot(set, slot) { return slot ? { ...set, items: set.items.filter(i => i.slot === slot) } : set; }
 
 function describeReward(reward) {
@@ -646,4 +984,4 @@ function describeReward(reward) {
   return [amount, name].filter(x => x !== '').join(' ') || JSON.stringify(reward).slice(0, 80);
 }
 
-module.exports = { EquipmentService, materialSummary, gearRows, recipeRows, collectionRows, planCollection, RARITIES };
+module.exports = { EquipmentService, materialSummary, gearRows, recipeRows, collectionRows, planCollection, rosterRows, materialPlan, dismantlePick, RARITIES };

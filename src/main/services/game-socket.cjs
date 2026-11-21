@@ -14,7 +14,23 @@ class GameSocket {
     this.queue = Promise.resolve();
   }
 
-  static open({ createSocket = (url, options) => io(url, options), path = '/socket/', cookie = null, signal = null, timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
+  // A refused connection ("websocket error", many at once around the day turn: 300+ failed daily
+  // routines and market jobs on 2026-11-14..17) is tried again a few times with a growing pause.
+  static async open(options = {}) {
+    const tries = options.retries ?? GameSocket.retries;
+    for (let attempt = 0; ; attempt++) {
+      try { return await GameSocket._openOnce(options); }
+      catch (error) {
+        if (error?.name === 'AbortError' || attempt >= tries || !/could not connect|websocket error|xhr poll|transport/i.test(error?.message || '')) throw error;
+        await new Promise((resolve, reject) => {
+          const t = setTimeout(resolve, 1000 * (attempt + 1) + Math.floor(Math.random() * 1000));
+          options.signal?.addEventListener('abort', () => { clearTimeout(t); reject(abortError()); }, { once: true });
+        });
+      }
+    }
+  }
+
+  static _openOnce({ createSocket = (url, options) => io(url, options), path = '/socket/', cookie = null, signal = null, timeoutMs = DEFAULT_TIMEOUT_MS } = {}) {
     return new Promise((resolve, reject) => {
       if (signal?.aborted) return reject(abortError());
       const socket = createSocket(SOCKET_URL, {
@@ -209,5 +225,8 @@ GameSocket.borrow = userId => {
 // `fn({ userId, owner, by, count, waitMs?, slowed? })` hears every kick (main.cjs logs it).
 GameSocket.onKick = fn => { kickListener = fn; };
 GameSocket._resetKicks = () => { registrants.clear(); kickTimes.clear(); };
+
+// tries after a refused connection (tests that simulate an outage set 0)
+GameSocket.retries = 3;
 
 module.exports = { GameSocket, SOCKET_URL };

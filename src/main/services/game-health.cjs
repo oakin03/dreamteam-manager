@@ -60,6 +60,16 @@ class GameHealth {
     this.onChanged?.();
   }
 
+  // 'Şimdi tekrar dene' (user 2026-11-20): probe right away instead of waiting for the next check.
+  async probeNow() {
+    if (!this.down) return this.snapshot();
+    if (this.probing) return this.snapshot();
+    this.probing = true;
+    clearTimeout(this.timer);
+    try { await this._probe(); } finally { this.probing = false; }
+    return this.snapshot();
+  }
+
   // Resolves at once when the game is up, otherwise when the probe gets through.
   waitUp(signal) {
     if (!this.down) return Promise.resolve();

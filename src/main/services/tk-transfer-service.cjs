@@ -188,14 +188,14 @@ class TkTransferService {
       // sides in TK order (highest first)
       this._step('order');
       const sides = [];
-      for (const id of config.sideIds) {
-        if (blocked.has(id)) continue;
+      // every side at once (user 2026-11-17: it checked the accounts 4 by 4); buying stays in order
+      await Promise.all(config.sideIds.filter(id => !blocked.has(id)).map(async id => {
         const c = await this._conn(conns, id, signal).catch(error => { this._row(id, { status: 'error', note: error.message }); this._log(id, 'warning', 'loginFailed', { error: error.message }, `Could not connect: ${error.message}`); blocked.add(id); return null; });
-        if (!c) continue;
+        if (!c) return;
         const bal = await this._balance(c).catch(() => ({ tk: NaN, apk: NaN }));
         this._row(id, { funds: bal.tk, apk: bal.apk });
         if (Number.isFinite(bal.tk)) sides.push({ id, c, tk: bal.tk });
-      }
+      }));
       sides.sort((a, b) => b.tk - a.tk);
       let did = false;
       let apkShort = false;

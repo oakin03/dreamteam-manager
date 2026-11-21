@@ -1,4 +1,5 @@
 const { GameSocket } = require('./game-socket.cjs');
+const { handleInjury, InjuredError } = require('./injury-guard.cjs');
 const { WIDE, eachAtOnce, eachWithSocket } = require('./wide.cjs');
 const { isNetError } = require('./game-health.cjs');
 
@@ -246,6 +247,9 @@ class PvpService {
           const msg = String(r?.message || r?.error || 'refused');
           if (/attempt|limit|no more|remaining/i.test(msg)) { left = 0; break; }
           if (!(await this._arenaActive(signal))) throw new InactiveError();
+          const inj = await handleInjury(id, msg, 'PVP');
+          if (inj === false) throw new InjuredError(msg);
+          if (inj === true) continue;
           failures++;
           this._log(id, 'warning', 'pvp.findFailed', { error: msg, n: failures }, `Find PVP Match refused: ${msg}`);
           if (failures >= MAX_FIND_FAILURES) throw new Error(msg);

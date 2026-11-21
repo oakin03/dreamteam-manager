@@ -1,0 +1,18 @@
+{
+  "_comment": "Which modules each shared edition LEAVES OUT (ids from scripts/edition/module-map.cjs; a page id also hides that page). Full leaves out nothing; the owner panel ('licenses') must never be in pro or basic. The code itself is removed at build time by the @strip markers + module-map.cjs, so nobody can unlock a module by editing files. Decided by the user 2026-11-21.",
+  "excludedByEdition": {
+    "full": [],
+    "pro": [
+      "licenses"
+    ],
+    "basic": [
+      "licenses",
+      "autobuy",
+      "scoutHunter",
+      "rotation",
+      "tournamentExtras",
+      "dailyPlan",
+      "signup"
+    ]
+  }
+}

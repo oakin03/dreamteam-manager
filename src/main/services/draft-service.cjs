@@ -32,8 +32,9 @@ function joinableSlots(slots, level, { attempts = 0, busy = false } = {}) {
 }
 
 class DraftService {
-  constructor({ store, activity, sessions, accountProfile, onChanged, onAttention, createSocket, gameHealth = null, now = () => Date.now() }) {
+  constructor({ store, activity, sessions, accountProfile, onChanged, onAttention, createSocket, gameHealth = null, now = () => Date.now(), priceOf = null }) {
     this.gameHealth = gameHealth;
+    this.priceOf = priceOf;      // (row, accountId) -> { price, currency } from Auto Trade's pricing
     this.store = store;
     this.activity = activity;
     this.sessions = sessions;
@@ -94,8 +95,60 @@ class DraftService {
     return {
       watching: this.watchers > 0, slotsAt: this.slotsAt, error: this.error,
       slots: this.slots.map(s => ({ slotNumber: s.slotNumber, range: levelRange(s.slotNumber), users: s.users?.length || 0, hasStarted: s.hasStarted, cooldownRemaining: s.cooldownRemaining || 0, countdown: s.countdown })),
-      accounts, rooms, drafted: this._drafted()
+      accounts, rooms, drafted: this._withPrices(this._drafted())
     };
+  }
+
+  // The list price each drafted player gets by default: Auto Trade's pricing (user 2026-11-13).
+  _withPrices(drafted) {
+    if (!this.priceOf) return drafted;
+    const out = {};
+    for (const [id, rows] of Object.entries(drafted)) out[id] = rows.map(r => { let s = null; try { s = this.priceOf(r, id); } catch {} return s?.price ? { ...r, suggest: { price: s.price, currency: s.currency } } : r; });
+    return out;
+  }
+
+  // "Karta çevir" waiting for Auto Trade (it holds the account or main): flagged on the rows,
+  // done by main.cjs once both are free.
+  queueCards(accountId, ids, on = true) {
+    const drafted = this._drafted();
+    let n = 0;
+    for (const r of drafted[accountId] || []) if (ids.includes(r.id)) { if (on) r.cardsQueued = true; else delete r.cardsQueued; n++; }
+    if (!n) return;
+    this._saveDrafted(drafted);
+    if (on) this._log('info', 'df.cardsQueued', { count: n }, `${n} drafted player(s) wait for Auto Trade · turned into cards when it is done with the account / main`, accountId);
+    this.onChanged();
+  }
+  queuedCards() {
+    const out = {};
+    for (const [id, rows] of Object.entries(this._drafted())) { const ids = rows.filter(r => r.cardsQueued).map(r => r.id); if (ids.length) out[id] = ids; }
+    return out;
+  }
+  // "Kov" waiting for Auto Trade (it holds the account and the account is not one of its run).
+  queueFire(accountId, ids, on = true) {
+    const drafted = this._drafted();
+    let n = 0;
+    for (const r of drafted[accountId] || []) if (ids.includes(r.id)) { if (on) r.fireQueued = true; else delete r.fireQueued; n++; }
+    if (!n) return;
+    this._saveDrafted(drafted);
+    if (on) this._log('info', 'df.fireQueued', { count: n }, `${n} drafted player(s) wait for Auto Trade · fired when it is done with the account`, accountId);
+    this.onChanged();
+  }
+  queuedFire() {
+    const out = {};
+    for (const [id, rows] of Object.entries(this._drafted())) { const ids = rows.filter(r => r.fireQueued).map(r => r.id); if (ids.length) out[id] = ids; }
+    return out;
+  }
+  // Fired by the running Auto Trade over its own connection.
+  firedByAutoTrade(accountId, ids) {
+    if (!ids.length) return;
+    this._dropDrafted(accountId, ids);
+  }
+
+  // Handed to the running Auto Trade: they leave this list (Auto Trade's own list shows them).
+  handedToAutoTrade(accountId, ids) {
+    const names = (this._drafted()[accountId] || []).filter(r => ids.includes(r.id)).map(r => r.name);
+    this._dropDrafted(accountId, ids);
+    this._log('success', 'df.handedAT', { names: names.join(', '), count: names.length }, `${names.length} drafted player(s) handed to Auto Trade for cards · ${names.join(', ')}`, accountId);
   }
 
   // The Draft page is open: poll the hall (and attempts) every 2 s.
@@ -238,8 +291,9 @@ class DraftService {
       rm.turn = { index: d?.index, seconds: d?.seconds, userId: d?.userId, at: new Date(this.now()).toISOString() };
       rm.pickIndex = d?.index ?? rm.pickIndex;
       // Our account's turn: bring the app forward once per turn.
+      // Not again for an account that has already picked in this draft (user 2026-11-13).
       const mine = rm.ours.find(id => this.joined.get(id)?.userId === d?.userId);
-      if (mine && before !== d?.userId) this.onAttention?.('draftTurn', this._name(mine));
+      if (mine && before !== d?.userId && !(rm.picked || []).includes(mine)) this.onAttention?.('draftTurn', this._name(mine));
       touch();
     });
     s.on('draftEnded', () => this._ended(entry.slot));
@@ -310,6 +364,7 @@ class DraftService {
       this._resync(entry);
       throw new Error(message);
     }
+    room.picked = [...new Set([...(room.picked || []), accountId])];
     const drafted = this._drafted();
     drafted[accountId] = [...(drafted[accountId] || []), { id: player.id, name: player.visualName || player.name, rating: player.rating, position: player.position, value: player.baseSalary, base: player.newBaseSalary, slot: entry.slot, at: new Date(this.now()).toISOString(), listed: false }];
     this._saveDrafted(drafted);
@@ -487,9 +542,21 @@ class DraftService {
     return this.snapshot();
   }
 
-  clearDrafted(accountId) {
+  // Players that came from elsewhere (Bag -> Random Card, user 2026-11-18) join the same list with a
+  // source tag, so Fire / To cards / List (with Auto Trade's prices) work on them the same way.
+  addRows(accountId, rows) {
     const drafted = this._drafted();
-    if (accountId) delete drafted[accountId]; else for (const k of Object.keys(drafted)) delete drafted[k];
+    const have = new Set((drafted[accountId] || []).map(r => r.id));
+    drafted[accountId] = [...(drafted[accountId] || []), ...rows.filter(r => r.id && !have.has(r.id))];
+    this._saveDrafted(drafted);
+    this.onChanged();
+  }
+
+  // source: 'card' clears only the Random Card rows, 'draft' only the drafted ones, none clears all.
+  clearDrafted(accountId, source = null) {
+    const drafted = this._drafted();
+    const keep = r => (source ? (r.source || 'draft') !== source : false);
+    for (const k of Object.keys(drafted)) if (!accountId || k === accountId) { drafted[k] = drafted[k].filter(keep); if (!drafted[k].length) delete drafted[k]; }
     this._saveDrafted(drafted);
     this.onChanged();
     return this.snapshot();

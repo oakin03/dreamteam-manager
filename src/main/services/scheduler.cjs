@@ -125,8 +125,10 @@ class SchedulerService {
     for (const item of resume) {
       const account = accounts.find(a => a.id === item.accountId);
       if (!account) continue;
+      const since = Number(item.stoppedAt) || Date.now();
+      if (this.engine.stoppedByUserSince?.(item.accountId, since)) continue;
       try {
-        await this.engine.startAccount(item.accountId, item.taskId, { visibleBrowser: item.visibleBrowser, forceFresh: false, config: item.config });
+        await this.engine.startAccount(item.accountId, item.taskId, { visibleBrowser: item.visibleBrowser, forceFresh: false, config: item.config, since });
         this._log(schedule, 'success', `${item.taskName} started again.`, account, 'sc.restarted', { task: item.taskName });
       } catch (error) {
         this._log(schedule, 'error', `${item.taskName} could not be started again: ${error.message}`, account, 'sc.restartFailed', { task: item.taskName, error: error.message });
@@ -155,7 +157,7 @@ class SchedulerService {
         const prepared = this.engine.prepared.get(account.id);
         const active = worker && ACTIVE_WORKER.includes(worker.status) ? worker : prepared;
         if (!active || active.taskId === schedule.taskId) continue;
-        resume.push({ accountId: account.id, taskId: active.taskId, taskName: active.taskName, visibleBrowser: Boolean(active.visibleBrowser), config: active.config || null });
+        resume.push({ accountId: account.id, taskId: active.taskId, taskName: active.taskName, visibleBrowser: Boolean(active.visibleBrowser), config: active.config || null, stoppedAt: Date.now() });
       }
       // Saved first so a restart in the middle can still start them again.
       this._update(schedule.id, { phase: 'stopping', resume, message: resume.length ? `Stopping ${resume.length} running task(s)…` : 'Nothing to stop.' });

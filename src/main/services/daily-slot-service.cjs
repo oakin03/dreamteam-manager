@@ -44,7 +44,15 @@ class DailySlotService {
   _log(id, level, code, params, message) { this.activity?.add({ level, accountId: id || null, accountName: id ? this._name(id) : '', taskName: 'Daily Slot', code: `ds.${code}`, params, message }); }
   _set(id, patch) { this.rows[id] = { ...(this.rows[id] || {}), ...patch, at: new Date(this.now()).toISOString() }; this.onChanged(); }
   _save() { const s = this.store.getSettings?.() || {}; this.store.saveSettings?.({ ...s, dailySlot: { rows: this.rows, lastRun: this.lastRun } }); }
-  async _each(ids, fn) { for (let i = 0; i < ids.length; i += CONCURRENCY) await Promise.all(ids.slice(i, i + CONCURRENCY).map(fn)); }
+  // Every account at once, each lane on a reading socket of its own (user 2026-11-18): one shared
+  // socket answers one request at a time, which lined the accounts up one by one.
+  async _each(ids, signal, fn, onFail) {
+    await eachWithSocket(ids, () => GameSocket.open({ createSocket: this.createSocket, signal }), fn, {
+      limit: CONCURRENCY,
+      onError: (id, error) => { if (error?.name !== 'AbortError') { this._set(id, { status: 'error', error: error.message }); onFail?.(id, error); } }
+    });
+    if (signal.aborted) throw abortError();
+  }
 
   async _status(gs, userId, signal) {
     const r = await gs.call('dailySlot:getStatus', { userId }, 'dailySlot:status', { signal, timeoutMs: TIMEOUT_MS });
@@ -74,24 +82,23 @@ class DailySlotService {
     this.lastRun = run;
     for (const id of ids) this._set(id, { status: 'queued', error: null });
     if (doSpin) this._log(null, 'info', 'start', { n: ids.length }, `Daily Slot started · ${ids.length} account(s)`);
-    let anon = null;
+    const fail = () => { run.failed++; };
     try {
       if (this.gameHealth?.isDown?.()) await this.gameHealth.waitUp(signal);
-      anon = await GameSocket.open({ createSocket: this.createSocket, signal });
       let later = [];
-      await this._each(ids, async id => {
+      await this._each(ids, signal, async (anon, id) => {
         const r = await this._one(id, anon, doSpin, signal).catch(error => { if (error?.name === 'AbortError') throw error; return { error }; });
         if (r?.later) later.push(id);
         this._tally(run, r);
-      });
+      }, fail);
       // accounts that were in a match: tried again every minute (at most ~15 minutes)
       for (let pass = 0; later.length && pass < MATCH_PASSES; pass++) {
         await sleep(MATCH_WAIT_MS, signal);
         const again = later; later = [];
-        await this._each(again, async id => {
+        await this._each(again, signal, async (anon, id) => {
           const r = await this._one(id, anon, doSpin, signal).catch(error => { if (error?.name === 'AbortError') throw error; return { error }; });
           if (r?.later) later.push(id); else this._tally(run, r);
-        });
+        }, fail);
       }
       for (const id of later) { this._set(id, { status: 'error', error: 'inMatch' }); run.failed++; }
       run.finishedAt = new Date(this.now()).toISOString();
@@ -102,7 +109,6 @@ class DailySlotService {
       for (const id of ids) if (['queued', 'reading', 'spinning', 'waitMatch'].includes(this.rows[id]?.status)) this._set(id, { status: error?.name === 'AbortError' ? 'stopped' : 'error' });
       if (error?.name !== 'AbortError') this._log(null, 'error', 'failed', { error: error.message }, `Daily Slot stopped: ${error.message}`);
     } finally {
-      try { anon?.close(); } catch {}
       this.controller = null;
       this._save();
       this.onChanged();

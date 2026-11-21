@@ -61,8 +61,12 @@ function listingRow(ticket, accountId) {
 
 const countBy = (rows, status) => rows.filter(row => row.status === status).length;
 
-// Listings expire every day at 19:10 Turkey time (UTC+3, no DST) = 16:10 UTC.
+// Listings expire every day at 00:05 Manila = 19:05 Turkey time (UTC+3, no DST) = 16:05 UTC (the game's
+// rule text "Unsold listings expire daily at 12:05 AM"; it was 16:10 here, which turned a listing made between
+// 19:05 and 19:10 into "stock" the next day, user 2026-11-17).
 const DAY_MS = 24 * 60 * 60 * 1000;
+const SELL_RETRIES = [1500, 3000, 5000, 8000, 12000];
+const BUSY_RE = /being processed|another operation|try again|please wait/i;
 // "onSale" = still listed; "recent" = expired at the last 19:10 (it was on
 // sale yesterday); "stock" = expired earlier and left as stock.
 function listingKind(row, now = Date.now()) {
@@ -75,7 +79,7 @@ function listingKind(row, now = Date.now()) {
 
 function lastExpiryCutoff(now = Date.now()) {
   const d = new Date(now);
-  const today = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 16, 10);
+  const today = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 16, 5);
   return today <= now ? today : today - DAY_MS;
 }
 
@@ -123,7 +127,16 @@ class MarketService {
       accounts[id] = { ...s, sold: s.rows.filter(row => row.status === 'SOLD') };
       delete accounts[id].rows;
     }
-    return { busy: Boolean(this.job), jobKind: this.job?.kind || null, accounts, relist: this.relist };
+    // the kind is worked out now, not at the scan: a scan before the daily expiry would keep it stale
+    const now = Date.now(); const cutoff = lastExpiryCutoff(now);
+    const rows = {};
+    for (const [id, row] of Object.entries(this.relist.rows || {})) {
+      const created = Date.parse(row.createdAt);
+      const expiredSince = row.status === 'LISTED' && Number.isFinite(created) && created < cutoff;
+      const r = expiredSince ? { ...row, status: 'EXPIRED', expiredUnscanned: true } : row;
+      rows[id] = { ...r, kind: listingKind(r, now) };
+    }
+    return { busy: Boolean(this.job), jobKind: this.job?.kind || null, accounts, relist: { ...this.relist, rows } };
   }
 
   log(account, level, message, code = null, params = null) {
@@ -173,7 +186,11 @@ class MarketService {
     const session = await this.sessions.get(account, { owner: 'market', log: (level, message) => this.log(account, level, message) });
     if (signal.aborted) throw abortError();
     const open = async () => {
-      holder.current = await GameSocket.open({ createSocket: this.createSocket, cookie: session.cookieHeader, signal });
+      // "socket could not connect: websocket error" when many accounts connect at once: try again
+      for (let attempt = 0; ; attempt++) {
+        try { holder.current = await GameSocket.open({ createSocket: this.createSocket, cookie: session.cookieHeader, signal }); break; }
+        catch (error) { if (error?.name === 'AbortError' || attempt >= 4) throw error; await sleep(1500 * (attempt + 1) + Math.random() * 1000, signal); }
+      }
       // Market writes need the socket registered as the user (see GameSocket.register).
       await holder.current.register(session.userId, { signal, owner: 'Market' });
       return holder.current;
@@ -505,7 +522,15 @@ class MarketService {
     }
     this._setRelistRow(row.ticketId, { state: 'listing' });
     const playerId = removed.playerId || row.playerId;
-    const listed = await this._write(conn, 'market:sellPlayer', { userId: conn.userId, playerId, price, paymentMode }, 'market:sellResult', null);
+    // Right after the cancel the game can still be busy with the player ("Item is currently being
+    // processed by another operation", 150+ times on 2026-11-14..17): wait and try again.
+    let listed = null;
+    for (let attempt = 0; attempt < SELL_RETRIES.length + 1; attempt++) {
+      listed = await this._write(conn, 'market:sellPlayer', { userId: conn.userId, playerId, price, paymentMode }, 'market:sellResult', null);
+      if (listed?.success || !BUSY_RE.test(String(listed?.message || listed?.error || '')) || attempt === SELL_RETRIES.length) break;
+      this._setRelistRow(row.ticketId, { state: 'listing', message: `retry ${attempt + 1}` });
+      await sleep(SELL_RETRIES[attempt], null);
+    }
     if (listed?.success) {
       this._setRelistRow(row.ticketId, { state: 'listed', message: null });
       this.log(account, 'success', `${row.name} listed again · ${price} ${currency}.`, 'mk.relisted', { name: row.name, price, currency });

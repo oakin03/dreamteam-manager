@@ -487,8 +487,11 @@ test('Group Match: a party not matched in time is left and the search starts aga
   const { s, logs } = routine(game, { timing: { partyWaitMs: 50, groupTotalMs: 400 } });
   s.now = () => (clock += 5);
   const results = await s.runIfDue(account);
-  assert.equal(results.group, 'failed');
+  // No opponent party in time is NOT a failure any more: Group Match is left for the next day so it
+  // does not keep retrying and spamming the error (user 2026-11-21).
+  assert.equal(results.group, 'noOpponent');
   assert.ok(codes(logs).includes('dr.gmNoMatch'));
+  assert.ok(codes(logs).includes('dr.gmGaveUp'));
   assert.ok(game.state.left?.includes('p-afk'));
   assert.ok(!game.state.parties.some(p => p.members.some(m => m.userId === USER)), 'not left in any party');
 });

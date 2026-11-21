@@ -1,4 +1,6 @@
+import useDismiss from './useDismiss';
 import SkillsTab from './SkillsTab';
+import { MaterialBatch, ManyPanel, RosterTab, SkillPlan, DismantleBatch, levelOf } from './EquipmentBulk';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import SortTable from './SortTable';
 import { filOf } from '../i18n-fil';
@@ -31,7 +33,7 @@ const TEXT = {
   tr: {
     batchAccounts: 'Hesaplar ({n})', batchAll: 'Tümünü seç', batchNone: 'Seçimi temizle', batchHint: '{n} set seçili · seçilen hesapların hepsinde aynı anda yapılır', batchRegister: 'Seçilenleri kaydet ({n})', batchPrepare: 'Seçilenleri hazırla ve kaydet ({n})', batchProgress: '{done}/{total} · {account}', batchResult: 'Toplu işlem sonucu', batchRes: { registered: 'kaydedildi', completed: 'set tamamlandı', already: 'zaten tamam', skipped: 'atlandı', short: 'malzeme eksik', error: 'hata', stopped: 'durduruldu' }, title: 'Ekipman', subtitle: 'Çanta, materyaller, güçlendirme ve koleksiyonlar',
     pickAccount: 'Hesap seç', scan: 'Tara', close: 'Kapat', stop: 'Durdur', noAccount: 'Başlamak için sağ üstten bir hesap seç.',
-    tabGear: 'Ekipmanlar', tabMaterials: 'Materyaller', tabConvert: 'Convert', tabCraft: 'Craft', tabEnchant: 'Enchant', tabEnhance: 'Enhance', tabRefine: 'Refine', tabSkills: 'Yetenekler', tabCollections: 'Koleksiyonlar',
+    tabGear: 'Ekipmanlar', tabMaterials: 'Materyaller', tabConvert: 'Convert', tabCraft: 'Craft', tabEnchant: 'Enchant', tabEnhance: 'Enhance', tabRefine: 'Refine', tabSkills: 'Yetenekler', tabDismantle: 'Dismantle', tabRoster: 'Kadro', tabCollections: 'Koleksiyonlar',
     name: 'Ad', rarity: 'Nadirlik', type: 'Tür', level: '+', refine: 'Refine', enchant: 'Enchant', equippedBy: 'Kuşanan', inBag: 'Çantada', all: 'Hepsi', equipped: 'Kuşanılı', notEquipped: 'Kuşanılmamış',
     fabric: 'Fabric', stone: 'Refine Stone', ore: 'Refine Ore', scroll: 'Scroll of Enhancement', other: 'Diğer materyaller',
     convertHint: '5 Fabric → 1 Refine Stone (aynı nadirlik)', conversions: 'Dönüşüm adedi', willUse: '{fabric} Fabric harcanır, {stone} Refine Stone gelir', convert: 'Dönüştür', max: 'En fazla',
@@ -44,12 +46,12 @@ const TEXT = {
     complete: 'Tamamlandı', ready: '{count} parça teslime hazır', open: '{done}/{total} teslim edildi',
     pieceHint: 'Tıkla: sadece bu parçayı hazırla ve teslim et', planTitle: '{name} hazırlanacak', planCraft: 'Üretilecek', planEnhance: 'Basılacak', planMaterials: 'Harcanacak materyal', planShort: 'Yetersiz', planMissing: 'Tarifi yok', planRun: 'Başlat', planNothing: 'Üretim veya basma gerekmiyor, doğrudan teslim edilecek.', cancel: 'Vazgeç',
     planWarn: 'Teslim edilen ekipmanlar çantadan silinir. Kuşanılmış ekipmanlar kullanılmaz.',
-    scannedAt: 'Son tarama {time}', jobs: { scan: 'Taranıyor', convert: 'Dönüştürülüyor', craft: 'Üretiliyor', enchant: 'Enchant', enhance: 'Basılıyor', refine: 'Refine', register: 'Teslim ediliyor', prepare: 'Set hazırlanıyor' }
+    scannedAt: 'Son tarama {time}', jobs: { equip: 'Ekipman takılıyor / çıkarılıyor', scan: 'Taranıyor', convert: 'Dönüştürülüyor', craft: 'Üretiliyor', enchant: 'Enchant', enhance: 'Basılıyor', refine: 'Refine', register: 'Teslim ediliyor', prepare: 'Set hazırlanıyor' }
   },
   en: {
     batchAccounts: 'Accounts ({n})', batchAll: 'Select all', batchNone: 'Clear selection', batchHint: '{n} set(s) selected · done on every chosen account at the same time', batchRegister: 'Register selected ({n})', batchPrepare: 'Prepare and register selected ({n})', batchProgress: '{done}/{total} · {account}', batchResult: 'Batch result', batchRes: { registered: 'registered', completed: 'set completed', already: 'already complete', skipped: 'skipped', short: 'materials short', error: 'error', stopped: 'stopped' }, title: 'Equipment', subtitle: 'Bag, materials, strengthening and collections',
     pickAccount: 'Select account', scan: 'Scan', close: 'Close', stop: 'Stop', noAccount: 'Pick an account at the top right to start.',
-    tabGear: 'Equipment', tabMaterials: 'Materials', tabConvert: 'Convert', tabCraft: 'Craft', tabEnchant: 'Enchant', tabEnhance: 'Enhance', tabRefine: 'Refine', tabSkills: 'Skills', tabCollections: 'Collections',
+    tabGear: 'Equipment', tabMaterials: 'Materials', tabConvert: 'Convert', tabCraft: 'Craft', tabEnchant: 'Enchant', tabEnhance: 'Enhance', tabRefine: 'Refine', tabSkills: 'Skills', tabDismantle: 'Dismantle', tabRoster: 'Roster', tabCollections: 'Collections',
     name: 'Name', rarity: 'Rarity', type: 'Type', level: '+', refine: 'Refine', enchant: 'Enchant', equippedBy: 'Equipped by', inBag: 'In bag', all: 'All', equipped: 'Equipped', notEquipped: 'Not equipped',
     fabric: 'Fabric', stone: 'Refine Stone', ore: 'Refine Ore', scroll: 'Scroll of Enhancement', other: 'Other materials',
     convertHint: '5 Fabric → 1 Refine Stone (same rarity)', conversions: 'Conversions', willUse: 'Uses {fabric} Fabric, gives {stone} Refine Stone', convert: 'Convert', max: 'Max',
@@ -62,7 +64,7 @@ const TEXT = {
     complete: 'Completed', ready: '{count} piece(s) ready', open: '{done}/{total} registered',
     pieceHint: 'Click: prepare and register only this piece', planTitle: 'Prepare {name}', planCraft: 'Craft', planEnhance: 'Enhance', planMaterials: 'Materials used', planShort: 'Not enough', planMissing: 'No recipe', planRun: 'Start', planNothing: 'Nothing to craft or enhance; it will be registered directly.', cancel: 'Cancel',
     planWarn: 'Registered equipment leaves the bag. Equipped gear is never used.',
-    scannedAt: 'Last scan {time}', jobs: { scan: 'Scanning', convert: 'Converting', craft: 'Crafting', enchant: 'Enchanting', enhance: 'Enhancing', refine: 'Refining', register: 'Registering', prepare: 'Preparing set' }
+    scannedAt: 'Last scan {time}', jobs: { equip: 'Putting gear on / off', scan: 'Scanning', convert: 'Converting', craft: 'Crafting', enchant: 'Enchanting', enhance: 'Enhancing', refine: 'Refining', register: 'Registering', prepare: 'Preparing set' }
   },
   get fil() { return filOf(this.en); }
 };
@@ -124,11 +126,11 @@ export default function EquipmentPage({ state, t, toast, msgText }) {
   const pick = id => run(() => api.equipment.open(id));
   const statusText = eq.job ? `${x.jobs[eq.job] || eq.job}${eq.step ? ` · ${msgText(t, `eqstep.${eq.step}`, eq.stepParams || {}, '')}` : ''}` : eq.error ? eq.error : eq.scannedAt ? fill(x.scannedAt, { time: new Date(eq.scannedAt).toLocaleTimeString() }) : '';
 
-  const tabs = [['gear', x.tabGear], ['materials', x.tabMaterials], ['convert', x.tabConvert], ['craft', x.tabCraft], ['enchant', x.tabEnchant], ['enhance', x.tabEnhance], ['refine', x.tabRefine], ['collections', x.tabCollections], ['skills', x.tabSkills]];
+  const tabs = [['gear', x.tabGear], ['roster', x.tabRoster], ['materials', x.tabMaterials], ['convert', x.tabConvert], ['craft', x.tabCraft], ['enchant', x.tabEnchant], ['enhance', x.tabEnhance], ['refine', x.tabRefine], ['collections', x.tabCollections], ['dismantle', x.tabDismantle], ['skills', x.tabSkills]];
   return <div className="page equipment-page">
     <div className="page-title"><div><h1>{x.title}</h1><span className="subtitle">{x.subtitle}</span></div>
       <div className="toolbar">
-        <AccountMenu accounts={state.accounts} value={eq.accountId} onPick={pick} label={x.pickAccount} disabled={busy} />
+        <AccountMenu accounts={tab === 'skills' ? (state.accounts || []).filter(a => (levelOf(state, a.id) || 0) >= 30) : state.accounts} value={eq.accountId} onPick={pick} label={x.pickAccount} disabled={busy} />
         <button className="btn primary" disabled={!eq.accountId || busy} onClick={() => run(() => api.equipment.scan())}>{x.scan}</button>
         {busy && <button className="btn danger-soft" onClick={() => run(() => api.equipment.stop())}>{x.stop}</button>}
         <button className="btn ghost" disabled={!eq.accountId} onClick={() => run(() => api.equipment.close())}>{x.close}</button>
@@ -137,15 +139,21 @@ export default function EquipmentPage({ state, t, toast, msgText }) {
     {!eq.accountId ? <div className="panel empty-state">{x.noAccount}</div> : <>
       {statusText && <div className="trade-status"><span className={`pill ${busy ? 'warn' : eq.error ? 'bad' : 'ok'}`}><i />{statusText}</span></div>}
       <div className="market-tabs">{tabs.map(([id, label]) => <button key={id} className={tab === id ? 'active' : ''} onClick={() => setTab(id)}>{label}</button>)}</div>
+      {tab === 'skills' && <SkillPlan state={state} t={t} toast={toast} />}
       {tab === 'skills' && <SkillsTab accountId={eq.accountId} accounts={state.accounts || []} t={t} toast={toast} />}
-      {!m || tab === 'skills' ? null : <>
+      {tab === 'dismantle' && <DismantleBatch state={state} t={t} toast={toast} accountId={eq.accountId} batch={eq.batch} busy={busy} gear={eq.gear || []} />}
+      {!m || tab === 'skills' || tab === 'dismantle' ? null : <>
+        {tab === 'roster' && <RosterTab roster={eq.roster || []} gear={gear} t={t} busy={busy} toast={toast} />}
         {tab === 'gear' && <GearTab gear={gear} x={x} onSelect={id => { setSelected(id); }} selected={selected} />}
         {tab === 'materials' && <MaterialsTab m={m} x={x} />}
         {tab === 'convert' && <ConvertTab m={m} x={x} busy={busy} run={run} />}
-        {tab === 'craft' && <CraftTab recipes={recipes} m={m} gear={gear} x={x} busy={busy} run={run} />}
+        {tab === 'craft' && <CraftTab recipes={recipes} m={m} gear={gear} x={x} busy={busy} run={run} materialBatch={<MaterialBatch state={state} t={t} toast={toast} accountId={eq.accountId} batch={eq.batch} busy={busy} />} />}
         {tab === 'enchant' && <EnchantTab gear={gear} m={m} x={x} busy={busy} run={run} selected={selected} setSelected={setSelected} last={eq.lastResult} />}
+        {tab === 'enchant' && <ManyPanel mode="enchant" gear={gear} t={t} busy={busy} last={eq.lastResult} />}
         {tab === 'enhance' && <EnhanceTab gear={gear} m={m} x={x} busy={busy} run={run} selected={selected} setSelected={setSelected} eventRewards={eq.eventRewards} last={eq.lastResult} />}
+        {tab === 'enhance' && <ManyPanel mode="enhance" gear={gear} t={t} busy={busy} last={eq.lastResult} />}
         {tab === 'refine' && <RefineTab gear={gear} m={m} x={x} busy={busy} run={run} selected={selected} setSelected={setSelected} />}
+        {tab === 'refine' && <ManyPanel mode="refine" gear={gear} t={t} busy={busy} last={eq.lastResult} />}
         {tab === 'collections' && <CollectionsTab sets={eq.collections || []} x={x} busy={busy} run={run} accounts={state.accounts || []} accountId={eq.accountId} batch={eq.batch} />}
       </>}
     </>}
@@ -214,7 +222,7 @@ function Ingredients({ recipe, count, m, gear, x }) {
   })}</div>;
 }
 
-function CraftTab({ recipes, m, gear, x, busy, run }) {
+function CraftTab({ recipes, m, gear, x, busy, run, materialBatch }) {
   const [type, setType] = useState('JERSEY');
   const [rarity, setRarity] = useState('COMMON');
   const [search, setSearch] = useState('');
@@ -228,6 +236,7 @@ function CraftTab({ recipes, m, gear, x, busy, run }) {
       <div className="eq-tabrow"><span>{x.rarity}</span>{RARITIES.map(v => <button key={v} className={`${rarity === v ? 'active' : ''} t-${v.toLowerCase()}`} onClick={() => { setRarity(v); setSearch(''); }}><Dot rarity={v} />{rarityName(v)}</button>)}</div>
       {all > 8 && <div className="eq-row"><label><span>{x.search}</span><input value={search} onChange={e => setSearch(e.target.value)} /></label><span className="eq-count">{list.length} / {all}</span></div>}
     </div>
+    {type === 'MATERIAL' && materialBatch}
     <div className="panel table-panel"><SortTable><tbody>
       {!list.length && <tr><td className="muted-text">{x.noRecipes}</td></tr>}
       {list.map(r => {
@@ -300,6 +309,7 @@ function CollectionsTab({ sets, x, busy, run, accounts, accountId, batch }) {
   const [picked, setPicked] = useState(() => new Set());
   const [accIds, setAccIds] = useState(() => (accountId ? [accountId] : []));
   const [accOpen, setAccOpen] = useState(false);
+  const accRef = useDismiss(accOpen, () => setAccOpen(false));
   const togglePick = id => setPicked(p => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
   const runBatch = mode => { const chosen = sets.filter(s => picked.has(s.id)).map(s => ({ id: s.id, name: s.name })); run(() => window.dreamteam.equipment.batch({ accountIds: accIds, sets: chosen, mode })); };
   const batchRunning = Boolean(batch?.running);
@@ -311,7 +321,7 @@ function CollectionsTab({ sets, x, busy, run, accounts, accountId, batch }) {
   const n = picked.size;
   return <>
     <div className="panel eq-batch">
-      <div className="eq-batch-accounts">
+      <div className="eq-batch-accounts" ref={accRef}>
         <button className="btn ghost" disabled={batchRunning} onClick={() => setAccOpen(o => !o)}>{fill(x.batchAccounts, { n: accIds.length })} ▾</button>
         {accOpen && <div className="eq-batch-menu">
           <button className="btn ghost small" onClick={() => setAccIds(accIds.length === accounts.length ? [] : accounts.map(a => a.id))}>{accIds.length === accounts.length ? x.batchNone : x.batchAll}</button>

@@ -19,7 +19,7 @@ const PARK_PRICE = 9999999;   // Auto Buy lists a bought player here until the u
 const PAYMENT_MODE = { APK: 'APK_TICKET', TIX: 'TICKET' };
 const SEARCH_PAGE_SIZE = 8;
 const SEARCH_MAX_PAGES = 12;
-const taskOf = source => source === 'auto' ? 'Auto Buy' : source === 'trade' ? 'Auto Trade' : 'Trading Hall';
+const taskOf = source => source === 'auto' ? 'Auto Buy' : source === 'trade' ? 'Auto Trade' : source === 'scout' ? 'Scout Avcısı' : 'Trading Hall';
 const maxPrice = tickets => tickets.reduce((m, t) => Math.max(m, Number(t.price) || 0), 0);
 const CURRENCY = { APK_TICKET: 'APK', TICKET: 'TIX' };
 const DEFAULT_INTERVAL_SEC = 10;
@@ -50,6 +50,7 @@ function sleep(ms, signal) {
 }
 const finite = v => v !== '' && v != null && Number.isFinite(Number(v));
 
+// @strip-begin(basic)
 // A watch row is used only when both limits are set (all conditions must hold), and the
 // quantity too unless "unlimited" is ticked (the default). qty = how many to buy in total.
 const isUnlimited = row => row.unlimited !== false;
@@ -91,9 +92,10 @@ function affordableCurrencies(rows, order, balances) {
   }
   return out;
 }
+// @strip-end
 
 class BuyService {
-  constructor({ store, activity, sessions, accountProfile, onChanged, onAttention, onScan, pauseAccount = null, gameHealth = null, createSocket, now = () => Date.now(), timing = {}, checkCooldown = true }) {
+  constructor({ store, activity, sessions, accountProfile, onChanged, onAttention, onScan, onBought = null, pauseAccount = null, gameHealth = null, createSocket, now = () => Date.now(), timing = {}, checkCooldown = true }) {
     this.checkCooldown = checkCooldown;
     this.store = store;
     // (accountId, taskName) → async resume(): stops what runs on that account (Auto Play,
@@ -104,6 +106,7 @@ class BuyService {
     this.accountProfile = accountProfile;
     this.onAttention = onAttention;
     this.onScan = onScan;            // (playerIds, currency, tickets) → Trading Hall rows
+    this.onBought = onBought;        // (ticketId) → the listing leaves the Trading Hall
     this.gameHealth = gameHealth;    // shared "is the game reachable?"
     this.createSocket = createSocket;
     this.now = now;
@@ -132,8 +135,10 @@ class BuyService {
 
   snapshot() {
     const d = this._data();
-    return { bought: d.bought, watch: d.watch, config: { intervalSec: DEFAULT_INTERVAL_SEC, ...d.config }, auto: { ...this.auto }, busy: { ...this.busy }, parkPrice: PARK_PRICE, bulk: this.bulk ? { ...this.bulk } : null };
+    return { bought: d.bought, watch: d.watch, config: { intervalSec: DEFAULT_INTERVAL_SEC, ...d.config }, auto: { ...this.auto }, busy: { ...this.busy }, parkPrice: PARK_PRICE, bulk: this.bulk ? { ...this.bulk } : null }; // @strip(basic)
+    //@only(basic) return { bought: d.bought, busy: { ...this.busy }, parkPrice: PARK_PRICE, bulk: this.bulk ? { ...this.bulk } : null };
   }
+  // @strip-begin(basic)
 
   // Every page of the name search (8 listings a page, cheapest first). A name search
   // also returns players with similar names, so the first page alone could hide this
@@ -152,6 +157,7 @@ class BuyService {
     }
     return { tickets, complete, cutoff: complete ? Infinity : maxPrice(tickets) };
   }
+  // @strip-end
 
   // ---------- connections ----------
   async _conn(accountId, signal) {
@@ -296,6 +302,7 @@ class BuyService {
     data.bought = [entry, ...data.bought].slice(0, MAX_BOUGHT);
     this._save(data);
     this._log('success', 'by.bought', { name: t.name, price: t.price, currency: t.currency }, `${t.name} bought · ${t.price} ${t.currency}`, accountId, task);
+    try { this.onBought?.(t.id || t.ticketId); } catch {}
     const balance = await this._balance(accountId, conn, signal).catch(() => null);
     if (autoList) await this._sell(conn, entry.id, PARK_PRICE, 'TIX', signal, task).catch(error => this._log('warning', 'by.parkFailed', { name: t.name, error: error.message }, `${t.name} could not be listed: ${error.message}`, accountId, task));
     return { ok: true, entryId: entry.id, swapped: Boolean(swap), balance };
@@ -408,11 +415,11 @@ class BuyService {
 
   // A Harcayıcı listed a player by itself (Auto Trade, roster full or a duplicate): it joins
   // this list so its price can be set and changed like a bought one.
-  recordListed({ accountId, player, price, currency }) {
+  recordListed({ accountId, player, price, currency, source = 'trade', from = null }) {
     if (!accountId || !player?.id) return;
     const data = this._data();
     const salary = Number(player.signedSalary ?? player.baseSalary);
-    const entry = { id: crypto.randomUUID(), accountId, playerId: player.id, name: player.name || player.visualName || player.id, position: player.position || null, grade: player.grade || null, salary: Number.isFinite(salary) ? salary : null, base: Number(player.newBaseSalary) || null,value: Number(player.baseSalary) || null,  boughtPrice: null, currency: currency || 'TIX', ticketId: null, source: 'trade', boughtAt: new Date(this.now()).toISOString(), state: 'listed', listPrice: Number(price) || null, listCurrency: currency || 'TIX', listedAt: new Date(this.now()).toISOString() };
+    const entry = { id: crypto.randomUUID(), accountId, playerId: player.id, name: player.name || player.visualName || player.id, position: player.position || null, grade: player.grade || null, salary: Number.isFinite(salary) ? salary : null, base: Number(player.newBaseSalary) || null,value: Number(player.baseSalary) || null,  boughtPrice: null, currency: currency || 'TIX', ticketId: null, source, from, boughtAt: new Date(this.now()).toISOString(), state: 'listed', listPrice: Number(price) || null, listCurrency: currency || 'TIX', listedAt: new Date(this.now()).toISOString() };
     data.bought = [entry, ...data.bought].slice(0, MAX_BOUGHT);
     this._save(data);
   }
@@ -591,6 +598,7 @@ class BuyService {
     return this.snapshot();
   }
 
+  // @strip-begin(basic)
   // ---------- Auto Buy list ----------
   addWatch(players) {
     const data = this._data();
@@ -764,6 +772,8 @@ class BuyService {
         const reply = first ? await this._searchAll(anon, row, signal) : searched.get(key);
         searched.set(key, reply);
         if (reply && first) scans.push({ playerIds: [row.playerId], currency: row.currency, tickets: reply.tickets.filter(t => (t.playerId || t.player?.id) === row.playerId), scope: { complete: reply.complete, cutoff: reply.cutoff } });
+        // the hall follows each player as soon as it is read (not only at the end of the cycle)
+        if (reply && first) { const sc = scans[scans.length - 1]; try { this.onScan?.(sc.playerIds, sc.currency, sc.tickets.filter(t => !boughtTickets.has(t.id)), sc.scope, { last: true }); } catch {} }
         for (const ticket of matchingTickets(row, reply?.tickets)) {
           if (failedTickets.has(ticket.id) || boughtTickets.has(ticket.id)) continue;
           const price = Number(ticket.price);
@@ -820,6 +830,7 @@ class BuyService {
       await sleep(interval * 1000, signal);
     }
   }
+  // @strip-end
 
   async shutdown() { this.controller?.abort(); await this.done?.catch(() => {}); this._closeAll(); }
 }
@@ -832,4 +843,5 @@ function ticketFromMarket(t) {
   return { id: t.id, playerId: t.playerId || p.id, name: String(p.visualName || p.name || '').trim(), position: p.position || null, grade: p.rating || null, salary: Number(t.signedSalary), base: Number(p.newBaseSalary) || null, price: Number(t.price), currency: CURRENCY[t.paymentMode] };
 }
 
-module.exports = { makeCooldownMs, BuyService, rowReady, rowDone, matchingTickets, pickAccount, affordableCurrencies, PARK_PRICE };
+module.exports = { makeCooldownMs, BuyService, rowReady, rowDone, matchingTickets, pickAccount, affordableCurrencies, PARK_PRICE }; // @strip(basic)
+//@only(basic) module.exports = { makeCooldownMs, BuyService, PARK_PRICE };

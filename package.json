@@ -1,6 +1,6 @@
 {
   "name": "dreamteam-manager",
-  "version": "0.3.7",
+  "version": "0.3.20",
   "private": true,
   "description": "DreamTeam desktop manager with Auto Play, Scout and Trading Hall",
   "main": "src/main/main.cjs",
@@ -18,7 +18,9 @@
     "repair-runtime": "node scripts/ensure-runtime.cjs",
     "mcp:sync": "node src/main/services/mcp-sync.cjs",
     "quiz:bundle": "node scripts/quiz-bundle.cjs",
-    "i18n:missing": "node scripts/i18n-missing.cjs"
+    "i18n:missing": "node scripts/i18n-missing.cjs",
+    "dist:pro": "node scripts/edition/build-public.cjs pro",
+    "dist:basic": "node scripts/edition/build-public.cjs basic"
   },
   "dependencies": {
     "@fontsource/barlow": "^5.1.0",
@@ -31,19 +33,22 @@
     "socket.io-client": "^4.8.1"
   },
   "devDependencies": {
+    "@electron/fuses": "^1.8.0",
     "@playwright/mcp": "0.0.83",
     "@vitejs/plugin-react": "^5.0.2",
+    "bytenode": "^1.5.7",
     "concurrently": "^9.2.1",
     "cross-env": "^10.0.0",
     "electron": "^38.0.0",
     "electron-builder": "^26.0.12",
+    "javascript-obfuscator": "^4.1.1",
     "vite": "^7.1.5",
     "wait-on": "^8.0.4"
   },
   "build": {
     "appId": "com.dreamteam.automator",
     "productName": "DreamTeam Manager",
-    "artifactName": "DreamTeamManager-${version}-${arch}.${ext}",
+    "artifactName": "DreamTeamManager-${arch}.${ext}",
     "directories": {
       "output": "release"
     },

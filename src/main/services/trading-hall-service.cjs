@@ -77,7 +77,9 @@ class TradingHallService {
   // their old rows are all replaced; otherwise only rows up to `scope.cutoff` are.
   // `last`: Auto Buy sends a whole scan at once; the page is told only after the last one.
   mergeTickets(playerIds, currency, tickets, scope = null, { last = true } = {}) {
-    if (['starting', 'running'].includes(this.runtime.status)) return;
+    // during a full scan the merge waits and is applied when the scan ends (it was dropped before,
+    // 2026-11-17: the hall did not follow Auto Buy)
+    if (['starting', 'running'].includes(this.runtime.status)) { (this.pendingMerges ||= []).push([playerIds, currency, tickets, scope]); return; }
     const fresh = (tickets || []).map(t => ticketToRow(t, 1)).filter(r => r && r.currency === currency);
     for (const r of fresh) r.isBase = r.base != null && r.salary <= r.base;
     const ids = new Set(playerIds);
@@ -88,6 +90,18 @@ class TradingHallService {
     // The listing counter at the top follows the rows Auto Buy brought in.
     this.runtime = { ...this.runtime, count: this.rows.length, mergedAt: new Date().toISOString() };
     if (last) this.onChanged?.();
+  }
+
+  // a listing Auto Buy (or a buy from the table) bought leaves the hall at once
+  removeTicket(ticketId) {
+    const before = this.rows.length;
+    this.rows = this.rows.filter(r => r.id !== ticketId);
+    if (this.rows.length !== before) { this.runtime = { ...this.runtime, count: this.rows.length }; this.onChanged?.(); }
+  }
+  _applyPending() {
+    const list = this.pendingMerges || [];
+    this.pendingMerges = [];
+    list.forEach(([ids, cur, tickets, scope], i) => this.mergeTickets(ids, cur, tickets, scope, { last: i === list.length - 1 }));
   }
 
   rowsSnapshot() { return ['starting', 'running'].includes(this.runtime.status) ? [] : this.rows; }
@@ -357,6 +371,7 @@ class TradingHallService {
     } finally {
       for (const socket of sockets) socket.close();
       this.controller = null;
+      try { this._applyPending(); } catch {}
       this.emitProgress(true);
     }
   }

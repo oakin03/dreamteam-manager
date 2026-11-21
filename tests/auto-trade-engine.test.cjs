@@ -1013,3 +1013,36 @@ test('secret players: a Stok secret is signed by a level 15 account too (the sec
   assert.equal(run.status, 'done', JSON.stringify(run.error));
   assert.ok(logs.some(l => l.code === 'at2.secretSigned' && l.accountId === 'A'), JSON.stringify(logs.map(l => l.code)));
 });
+
+test('draft "to cards" while a run is on: the run takes the players as main-bound rows', () => {
+  const { engine, logs } = setup({ M: { name: 'Main' }, S: { name: 'Side' } });
+  assert.equal(engine.handToCards('S', [{ id: 'd1', name: 'D One', value: 300 }]), false); // not running
+  engine.controller = new AbortController();
+  engine.state = { config: { accountIds: ['M', 'S'], mainId: 'M' }, accounts: { M: { role: 'main', players: {} }, S: { role: 'side', players: {} } } };
+  engine._save = () => {};
+  assert.equal(engine.handToCards('X', [{ id: 'd1' }]), false); // not one of the run's accounts
+  assert.equal(engine.handToCards('S', [{ id: 'd1', name: 'D One', value: 300 }]), true);
+  assert.equal(engine.state.accounts.S.players.d1.dir, 'main');
+  assert.equal(engine.state.accounts.S.players.d1.status, 'toTrade');
+  engine.handToCards('M', [{ id: 'd2', name: 'D Two', value: 50 }]);
+  assert.equal(engine.state.accounts.M.players.d2.status, 'toConvert');
+  assert.ok(logs.some(l => l.code === 'at2.draftHanded'));
+  engine.controller = null;
+});
+
+test('roster signal: listing / trading tells which accounts got room (a trade tells main too); keepsAutoPlay follows the option', () => {
+  const { engine } = setup({ M: { name: 'Main' }, S: { name: 'Side' } });
+  const told = [];
+  engine.onRoster = id => told.push(id);
+  engine.state = { config: { accountIds: ['M', 'S'], mainId: 'M', keepAutoPlay: true }, accounts: {} };
+  engine._log('info', 'at2.listed', {}, 'x', 'S');
+  engine._log('success', 'at2.traded', {}, 'x', 'S');
+  engine._log('info', 'at2.opened', {}, 'x', 'S');
+  assert.deepEqual(told, ['S', 'S', 'M']);
+  assert.equal(engine.keepsAutoPlay(), false, 'not running');
+  engine.controller = new AbortController();
+  assert.equal(engine.keepsAutoPlay(), true);
+  assert.equal(engine.worksWith('S'), true);
+  assert.equal(engine.worksWith('Z'), false);
+  engine.controller = null;
+});

@@ -432,7 +432,15 @@ class BrowserService {
     const button = page.getByRole('button', { name: /ENTER\s+THE\s+GAME/i }).first();
     await button.waitFor({ state: 'visible', timeout: 30000 });
     log('info', 'Signing in…');
-    await button.click();
+    // the login page's cover picture can lie over the button in a narrow window (2026-11-20: Go-up on
+    // main waited 15 s, the <img> took every click): then the button is clicked directly / Enter pressed
+    try { await button.click({ timeout: 8000 }); }
+    catch (error) {
+      log('warning', 'ENTER THE GAME is covered · clicking it directly');
+      const ok = await button.click({ force: true, timeout: 5000 }).then(() => true).catch(() => false)
+        || await button.evaluate(el => { el.click(); return true; }).catch(() => false);
+      if (!ok) await page.locator('input[type="password"]').first().press('Enter');
+    }
     await this.waitForMain(page, { timeoutMs: 180000, log });
     await this._notifyStadium(session);
     existing = await this.sessionData(page);

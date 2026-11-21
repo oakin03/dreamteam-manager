@@ -1,4 +1,5 @@
 const { GameSocket } = require('./game-socket.cjs');
+const { handleInjury, InjuredError } = require('./injury-guard.cjs');
 const { WIDE, eachAtOnce, eachWithSocket } = require('./wide.cjs');
 const { isNetError } = require('./game-health.cjs');
 const { matchStartSlot } = require('./match-start-gate.cjs');
@@ -213,6 +214,9 @@ class DailyBossService extends ProvingBase {
         if (!r?.success) {
           const msg = String(r?.error || r?.message || 'refused');
           if (NO_ATTEMPTS.test(msg)) break;
+          const inj = await handleInjury(id, msg, 'Daily Boss');
+          if (inj === false) throw new InjuredError(msg);
+          if (inj === true) continue;
           failures++;
           this._log(id, 'warning', 'startFailed', { error: msg, n: failures }, `Daily Boss match refused: ${msg}`);
           if (failures >= MAX_FAILURES) throw new Error(msg);
@@ -242,9 +246,36 @@ class EliteAscentService extends ProvingBase {
   // Floors and attempts need a registered /socket/ (an open game tab of the account is signed out).
   async _main(account, signal) {
     const session = await this.sessions.get(account, { owner: 'elite-ascent' });
+    const borrowed = GameSocket.borrow?.(session.userId);
+    if (borrowed) return { gs: borrowed, session, borrowed: true };
     const gs = await GameSocket.open({ createSocket: this.createSocket, cookie: session.cookieHeader, signal });
     await gs.register(session.userId, { signal, owner: 'Elite Ascent' });
     return { gs, session };
+  }
+
+  // "Seçili hesapların ilerlemesini sıfırla" (user 2026-11-20): the game's Give Up — back to floor 1.
+  //   /socket/ backToPeak:giveUp (registered) -> backToPeak:giveUpResult {success, error}
+  async resetProgress(accountIds) {
+    if (this.snapshot().running) throw new Error('Elite Ascent is running · stop it first.');
+    const ids = [...new Set(accountIds || [])].filter(id => this.store.getAccounts().some(a => a.id === id));
+    const out = {};
+    await eachAtOnce(ids, async id => {
+      const account = this.store.getAccounts().find(a => a.id === id);
+      let c = null;
+      try {
+        c = await this._main(account);
+        const r = await c.gs.call('backToPeak:giveUp', undefined, 'backToPeak:giveUpResult', { timeoutMs: 15000 });
+        if (r?.success === false) throw new Error(r.error || r.message || 'refused');
+        out[id] = { ok: true };
+        this._log(id, 'success', 'reset', {}, 'Elite Ascent progress reset · back to floor 1');
+        await this._readAscent(id, c.gs).catch(() => {});
+      } catch (error) {
+        out[id] = { ok: false, error: error.message };
+        this._log(id, 'warning', 'resetFailed', { error: error.message }, `Elite Ascent could not be reset: ${error.message}`);
+      } finally { if (c && !c.borrowed) { try { c.gs.close(); } catch {} } }
+    });
+    this.onChanged();
+    return { results: out, ...this.snapshot() };
   }
 
   async _readAscent(id, gs, signal) {
@@ -265,7 +296,8 @@ class EliteAscentService extends ProvingBase {
       const account = this.store.getAccounts().find(a => a.id === id);
       if (!account) return;
       let gs = null;
-      try { ({ gs } = await this._main(account)); await this._readAscent(id, gs); } catch {} finally { try { gs?.close(); } catch {} }
+      let own = true;
+      try { const c = await this._main(account); gs = c.gs; own = !c.borrowed; await this._readAscent(id, gs); } catch {} finally { if (own) { try { gs?.close(); } catch {} } }
     });
     this.onChanged();
     return this.snapshot();
@@ -292,6 +324,9 @@ class EliteAscentService extends ProvingBase {
         if (!r?.success) {
           const msg = String(r?.error || r?.message || 'refused');
           if (NO_ATTEMPTS.test(msg) && !/floor/i.test(msg)) break;
+          const inj = await handleInjury(id, msg, 'Elite Ascent');
+          if (inj === false) throw new InjuredError(msg);
+          if (inj === true) continue;
           failures++;
           this._log(id, 'warning', 'startFailed', { error: msg, n: failures }, `Elite Ascent match refused: ${msg}`);
           if (failures >= MAX_FAILURES) throw new Error(msg);
@@ -495,16 +530,48 @@ class ProfessionalService extends ProvingBase {
   // Stage, matches left and (for HOF) the opponents with their strength.
   async status(accountIds) {
     const ids = accountIds || this.store.getAccounts().map(a => a.id);
+    // anonymous: no sign-in for a read (live 2026-11-13, user: "read them all at once"), a socket per lane
+    const known = ids.filter(id => this.store.getAccounts().some(a => a.id === id) && this._userId(id));
+    await eachWithSocket(known, () => GameSocket.open({ createSocket: this.createSocket }), async (gs, id) => {
+      try { await this._stage(id, gs, this._userId(id)); }
+      catch (error) { this.info[id] = { stage: 'error', error: error.message, readAt: new Date(this.now()).toISOString() }; throw error; }
+    });
+    this.onChanged();
+    return this.snapshot();
+  }
+
+  // "Seçili hesapların ilerlemesini sıfırla" (user 2026-11-20): the game's Season Reset — back to the
+  // conference choice and a new 82-game season. In the playoffs the playoffs are reset first.
+  //   season:reset {userId} -> season:resetSuccess | season:resetError
+  //   playoffs:reset {userId} -> playoffs:resetSuccess | playoffs:resetError
+  async resetProgress(accountIds) {
+    if (this.snapshot().running) throw new Error('Professional is running · stop it first.');
+    const ids = [...new Set(accountIds || [])].filter(id => this.store.getAccounts().some(a => a.id === id));
+    const out = {};
+    const call = (gs, event, userId) => gs.call(event, { userId }, `${event}Success`, { timeoutMs: 30000, errorEvents: [`${event}Error`] }).catch(error => ({ success: false, error: error.message }));
     await eachAtOnce(ids, async id => {
       const account = this.store.getAccounts().find(a => a.id === id);
-      if (!account) return;
       let gs = null;
-      try { const r = await this._read(account); gs = r.gs; await this._stage(id, gs, r.session.userId); }
-      catch (error) { this.info[id] = { stage: 'error', error: error.message, readAt: new Date(this.now()).toISOString() }; }
-      finally { try { gs?.close(); } catch {} }
-      this.onChanged();
+      try {
+        const c = await this._read(account);
+        gs = c.gs;
+        const userId = c.session.userId;
+        let r = await call(gs, 'season:reset', userId);
+        if (r?.success === false) {
+          await call(gs, 'playoffs:reset', userId);
+          r = await call(gs, 'season:reset', userId);
+        }
+        if (r?.success === false) throw new Error(r.error || r.message || 'refused');
+        out[id] = { ok: true };
+        this._log(id, 'success', 'reset', {}, 'Professional progress reset · conference choice and a new 82-game season');
+        await this._stage(id, gs, userId).catch(() => {});
+      } catch (error) {
+        out[id] = { ok: false, error: error.message };
+        this._log(id, 'warning', 'resetFailed', { error: error.message }, `Professional could not be reset: ${error.message}`);
+      } finally { try { gs?.close(); } catch {} }
     });
-    return this.snapshot();
+    this.onChanged();
+    return { results: out, ...this.snapshot() };
   }
 
   // Champion without a HOF season: create it (the user asked for it on the page).
@@ -614,6 +681,9 @@ class ProfessionalService extends ProvingBase {
         const r = await sim.ack({ hof: 'playHOFMatch', honor: 'playHonorWayMatch', legacy: 'playLegacyWayMatch' }[info.stage] || 'playProfessionalMatch', payload, { signal, timeoutMs: 20000 });
         if (!r?.success) {
           const msg = String(r?.error || r?.message || 'refused');
+          const inj = await handleInjury(id, msg, 'Professional');
+          if (inj === false) throw new InjuredError(msg);
+          if (inj === true) continue;
           failures++;
           this._log(id, 'warning', 'startFailed', { error: msg, n: failures }, `Professional match refused: ${msg}`);
           // HOF teams can be beaten only once: an "already beaten" refusal drops that team

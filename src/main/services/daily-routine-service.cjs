@@ -1,6 +1,13 @@
 const { GameSocket } = require('./game-socket.cjs');
+const { handleInjury, InjuredError, injuryBlocked } = require('./injury-guard.cjs');
 const { WIDE, eachAtOnce, eachWithSocket } = require('./wide.cjs');
-const { lastExpiryCutoff } = require('./market-service.cjs');
+// The routine's day turns at 19:10 TR (16:10 UTC); it runs at 19:12. Its own copy: the market's listing
+// expiry moved to the real 19:05 (2026-11-17) and the saved cycle keys stay on 16:10 (DAY_MS below).
+function lastExpiryCutoff(now = Date.now()) {
+  const d = new Date(now);
+  const today = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 16, 10);
+  return today <= now ? today : today - DAY_MS;
+}
 
 // Once per game day (after the 19:10 TR reset) Auto Play first runs the daily
 // routine for the selected accounts: Daily Signin, 600-Day Sign In, starting
@@ -189,6 +196,7 @@ class DailyRoutineService {
         ['donate', () => this._donate(account, userId, cycle, signal)],
         ['friendly', async () => {
           if (await this._taskDone(main, userId, 'friendly_match', signal)) return 'already';
+          if (injuryBlocked(account.id)) throw new InjuredError('An injured starter blocks the match (Bag → Anesthesia)');
           sim = await GameSocket.open({ createSocket: this.createSocket, path: '/simulation-socket/', cookie, signal });
           return this._friendlyMatch(account, sim, main, userId, signal);
         }],
@@ -197,7 +205,13 @@ class DailyRoutineService {
           sim ||= await GameSocket.open({ createSocket: this.createSocket, path: '/simulation-socket/', cookie, signal });
           // done already: an account still sitting in a party (an earlier run was stopped) leaves it
           if (await this._taskDone(main, userId, 'group_match', signal)) { await this._leaveParty(account, sim, userId).catch(() => {}); return 'already'; }
-          return this._groupMatch(account, sim, main, userId, signal);
+          // No opponent party was found earlier today: don't keep retrying (and spamming the error)
+          // at every routine check — leave Group Match for the next day. (user 2026-11-21)
+          if ((this._saved(account.id) || {}).groupGaveUpCycle === cycle) { await this._leaveParty(account, sim, userId).catch(() => {}); return 'noOpponent'; }
+          if (injuryBlocked(account.id)) throw new InjuredError('An injured starter blocks the match (Bag → Anesthesia)');
+          const r = await this._groupMatch(account, sim, main, userId, signal);
+          if (r === 'noOpponent') this._save(account.id, { ...(this._saved(account.id) || {}), groupGaveUpCycle: cycle });
+          return r;
         }]
       ];
       for (const [key, run] of steps) {
@@ -207,7 +221,7 @@ class DailyRoutineService {
           if (error?.name === 'AbortError') throw error;
           results[key] = 'failed';
           failed.push(key);
-          this._log(account, 'error', `dr.${key}Failed`, { error: error.message }, `Daily routine · ${key} failed: ${error.message}`);
+          this._log(account, error?.injured ? 'warning' : 'error', `dr.${key}Failed`, { error: error.message }, `Daily routine · ${key} failed: ${error.message}`);
         }
       }
       // Collect what is finished by now (the Friendly Match task at least). A failure
@@ -581,6 +595,10 @@ class DailyRoutineService {
         const joinable = open.filter(m => !m.hasPassword);
         for (const m of joinable) {
           const r = await sim.ack('joinFM', { userId, matchId: m.match_id }, { signal });
+          // an injured starter: no other match can be joined either (33 000 refusals on 2026-11-18)
+          const inj = r?.success ? null : await handleInjury(account.id, reasonOf(r), 'Friendly Match');
+          if (inj === false) throw new InjuredError(reasonOf(r));
+          if (inj === true) break;
           if (r?.success) {
             this._log(account, 'success', 'dr.fmJoined', { host: m.hostName || '?' }, `Friendly Match joined · host ${m.hostName || '?'}`);
             return this._waitMatchEnd(account, sim, main, userId, m, signal);
@@ -589,7 +607,10 @@ class DailyRoutineService {
         }
         // Not cut short by a stop: a match created meanwhile must still be cancelled.
         const r = await sim.ack('createFM', { userId, password: '' });
-        if (!r?.success && /match|progress|already|active/i.test(reasonOf(r)) && this.now() + this.timing.busyRetryMs < deadline) {
+        const injC = r?.success ? null : await handleInjury(account.id, reasonOf(r), 'Friendly Match');
+        if (injC === false) throw new InjuredError(reasonOf(r));
+        if (injC === true) continue;
+        if (!r?.success && /in progress|already|active match|in a match/i.test(reasonOf(r)) && this.now() + this.timing.busyRetryMs < deadline) {
           // Most likely a Quick Play match still running: wait and look again.
           this._log(account, 'info', 'dr.fmCreateWait', { error: reasonOf(r) }, `Could not create a match yet (${reasonOf(r)}); trying again in 30 s`);
           this._step(account, 'fmBusy');
@@ -741,7 +762,11 @@ class DailyRoutineService {
           if (!party && !matched) this._log(account, 'warning', 'dr.gmRemoved', {}, 'Removed from the party · looking for another one');
         }
       }
-      throw new Error('No Group Match could be played in time.');
+      // No opponent party showed up (3v3 needs a second full party; our own accounts rarely get
+      // paired by the game's public matchmaking). This is not a fault of the account — give up for
+      // today instead of failing the routine and retrying every 30 min. (user 2026-11-21)
+      this._log(account, 'warning', 'dr.gmGaveUp', {}, 'No opponent party found in time · Group Match left for the next day');
+      return 'noOpponent';
     } finally {
       await this._leaveParty(account, sim, userId);
     }

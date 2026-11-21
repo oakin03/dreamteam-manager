@@ -42,10 +42,38 @@ const BASE_FORMULA = {
 // current offense / defense instead, at least 5 (all 70 capped S moves of the 2026-10-30
 // and 10-31 updates fit exactly): S+ 3 %, S 4 %, S- 5 %.
 const DEFAULT_CAPS = { 'S+': 7, S: 7, 'S-': 9, 'A+': 12, A: 14, 'A-': 16, 'B+': 18, B: 20, 'B-': 22, 'C+': 15, C: 16, 'C-': 18, 'D+': 20, D: 22, 'D-': 24 };
-const SHARE_CAPS = { 'S+': 0.03, S: 0.04, 'S-': 0.05 };
+// Since the 2026-11-16 update the C and D tiers move by a share too (fitted on 2026-11-16..20:
+// no move above it, most moves exactly on it): C+ 8 %, C 8 %, C- 9 %, D+ 10 %, D 10 %, D- 12 %.
+const SHARE_CAPS = { 'S+': 0.03, S: 0.04, 'S-': 0.05, 'C+': 0.08, C: 0.08, 'C-': 0.09, 'D+': 0.10, D: 0.10, 'D-': 0.12 };
 const MIN_SHARE_CAP = 5;
 const capFor = (caps, tier, current) => (SHARE_CAPS[tier] ? Math.max(MIN_SHARE_CAP, Math.round(current * SHARE_CAPS[tier])) : (caps[tier] ?? 10));
 const MIN_SAMPLES = 40;
+// The level offense / defense move toward, since the 2026-11-16 update (user 2026-11-20: the old
+// way was right 45–84 % a day). Found on 2026-11-16..20: the game uses the player's LAST 5 GAMES
+// (per game played) and keeps part of the current value:
+//   level = c + w · (last-5 averages of PTS, DREB, OREB, AST, STL, BLK, TO, PF, FG%, 3P%, FT%) + k · current
+// then the tier cap. Out of sample (fitted on 11-16..18, tested on 11-19..20): offense / defense
+// direction 91 % / 88 % (was ~55 %), error 1.4 / 1.7; the value direction of all players 92 % on
+// 11-20 (the app said 52 %). Fitted again after every update from the moves below the cap.
+const MODEL_FEATURES = ['pts', 'dreb', 'oreb', 'ast', 'stl', 'blk', 'to', 'pf', 'fgp', 'tpp', 'ftp'];
+const MODEL_GAMES = 5;
+const DEFAULT_MODEL = {
+  offense: [3.323, 3.586, 1.2169, 0.737, 5.9159, -0.2038, -0.0138, -4.2138, 0.3312, 14.6618, 0.4394, 0.8207, 0.265],
+  defense: [0.635, -0.0292, 4.5775, 4.1037, -0.0421, 17.187, 15.844, 0.0547, 0.6129, 0.1058, 0.0113, 0.7691, 0.3304]
+};
+const MODEL_MIN_SAMPLES = 120;
+const MODEL_KEEP = 1500;
+// log row: [date, gameId, min, pts, reb, ast, stl, blk, to, pf, dreb, oreb, fgm, fga, tpm, tpa, ftm, fta]
+function lastGamesFeatures(rows, games = MODEL_GAMES) {
+  const use = (rows || []).filter(r => Number(r[2]) > 0).slice(-games);
+  if (!use.length) return null;
+  const sum = i => use.reduce((a, r) => a + (Number(r[i]) || 0), 0);
+  const n = use.length;
+  const fga = sum(13), tpa = sum(15), fta = sum(17);
+  return { games: n, pts: sum(3) / n, dreb: sum(10) / n, oreb: sum(11) / n, ast: sum(5) / n, stl: sum(6) / n, blk: sum(7) / n, to: sum(8) / n, pf: sum(9) / n,
+    fgp: fga ? sum(12) / fga : 0, tpp: tpa ? sum(14) / tpa : 0, ftp: fta ? sum(16) / fta : 0 };
+}
+const modelLevel = (w, f, current) => w[0] + MODEL_FEATURES.reduce((a, k, i) => a + w[i + 1] * (Number(f?.[k]) || 0), 0) + w[MODEL_FEATURES.length + 1] * current;
 // The game moves values every day at 11:00 TR (08:00 UTC, user 2026-10-30). The games of an
 // update: started after the previous 11:00 − 3 h and finished before 11:00 (start + 3 h).
 const UPDATE_UTC_HOUR = 8;
@@ -326,14 +354,39 @@ class ValuePredictService {
       const move = Math.max(Math.abs(p.offense - prev[p.id][1]), Math.abs(p.defense - prev[p.id][2]));
       (seen[tier] ||= []).push(move);
     }
-    // a tier's cap = the largest move seen there (needs 3 players)
-    for (const [tier, moves] of Object.entries(seen)) if (moves.length >= 3) caps[tier] = Math.max(...moves);
-    d.caps = caps;
+    // The caps are the game's fixed rule (2026-11-16); "the largest move seen" made them shrink on
+    // days without a capped player (C/D tiers ended at 6–7), so they are not learned any more.
+    d.caps = null;
     // moves below the cap landed on the formula's level: they teach the formula
     d.samples ||= { offense: [], defense: [] };
     for (const p of updated) {
       const tier = this._tierOf(prev, p);
       for (const [t, i] of [['offense', 1], ['defense', 2]]) if (Math.abs(p[t] - prev[p.id][i]) < capFor(caps, tier, prev[p.id][i])) d.samples[t].push([...FEATURES.map(f => p.avg[f]), p[t]]);
+    }
+    // the last-5-games model: every recomputed player is a sample; below the cap it shows the level
+    d.samples2 ||= [];
+    const updDay = new Date(this.now()).toISOString().slice(0, 10);
+    for (const p of updated) {
+      const log = this._logFor(d, p);
+      const f = lastGamesFeatures((log || []).filter(row => row[0] <= updDay));
+      if (!f) continue;
+      const tier = this._tierOf(prev, p);
+      for (const [t, i] of [['offense', 1], ['defense', 2]]) {
+        const b = prev[p.id][i];
+        const capped = Math.abs(p[t] - b) >= capFor(DEFAULT_CAPS, tier, b);
+        d.samples2.push({ t, f: MODEL_FEATURES.map(k => round2(f[k] * 100) / 100), b, a: p[t], capped, at: updDay });
+      }
+    }
+    d.samples2 = d.samples2.slice(-MODEL_KEEP);
+    for (const t of ['offense', 'defense']) {
+      const use = d.samples2.filter(x => x.t === t && !x.capped);
+      if (use.length < MODEL_MIN_SAMPLES) continue;
+      const X = use.map(x => [1, ...x.f, x.b]);
+      const y = use.map(x => x.a);
+      const w = lstsq(X, y);
+      const errOf = ww => X.reduce((s2, x, k) => s2 + Math.abs(x.reduce((u, v, j) => u + v * ww[j], 0) - y[k]), 0) / X.length;
+      const current = d.model2?.[t] || DEFAULT_MODEL[t];
+      if (errOf(w) < errOf(current)) (d.model2 ||= {})[t] = w;
     }
     for (const t of ['offense', 'defense']) {
       d.samples[t] = d.samples[t].slice(-600);
@@ -385,7 +438,8 @@ class ValuePredictService {
 
   _predict(d, game) {
     const tables = rankTables(game);
-    const caps = { ...DEFAULT_CAPS, ...(d.caps || {}) };
+    const caps = DEFAULT_CAPS;
+    const model = { offense: d.model2?.offense || DEFAULT_MODEL.offense, defense: d.model2?.defense || DEFAULT_MODEL.defense };
     // The 5-game rule is the player's own (the 2026-10-30 and 10-31 updates: all 200
     // recomputed players had played 5 games themselves and played in the window; the team
     // rule marked 97 players who did not move).
@@ -415,7 +469,10 @@ class ValuePredictService {
       // one update: toward the formula's level, at most the tier's cap
       const capOf = t => capFor(caps, p.rating, p[t]);
       const cap = capOf('offense');
-      const step = t => { const target = dot(formula[t], season); const c = capOf(t); return Math.max(0, Math.round(p[t] + Math.max(-c, Math.min(c, target - p[t])))); };
+      // the level from his last 5 games and his current value (2026-11-16 rule); the old season
+      // formula only when there is no log
+      const last5 = lastGamesFeatures(log);
+      const step = t => { const target = last5 ? modelLevel(model[t], last5, p[t]) : dot(formula[t], season); const c = capOf(t); return Math.max(0, Math.round(p[t] + Math.max(-c, Math.min(c, target - p[t])))); };
       const next = season ? { offense: step('offense'), defense: step('defense') } : null;
       return {
         id: p.id, name: p.name, team: p.team, position: p.position, rating: p.rating, ranking: p.ranking, value: p.value, offense: p.offense, defense: p.defense,
@@ -431,8 +488,8 @@ class ValuePredictService {
     });
     d.lastPrediction = Object.fromEntries(rows.map(r => [r.id, { value: r.predValue, offense: r.predOffense, defense: r.predDefense }]));
     this._save(d);
-    return { at: new Date(this.now()).toISOString(), rows, teamGames, nextUpdateAt: new Date(win.at).toISOString(), window: { teams: win.teams, teamGames: win.teamGames }, rule, firstUpdateGames: FIRST_UPDATE_GAMES, model: { caps, learnedFormula: Boolean(d.formula), samples: { offense: d.samples?.offense?.length || 0, defense: d.samples?.defense?.length || 0 } } };
+    return { at: new Date(this.now()).toISOString(), rows, teamGames, nextUpdateAt: new Date(win.at).toISOString(), window: { teams: win.teams, teamGames: win.teamGames }, rule, firstUpdateGames: FIRST_UPDATE_GAMES, model: { caps, learnedFormula: Boolean(d.model2), samples: { offense: (d.samples2 || []).filter(x => x.t === 'offense' && !x.capped).length, defense: (d.samples2 || []).filter(x => x.t === 'defense' && !x.capped).length } } };
   }
 }
 
-module.exports = { ValuePredictService, fitModel, rankTables, normName, lstsq, capFor, FEATURES };
+module.exports = { ValuePredictService, fitModel, rankTables, normName, lstsq, capFor, FEATURES, lastGamesFeatures, modelLevel, DEFAULT_MODEL, SHARE_CAPS };

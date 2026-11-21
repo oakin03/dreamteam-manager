@@ -20,7 +20,7 @@ const { ActivityService } = require('./services/activity.cjs');
 const { TaskRegistry } = require('./services/task-registry.cjs');
 const { BrowserService } = require('./services/browser-service.cjs');
 const { TaskEngine } = require('./services/task-engine.cjs');
-const { SchedulerService, BUILTIN_TASKS } = require('./services/scheduler.cjs');
+const { SchedulerService, BUILTIN_TASKS } = require('./services/scheduler.cjs'); // @strip(basic)
 const { ScoutService } = require('./services/scout-service.cjs');
 const { TradingHallService } = require('./services/trading-hall-service.cjs');
 const { DailyRewardService } = require('./services/daily-reward-service.cjs');
@@ -36,10 +36,15 @@ const { GameSessions } = require('./services/game-sessions.cjs');
 const { PlayersService } = require('./services/players-service.cjs');
 const { RostersService } = require('./services/rosters-service.cjs');
 const { BagService } = require('./services/bag-service.cjs');
+const { LaborService } = require('./services/labor-service.cjs');
+const { InjuryGuard, setGuard: setInjuryGuard } = require('./services/injury-guard.cjs');
+const { ScoutHunter } = require('./services/scout-hunter.cjs'); // @strip(basic)
+const { MatchControl } = require('./services/match-control.cjs'); // @strip(basic)
+const { TournamentLive } = require('./services/tournament-live.cjs'); // @strip(basic)
 const { DraftService } = require('./services/draft-service.cjs');
 const { syncMcpConfig } = require('./services/mcp-sync.cjs');
 const { TournamentService } = require('./services/tournament-service.cjs');
-const { TournamentLevelService } = require('./services/tournament-level-service.cjs');
+const { TournamentLevelService } = require('./services/tournament-level-service.cjs'); // @strip(basic)
 const { DailyRoutineService } = require('./services/daily-routine-service.cjs');
 const { PvpService } = require('./services/pvp-service.cjs');
 const { GoUpService } = require('./services/goup-service.cjs');
@@ -60,12 +65,13 @@ const { ChatService } = require('./services/chat-service.cjs');
 const { BuyService } = require('./services/buy-service.cjs');
 const { TowerService } = require('./services/tower-service.cjs');
 const { SynthesisService } = require('./services/synthesis-service.cjs');
-const { AutoPlayStop } = require('./services/autoplay-stop.cjs');
+const { AutoPlayStop } = require('./services/autoplay-stop.cjs'); // @strip(basic)
 const { GameHealth } = require('./services/game-health.cjs');
 const { AccountHealth } = require('./services/account-health.cjs');
-const { watchAlerts } = require('./services/watch-alerts.cjs');
+const { watchAlerts } = require('./services/watch-alerts.cjs'); // @strip(basic)
 const { EquipmentService } = require('./services/equipment-service.cjs');
-const { SignupService } = require('./services/signup-service.cjs');
+const { SignupService } = require('./services/signup-service.cjs'); // @strip(basic)
+const { DataCleanup } = require('./services/data-cleanup.cjs');
 const PROFILE_REFRESH_MS = 3 * 60 * 1000;
 
 let mainWindow;
@@ -74,7 +80,7 @@ let activity;
 let registry;
 let browserService;
 let engine;
-let scheduler;
+let scheduler; // @strip(basic)
 let scout;
 let trading;
 let dailyRewards;
@@ -88,6 +94,14 @@ let gameSessions;
 let players;
 let rosters;
 let bag;
+let labor;
+let injuryGuard;
+let hunter;
+let matchControl; // @strip(basic)
+let tournamentLive; // @strip(basic)
+// Auto Play start batches running in the main process (accounts:start-many)
+const startBatches = new Set();
+const apBatchState = () => { try { emitState(); } catch {} };
 let lastRostersRevision = -1;
 let draft;
 let pvp;
@@ -122,19 +136,20 @@ let buy;
 let tower;
 let gameHealth;
 let accountHealth;
+let dataCleanup;
 let synthesis;
 let towerDone = null;
-let autoBuyDone = null;
+let autoBuyDone = null; // @strip(basic)
 let pvpDone = null;
 let lastVpRevision = -1;
 let lastBuyRevision = -1;
 let lastDraftRevision = -1;
 let lastPlayersKey = null;
 let tournament;
-let tournamentLevel;
+let tournamentLevel; // @strip(basic)
 let dailyRoutine;
 let equipment;
-let signup;
+let signup; // @strip(basic)
 let lastEquipmentRevision = -1;
 let lastAutoTradeRevision = -1;
 let dataDir;
@@ -168,8 +183,8 @@ function snapshot({ incremental = false } = {}) {
     accounts: store.getAccounts().map(sanitizeAccount),
     tradeAccount: sanitizeAccount(store.getTradeAccount()),
     tasks: registry.list(),
-    builtinTasks: Object.entries(BUILTIN_TASKS).map(([id, task]) => ({ id, name: task.name })),
-    schedules: store.getSchedules(),
+    builtinTasks: Object.entries(BUILTIN_TASKS).map(([id, task]) => ({ id, name: task.name })), // @strip(basic)
+    schedules: store.getSchedules(), // @strip(basic)
     settings: store.getSettings(),
     runtime: engine.states(),
     accountProfile: accountProfile.snapshot(),
@@ -180,8 +195,15 @@ function snapshot({ incremental = false } = {}) {
     },
     rewards: dailyRewards?.snapshot() || {},
     tournament: tournament?.snapshot() || { runtime: { status: 'idle' }, accounts: {}, events: [] },
-    tournamentLevel: tournamentLevel?.snapshot() || null,
+    tournamentLevel: tournamentLevel?.snapshot() || null, // @strip(basic)
     bag: bag?.snapshot() || null,
+    labor: labor?.snapshot() || null,
+    injuryGuard: injuryGuard?.snapshot() || null,
+    injuryViewer: injuryViewerState(),
+    hunter: hunter?.snapshot() || null, // @strip(basic)
+    rotation: matchControl?.snapshot() || null, // @strip(basic)
+    tournamentLive: tournamentLive?.snapshot() || null, // @strip(basic)
+    apBatch: startBatches.size ? [...startBatches].reduce((o, r) => ({ running: true, done: o.done + r.done, total: o.total + r.total, started: o.started + r.started }), { running: true, done: 0, total: 0, started: 0 }) : null,
     dailyRoutine: dailyRoutine?.snapshot() || { selected: [], accounts: {} },
     pvp: pvp?.snapshot() || { running: false, run: null, lastReport: null },
     dailyBoss: dailyBoss?.snapshot() || { running: false, run: null, info: {}, bosses: [] },
@@ -197,12 +219,13 @@ function snapshot({ incremental = false } = {}) {
     quiz: quiz?.snapshot() || { running: false, run: null, bankSize: 0, lastReport: null },
     cheer: cheer?.snapshot() || { busy: false, last: null },
     dailySlot: dailySlot?.snapshot() || { running: false, rows: {}, lastRun: null },
-    signup: signup?.snapshot() || { running: false, rows: [] },
+    signup: signup?.snapshot() || { running: false, rows: [] }, // @strip(basic)
     chatFeed: gameEvents?.chatFeed() || [],
     social: social?.snapshot() || { badges: {}, totals: { requests: 0, unread: 0, mail: 0 } },
     chat: chat?.snapshot() || { running: false, run: null, limits: { minIntervalSec: 11, maxText: 50 }, lastReport: null },
     tower: tower?.snapshot() || { running: false, run: null, lastReport: null },
     gameHealth: gameHealth?.snapshot() || { down: false },
+    dataCleanup: dataCleanup?.snapshot() || null,
     globalPause: globalPauseSnapshot(),
     accountHealth: accountHealth?.snapshot() || { rows: [] },
     synthesis: synthesis?.snapshot() || { running: false, run: null, summary: {} },
@@ -316,22 +339,29 @@ function autoTradeAttention(kind, text) {
 // PVP and Auto Buy connect the accounts to the game, so whatever runs on them
 // (Auto Play) is stopped first and started again when they are over.
 // `taskName` / `prefix` name the service in the logs (e.g. 'PVP' / 'pvp').
-async function pauseTasksFor(accountIds, taskName, prefix) {
+async function pauseTasksFor(accountIds, taskName, prefix, { keepSocket = false } = {}) {
   const resume = [];
+  const pausedAt = Date.now(); // a user Stop after this wins over the resume below
   const name = id => store.getAccounts().find(a => a.id === id)?.name || '';
   for (const id of accountIds) {
     const worker = engine.workers.get(id);
     const prepared = engine.prepared.get(id);
     const active = worker && ['running', 'preparing', 'starting'].includes(worker.status) ? worker : prepared;
     if (!active) continue;
+    // Auto Trade with "keep Auto Play": Quick Play over its own socket does not clash with Auto
+    // Trade's connection, only the browser fallback (one game page per account) does
+    if (keepSocket && worker === active && worker.status === 'running' && worker.mode !== 'browser') continue;
     resume.push({ accountId: id, taskId: active.taskId, taskName: active.taskName, visibleBrowser: Boolean(active.visibleBrowser), config: active.config || null });
-    await engine.stopAccount(id, { reason: `Stopped for ${taskName}`, quiet: true });
-    activity.add({ level: 'info', accountId: id, accountName: name(id), taskName, code: `${prefix}.pausedTask`, params: { task: active.taskName || '' }, message: `${active.taskName} stopped for ${taskName}` });
   }
+  // all of them at once (user 2026-11-12)
+  await engine.stopMany(resume.map(r => r.accountId), { reason: `Stopped for ${taskName}`, quiet: true });
+  for (const r of resume) activity.add({ level: 'info', accountId: r.accountId, accountName: name(r.accountId), taskName, code: `${prefix}.pausedTask`, params: { task: r.taskName || '' }, message: `${r.taskName} stopped for ${taskName}` });
   return async () => {
+    const since = pausedAt;
     for (const r of resume) {
       try {
-        await engine.startAccount(r.accountId, r.taskId, { visibleBrowser: r.visibleBrowser, forceFresh: false, config: r.config });
+        if (engine.stoppedByUserSince(r.accountId, since)) continue;
+        await engine.startAccount(r.accountId, r.taskId, { visibleBrowser: r.visibleBrowser, forceFresh: false, config: r.config, since });
         activity.add({ level: 'success', accountId: r.accountId, accountName: name(r.accountId), taskName, code: `${prefix}.resumedTask`, params: { task: r.taskName || '' }, message: `${r.taskName} started again` });
       } catch (error) {
         activity.add({ level: 'error', accountId: r.accountId, accountName: name(r.accountId), taskName, code: `${prefix}.resumeFailed`, params: { task: r.taskName || '', error: error.message }, message: `${r.taskName} could not start again: ${error.message}` });
@@ -366,6 +396,7 @@ async function pauseServicesFor(accountIds, taskName, { prefix = 'sc', logTask =
       resume.push(['Auto Trade', () => autoTrade.resumeAfterTask({ paused: wasPaused })]);
     }
   }
+  // @strip-begin(basic)
   const ab = buy.snapshot();
   if (!skipAutoBuy && ab.auto?.status === 'running' && overlap(ab.config?.accountOrder)) {
     const options = { accountIds: ab.config.accountOrder, intervalSec: ab.config.intervalSec };
@@ -373,6 +404,7 @@ async function pauseServicesFor(accountIds, taskName, { prefix = 'sc', logTask =
     await (autoBuyDone || buy.done)?.catch(() => {});
     resume.push(['Auto Buy', () => startAutoBuy(options)]);
   }
+  // @strip-end
   const tw = tower.snapshot();
   if (tw.running) {
     const active = Object.values(tw.run?.accounts || {}).filter(r => !['done', 'finished', 'stopped', 'error', 'salaryCap'].includes(r.status)).map(r => r.accountId);
@@ -485,12 +517,17 @@ async function pauseAll() {
     const active = worker && ['running', 'preparing', 'starting'].includes(worker.status) ? worker : prepared;
     if (!active) continue;
     autoPlay.push({ accountId: id, taskId: active.taskId, taskName: active.taskName, visibleBrowser: Boolean(active.visibleBrowser), config: active.config || null });
-    try { await engine.stopAccount(id, { reason: 'Stop all automations', quiet: true }); } catch {}
   }
+  for (const run of startBatches) run.cancelled = true;
+  await engine.stopMany(autoPlay.map(a => a.accountId), { reason: 'Stop all automations', quiet: true });
   try { await market?.stop(); } catch {}
   try { synthesis?.stop(); } catch {}
   try { chat?.stop(); } catch {}
-  globalPause = { at: new Date().toISOString(), autoPlay, resumeServices };
+  // Scout Hunter too; its saved "running" stays so Resume (or a restart after Resume) brings it back
+  const hunterWasRunning = Boolean(hunter?.snapshot()?.running);
+  if (hunterWasRunning) { try { hunter.stop({ remember: false }); } catch {} } // @strip(basic)
+  globalPause = { at: new Date().toISOString(), autoPlay, resumeServices, hunter: hunterWasRunning };
+  saveGlobalPause();
   activity.add({ level: 'warning', accountId: null, accountName: '', taskName: 'Automations', code: 'gp.paused', params: { autoPlay: autoPlay.length }, message: `All automations stopped · Auto Play on ${autoPlay.length} account(s)` });
   emitState();
   updateTray();
@@ -500,17 +537,36 @@ async function resumeAll() {
   const p = globalPause;
   if (!p) return globalPauseSnapshot();
   globalPause = null;
+  saveGlobalPause();
   let started = 0;
+  const since = Date.parse(p.at) || Date.now();
   for (const item of p.autoPlay) {
-    try { await engine.startAccount(item.accountId, item.taskId, { visibleBrowser: item.visibleBrowser, forceFresh: false, config: item.config }); started++; } catch {}
+    try { const r = await engine.startAccount(item.accountId, item.taskId, { visibleBrowser: item.visibleBrowser, forceFresh: false, config: item.config, since }); if (!r?.skipped) started++; } catch {}
   }
   try { await p.resumeServices?.(); } catch {}
+  if (p.hunter) { try { hunter?.resumeIfRunning(); } catch {} } // @strip(basic)
   activity.add({ level: 'success', accountId: null, accountName: '', taskName: 'Automations', code: 'gp.resumed', params: { autoPlay: started }, message: `Automations started again · Auto Play on ${started} account(s)` });
   emitState();
   updateTray();
   return globalPauseSnapshot();
 }
-function globalPauseSnapshot() { return globalPause ? { active: true, at: globalPause.at, autoPlay: globalPause.autoPlay.length } : { active: false }; }
+// "Stop all automations" survives an app restart (user 2026-11-18: stopped, closed the app, it ran
+// again on the next start). Only plain data is saved; services stopped through pauseServicesFor
+// cannot be rebuilt after a restart, Auto Play and Scout Hunter can.
+function saveGlobalPause() {
+  try {
+    const s = store.getSettings() || {};
+    const gp = globalPause ? { at: globalPause.at, autoPlay: globalPause.autoPlay, hunter: Boolean(globalPause.hunter) } : null;
+    store.saveSettings({ ...s, globalPause: gp });
+  } catch {}
+}
+function restoreGlobalPause() {
+  const gp = store.getSettings()?.globalPause;
+  if (!gp?.at) return false;
+  globalPause = { at: gp.at, autoPlay: Array.isArray(gp.autoPlay) ? gp.autoPlay : [], resumeServices: null, hunter: Boolean(gp.hunter) };
+  return true;
+}
+function globalPauseSnapshot() { return globalPause ?{ active: true, at: globalPause.at, autoPlay: globalPause.autoPlay.length } : { active: false }; }
 
 // Daily Boss and Elite Ascent play matches: Auto Play on those accounts is stopped
 // first and started again when they are over. plan = { accountId: bossId | true }.
@@ -540,6 +596,7 @@ async function startQuizManual(accountIds) {
   return quiz.snapshot();
 }
 
+// @strip-begin(basic)
 // Daily lines (Auto Play page): a one-off schedule of a built-in task for the accounts
 // last chosen on its page (all accounts when none). The scheduler stops what runs on
 // them, runs the task and starts the stopped tasks again.
@@ -560,6 +617,7 @@ async function addDailySchedule(taskId, name, settingsKey) {
 }
 const addDailyTournamentSchedule = () => addDailySchedule('tournament-register', 'Turnuva kaydı (günlük)', 'tournamentAccountIds');
 const addDailyPvpSchedule = () => addDailySchedule('pvp-arena', 'PVP Arena (günlük)', 'pvpAccountIds');
+// @strip-end
 
 async function startPvpManual(accountIds) {
   if (!accountIds.length) throw new Error('Select at least one account.');
@@ -577,6 +635,7 @@ async function startTower(accountIds) {
   return tower.snapshot();
 }
 
+// @strip-begin(basic)
 // Auto Buy scans without signing in, so it runs next to the other automations. Only
 // for a buy / listing it signs in on one account: pauseAccountForBuy stops what runs
 // there (Auto Play and the other automations, never Auto Buy itself) and the returned
@@ -587,6 +646,78 @@ async function startAutoBuy(options) {
   autoBuyDone = buy.done;
   return snap;
 }
+// @strip-end
+// Çanta → Anestezi "Sakat hesapları sırayla aç" (user 2026-11-19): the injured accounts open in a
+// visible browser, a few at a time (signed in with the saved password); the account's other
+// services step aside while its window is open (so the app's own connection does not sign the
+// window out), and when the user closes a window the next account opens.
+const injuryViewer = { queue: [], open: new Map(), max: 3 };
+function injuryViewerState() {
+  const name = id => store.getAccounts().find(a => a.id === id)?.name || id;
+  return { max: injuryViewer.max, queue: injuryViewer.queue.map(id => ({ id, name: name(id) })), open: [...injuryViewer.open.entries()].map(([id, v]) => ({ id, name: name(id), status: v.status, error: v.error || null })) };
+}
+function injuryViewLog(level, accountId, code, params, message) {
+  activity.add({ level, accountId, accountName: store.getAccounts().find(a => a.id === accountId)?.name || '', taskName: 'Anestezi', code: `inj.${code}`, params, message });
+}
+async function injuryViewStart(accountIds, max) {
+  injuryViewer.max = Math.min(6, Math.max(1, Number(max) || 3));
+  const have = new Set([...injuryViewer.queue, ...injuryViewer.open.keys()]);
+  for (const id of accountIds) if (!have.has(id) && store.getAccounts().some(a => a.id === id)) { injuryViewer.queue.push(id); have.add(id); }
+  injuryViewNext();
+  emitState();
+  return injuryViewerState();
+}
+async function injuryViewStop() {
+  injuryViewer.queue = [];
+  for (const [, v] of injuryViewer.open) await v.close?.().catch(() => {});
+  emitState();
+  return injuryViewerState();
+}
+function injuryViewNext() {
+  while (injuryViewer.open.size < injuryViewer.max && injuryViewer.queue.length) injuryViewOne(injuryViewer.queue.shift());
+}
+async function injuryViewOne(accountId) {
+  const account = store.getAccounts().find(a => a.id === accountId);
+  if (!account) return;
+  const owner = `injury-view:${accountId}`;
+  const entry = { status: 'opening' };
+  injuryViewer.open.set(accountId, entry);
+  emitState();
+  let resume = null;
+  let session = null;
+  let finished = false;
+  const finish = async () => {
+    if (finished) return;
+    finished = true;
+    injuryViewer.open.delete(accountId);
+    await browserService.release(accountId, owner, { closeWhenUnused: true }).catch(() => {});
+    await resume?.().catch(() => {});
+    // the player may be healed / swapped by hand meanwhile
+    injuryGuard?.scan([accountId]).catch(() => {});
+    injuryViewNext();
+    emitState();
+  };
+  entry.close = async () => { await session?.close?.().catch(() => {}); await finish(); };
+  try {
+    resume = await pauseAccountForBuy(accountId, 'Anestezi').catch(() => null);
+    const creds = { login: account.login, password: credentials.decryptSecret(account.passwordEncrypted) };
+    const r = await browserService.authenticate(account, creds, { visible: true, keepOpen: true, owner });
+    session = r.session;
+    entry.status = 'open';
+    injuryViewLog('info', accountId, 'viewOpened', {}, 'Opened in the browser · close the window to open the next one');
+    const onGone = () => { finish(); };
+    session.page.on('close', () => { session.close?.().catch(() => {}); onGone(); });
+    session.context.on('close', onGone);
+    if (session.closed) onGone();
+    emitState();
+  } catch (error) {
+    entry.status = 'error';
+    entry.error = error.message;
+    injuryViewLog('warning', accountId, 'viewFailed', { error: error.message }, `Could not be opened in the browser: ${error.message}`);
+    await finish();
+  }
+}
+
 async function pauseAccountForBuy(accountId, taskName) {
   const resumeServices = await pauseServicesFor([accountId], taskName, { prefix: 'ab', logTask: taskName, skipAutoBuy: true });
   const resumeTasks = await pauseTasksFor([accountId], taskName, 'ab');
@@ -597,34 +728,59 @@ async function pauseAccountForBuy(accountId, taskName) {
 // other services step aside while the connection is open.
 async function pauseAccountForTrade(accountId, taskName) {
   const resumeServices = await pauseServicesFor([accountId], taskName, { prefix: 'atp', logTask: taskName });
-  const resumeTasks = await pauseTasksFor([accountId], taskName, 'atp');
+  const resumeTasks = await pauseTasksFor([accountId], taskName, 'atp', { keepSocket: Boolean(autoTrade?.keepsAutoPlay?.()) });
   return async () => { await resumeTasks(); await resumeServices(); };
 }
 
-function autoTradeConflicts(accountIds) {
+// keepAutoPlay (Auto Trade's option): only Auto Play in the browser fallback has to stop.
+const autoPlayClashes = (id, r, keepAutoPlay) => ['running', 'preparing', 'starting'].includes(r.status) && !(keepAutoPlay && r.status === 'running' && engine.workers.get(id)?.mode !== 'browser');
+function autoTradeConflicts(accountIds, { keepAutoPlay = false } = {}) {
   const ids = new Set(accountIds);
   const name = id => store.getAccounts().find(a => a.id === id)?.name || id;
   const out = [];
   for (const [id, r] of Object.entries(engine.states())) {
-    if (ids.has(id) && ['running', 'preparing', 'starting'].includes(r.status)) out.push({ kind: 'autoplay', accountId: id, name: name(id) });
+    if (ids.has(id) && autoPlayClashes(id, r, keepAutoPlay)) out.push({ kind: 'autoplay', accountId: id, name: name(id) });
   }
   if (equipment?.accountId && ids.has(equipment.accountId)) out.push({ kind: 'equipment', accountId: equipment.accountId, name: name(equipment.accountId) });
   if (market?.snapshot()?.busy) out.push({ kind: 'market' });
   if (tournament?.snapshot()?.runtime?.status === 'running') out.push({ kind: 'tournament' });
-  for (const sc of store.getSchedules()) {
-    if (sc.enabled && !sc.completed && (sc.accountIds || []).some(id => ids.has(id))) out.push({ kind: 'schedule', name: sc.name || sc.taskName, startAt: sc.startAt, accounts: sc.accountIds.filter(id => ids.has(id)).map(name) });
-  }
+  for (const sc of store.getSchedules()) { // @strip(basic)
+    if (sc.enabled && !sc.completed && (sc.accountIds || []).some(id => ids.has(id))) out.push({ kind: 'schedule', name: sc.name || sc.taskName, startAt: sc.startAt, accounts: sc.accountIds.filter(id => ids.has(id)).map(name) }); // @strip(basic)
+  } // @strip(basic)
   return out;
 }
 
-async function stopAutoTradeConflicts(accountIds) {
+async function stopAutoTradeConflicts(accountIds, { keepAutoPlay = false } = {}) {
   const ids = new Set(accountIds);
-  for (const [id, r] of Object.entries(engine.states())) {
-    if (ids.has(id) && ['running', 'preparing', 'starting'].includes(r.status)) await engine.stopAccount(id, { reason: 'Stopped for Auto Trade' });
-  }
+  await engine.stopMany(Object.entries(engine.states()).filter(([id, r]) => ids.has(id) && autoPlayClashes(id, r, keepAutoPlay)).map(([id]) => id), { reason: 'Stopped for Auto Trade' });
   if (equipment?.accountId && ids.has(equipment.accountId)) await equipment.close();
   if (market?.snapshot()?.busy) await market.stop();
   if (tournament?.snapshot()?.runtime?.status === 'running') await tournament.stop();
+}
+
+// Auto Play over the salary cap while Auto Trade (with "keep Auto Play") works on that account
+// (user 2026-11-13): instead of stopping, Quick Play waits for Auto Trade to make room (it lists,
+// trades, fires or makes cards there: capRelief) or 2 minutes, at most 10 times.
+const CAP_WAIT_MS = 2 * 60 * 1000;
+const CAP_WAIT_TRIES = 10;
+const capWaiters = new Map(); // accountId -> Set(resolve)
+function capRelief(accountId) {
+  const set = capWaiters.get(accountId);
+  if (!set) return;
+  capWaiters.delete(accountId);
+  for (const done of set) done('relief');
+}
+function autoPlayCapWait({ accountId, attempt, signal }) {
+  if (!autoTrade?.keepsAutoPlay?.() || !autoTrade.worksWith(accountId) || attempt > CAP_WAIT_TRIES) return Promise.resolve(false);
+  return new Promise(resolve => {
+    let timer = null;
+    const done = why => { clearTimeout(timer); signal?.removeEventListener('abort', onAbort); capWaiters.get(accountId)?.delete(done); resolve(why !== 'abort'); };
+    const onAbort = () => done('abort');
+    timer = setTimeout(() => done('timeout'), CAP_WAIT_MS);
+    signal?.addEventListener('abort', onAbort, { once: true });
+    if (!capWaiters.has(accountId)) capWaiters.set(accountId, new Set());
+    capWaiters.get(accountId).add(done);
+  });
 }
 
 function createWindow() {
@@ -698,29 +854,35 @@ function initServices() {
   dailyRoutine = new DailyRoutineService({ store, activity, sessions: gameSessions, onChanged: emitState });
   engine = new TaskEngine({
     gameHealth,
+    capWait: autoPlayCapWait,
     store, credentials, registry, browserService, activity, onChanged: emitState,
     beforeRun: ({ account, signal }) => dailyRoutine.runIfDue(account, { signal }),
     beforeRunNextAt: accountId => dailyRoutine.nextDueAt(accountId)
   });
-  scheduler = new SchedulerService({ store, engine, activity, onChanged: emitState, pauseServices: (ids, name) => pauseServicesFor(ids, name) });
+  scheduler = new SchedulerService({ store, engine, activity, onChanged: emitState, pauseServices: (ids, name) => pauseServicesFor(ids, name) }); // @strip(basic)
   scout = new ScoutService({ store, activity, sessions: gameSessions, cardsService: cards, accountProfile, gameHealth, onChanged: emitState });
   trading = new TradingHallService({ store, credentials, browserService, activity, onChanged: emitState });
   dailyRewards = new DailyRewardService({ store, activity, engine, sessions: gameSessions, gameHealth, isPaused: () => Boolean(globalPause), onChanged: emitState });
   const friendNet = new FriendNetwork({ store, sessions: gameSessions, activity, perSide: () => autoTrade?.lastConfig?.spendersPerSide, onChanged: () => { if (autoTrade) autoTrade.revision++; emitState(); } });
-  autoTrade = new AutoTradeEngine({ cardBusy: () => Boolean(synthesis?.snapshot().running || activate?.snapshot().running), friendNet, pauseAccount: pauseAccountForTrade, onSpenderListed: e => buy?.recordListed?.(e), gameHealth, store, credentials, activity, sessions: gameSessions, accountProfile, onChanged: emitState, onAttention: autoTradeAttention, onScout: (id, reply) => scout.showSocketScout?.(id, reply), onCycleEnd: () => cards.refresh() });
+  autoTrade = new AutoTradeEngine({ onRoster: id => capRelief(id), cardBusy: () => Boolean(synthesis?.snapshot().running || activate?.snapshot().running), friendNet, pauseAccount: pauseAccountForTrade, onSpenderListed: e => buy?.recordListed?.(e), gameHealth, store, credentials, activity, sessions: gameSessions, accountProfile, onChanged: emitState, onAttention: autoTradeAttention, onScout: (id, reply) => scout.showSocketScout?.(id, reply), onCycleEnd: () => cards.refresh() });
   market = new MarketService({ store, activity, accountProfile, sessions: gameSessions, onChanged: emitState });
-  const alertedDays = new Map(); // playerId -> day already reported
+  const alertedDays = new Map(); // playerId -> day already reported // @strip(basic)
   rosters = new RostersService({ store, activity, onChanged: emitState });
-  bag = new BagService({ store, activity, gameHealth, sessions: gameSessions, onChanged: emitState });
+  bag = new BagService({ store, activity, gameHealth, sessions: gameSessions, onChanged: emitState, onCardPlayers: (id, rows) => draft?.addRows(id, rows) });
+  injuryGuard = new InjuryGuard({ store, activity, sessions: gameSessions, onChanged: emitState });
+  setInjuryGuard(injuryGuard);
+  labor = new LaborService({ store, activity, sessions: gameSessions, onChanged: emitState, onLaborPlayers: (id, rows) => draft?.addRows(id, rows) });
   players = new PlayersService({
     store, activity, onChanged: emitState,
     onRefreshed: (list, previousById, { day }) => {
+      // @strip-begin(basic)
       const hits = watchAlerts(buy?.snapshot().watch, list, previousById).filter(h => alertedDays.get(h.playerId) !== day);
       for (const h of hits) {
         alertedDays.set(h.playerId, day);
         activity.add({ level: 'warning', accountId: null, accountName: '', taskName: 'Auto Buy', code: 'wl.alert', params: { name: h.name, value: h.value, base: h.base, pct: h.pct, kind: h.becameBase ? 'base' : 'drop' }, message: `Watched ${h.name}: ${h.becameBase ? 'fell to its Base' : `value ${h.pct}%`} · ${h.value} (Base ${h.base})` });
       }
       if (hits.length) autoTradeAttention('watchAlert', hits.map(h => `${h.name} ${h.becameBase ? 'Base' : h.pct + '%'}`).join(', '));
+      // @strip-end
       // a new game list: compare it with the value prediction made before
       valuePredict?.refresh({ automatic: true }).catch(() => {});
     }
@@ -729,7 +891,22 @@ function initServices() {
   props = new PropService({ store, activity, sessions: gameSessions, onChanged: emitState });
   activate = new ActivateService({ store, activity, sessions: gameSessions, cards, onChanged: emitState });
   tower = new TowerService({ store, activity, gameHealth, sessions: gameSessions, onChanged: emitState });
-  buy = new BuyService({ store, activity, gameHealth, sessions: gameSessions, accountProfile, onChanged: emitState, onAttention: autoTradeAttention, onScan: (ids, currency, tickets, scope, opts) => trading.mergeTickets(ids, currency, tickets, scope, opts), pauseAccount: pauseAccountForBuy });
+  buy = new BuyService({ store, activity, gameHealth, sessions: gameSessions, accountProfile, onChanged: emitState, onAttention: autoTradeAttention, onScan: (ids, currency, tickets, scope, opts) => trading.mergeTickets(ids, currency, tickets, scope, opts), onBought: ticketId => trading.removeTicket(ticketId), pauseAccount: pauseAccountForBuy });
+  // @strip-begin(basic)
+  // Scout Avcısı: its own friend connections (Auto Trade keeps its own), Auto Trade's pricing, the
+  // bought table of Auto Buy; an account Auto Trade uses or whose Auto Play is in the browser is left alone
+  hunter = new ScoutHunter({
+    store, activity, gameHealth, sessions: gameSessions, onChanged: emitState,
+    friendNet: new FriendNetwork({ store, sessions: gameSessions, activity, onChanged: emitState }),
+    priceOf: (player, accountId) => { const r = autoTrade?._listPrice?.(player, accountId); return r ? (r.fire ? { fire: true } : { price: r.price, currency: r.currency, isDefault: r.isDefault }) : null; },
+    recordListed: e => buy?.recordListed?.(e),
+    isBusy: id => Boolean(autoTrade?.usesAccount?.(id)) || (engine?.workers?.get(id)?.status === 'running' && engine.workers.get(id).mode === 'browser')
+  });
+  // @strip-end
+  // a "Stop all automations" from before the restart holds: nothing resumes until Resume
+  const pausedAtBoot = restoreGlobalPause();
+  setTimeout(() => { if (!globalPause) hunter.resumeIfRunning(); }, 15000).unref?.(); // @strip(basic)
+  if (pausedAtBoot) activity.add({ level: 'warning', accountId: null, accountName: '', taskName: 'Automations', code: 'gp.stillPaused', params: {}, message: 'All automations are still stopped (stopped before the app was closed)' });
   pvp = new PvpService({ store, activity, gameHealth, sessions: gameSessions, onChanged: emitState });
   goup = new GoUpService({ store, activity, gameHealth, sessions: gameSessions, onChanged: emitState });
   dailyBoss = new DailyBossService({ store, activity, gameHealth, sessions: gameSessions, onChanged: emitState });
@@ -748,8 +925,14 @@ function initServices() {
   cheer = new CheerService({ store, activity, gameHealth, sessions: gameSessions, onChanged: emitState });
   dailySlot = new DailySlotService({ store, activity, engine, gameHealth, sessions: gameSessions, onChanged: emitState });
   chat = new ChatService({ store, activity, gameHealth, sessions: gameSessions, onChanged: emitState });
-  draft = new DraftService({ store, activity, gameHealth, sessions: gameSessions, accountProfile, onChanged: emitState, onAttention: autoTradeAttention });
+  draft = new DraftService({
+    store, activity, gameHealth, sessions: gameSessions, accountProfile, onChanged: emitState, onAttention: autoTradeAttention,
+    // Auto Trade's pricing for a drafted player (its Stok / Satılabilir price, the discounted one
+    // when it was signed at the 5% cut)
+    priceOf: (row, accountId) => { const r = autoTrade?._listPrice?.({ id: row.id, baseSalary: row.value, signedSalary: row.salary ?? row.value }, accountId); return r && !r.fire ? { price: r.price, currency: r.currency } : null; }
+  });
   equipment = new EquipmentService({ store, activity, sessions: gameSessions, onChanged: emitState });
+  // @strip-begin(basic)
   signup = new SignupService({
     store, activity, sessions: gameSessions, onChanged: emitState,
     addAccount: payload => addAccountRecord(payload),
@@ -771,9 +954,16 @@ function initServices() {
       await engine.startAccount(id, taskId, { visibleBrowser: false, forceFresh: false });
     }
   });
+  // @strip-end
   tournament = new TournamentService({ store, credentials, browserService, accountProfile, activity, sessions: gameSessions, onChanged: emitState });
-  tournamentLevel = new TournamentLevelService({ store, activity, tournament, onChanged: emitState, createSocket: (url, options) => tournament.createSocket(url, options) });
-  tournamentLevel.start();
+  tournamentLevel = new TournamentLevelService({ store, activity, tournament, onChanged: emitState, createSocket: (url, options) => tournament.createSocket(url, options) }); // @strip(basic)
+  tournamentLevel.start(); // @strip(basic)
+  // Turnuva → Canlı and Rotasyon (user 2026-11-13): both run by themselves, nothing to start
+  tournamentLive = new TournamentLive({ store, activity, engine, gameHealth, onChanged: emitState }); // @strip(basic)
+  tournamentLive.start(); // @strip(basic)
+  matchControl = new MatchControl({ store, activity, gameHealth, sessions: gameSessions, onChanged: emitState, allowed: (id, mode) => mode !== 'tournament' || tournamentLive.rotationOn(id) }); // @strip(basic)
+  matchControl.start(); // @strip(basic)
+  // @strip-begin(basic)
   scheduler.registerBuiltin('tournament-register', (accountIds, { signal }) => tournament.runAndWait(accountIds, { signal }));
   scheduler.registerBuiltin('market-claim', async (accountIds, { signal }) => {
     const onAbort = () => market.stop();
@@ -785,8 +975,12 @@ function initServices() {
   scheduler.registerBuiltin('market-relist', (accountIds, { signal }) => market.relistRecent(accountIds, { signal }));
   scheduler.start();
   new AutoPlayStop({ store, engine, activity, onChanged: emitState, onAttention: autoTradeAttention, scheduleTournament: addDailyTournamentSchedule, schedulePvp: addDailyPvpSchedule }).start();
+  // @strip-end
   accountHealth = new AccountHealth({ store, engine, gameHealth, onChanged: emitState });
   accountHealth.start();
+  // daily data cleanup: browser caches, profiles of removed accounts, old logs (never passwords / settings / license)
+  dataCleanup = new DataCleanup({ store, activity, dataDir, isOpen: id => Boolean(browserService?.shared?.has(id)), onChanged: emitState });
+  dataCleanup.start();
   players.start();
   valuePredict.start();
   injuries.start();
@@ -797,6 +991,7 @@ function initServices() {
   gameEvents.start();
   social = new SocialService({ store, activity, sessions: gameSessions, onChanged: emitState });
   social.start();
+  // @strip-begin(basic)
   // an account creation the app was closed in the middle of: go on with it
   const pendingSignup = store.getSettings().signupJob;
   if (pendingSignup?.count > 0 && pendingSignup.passwordEncrypted) {
@@ -805,6 +1000,7 @@ function initServices() {
       runSignupJob(pendingSignup);
     }, 30000);
   }
+  // @strip-end
   // Level / TK / TIX / APK of every account, read from the game every few minutes
   // (the Stadium is seen only when Auto Play opens Chromium).
   const { GameSocket } = require('./services/game-socket.cjs');
@@ -833,6 +1029,7 @@ function runMcpSync() {
 
 function defaultTaskId() { return registry.list().find(t => !t.loadError)?.id || null; }
 
+// @strip-begin(basic)
 // Bulk account creation keeps its job in the settings until it ends, so closing the app
 // mid-run continues it at the next start (user 2026-10-31). `count` = accounts still to make.
 function runSignupJob(job) {
@@ -842,6 +1039,7 @@ function runSignupJob(job) {
     onProgress: ({ created }) => { const s = store.getSettings(); if (s.signupJob) store.saveSettings({ ...s, signupJob: { ...s.signupJob, count: Math.max(0, job.count - created) } }); }
   }).catch(() => null).finally(() => { const { signupJob, ...rest } = store.getSettings(); if (signupJob) store.saveSettings(rest); emitState(); });
 }
+// @strip-end
 
 // Adds an account (Accounts page, bulk account creation).
 function addAccountRecord(payload) {
@@ -871,6 +1069,7 @@ function registerIpc() {
   ipcMain.on('app:state-ack', onStateAck);
 
   ipcMain.handle('accounts:add', async (_event, payload) => addAccountRecord(payload));
+  // @strip-begin(basic)
   ipcMain.handle('signup:create', async (_event, form) => {
     const clean = SignupService.validate(form || {});
     if (signup.snapshot().running) throw new Error('Account creation is already running.');
@@ -881,6 +1080,7 @@ function registerIpc() {
     return snap;
   });
   ipcMain.handle('signup:stop', async () => { signup.stop(); return true; });
+  // @strip-end
 
   // The saved order is the order every page lists the accounts in.
   ipcMain.handle('accounts:reorder', async (_event, ids) => {
@@ -915,8 +1115,8 @@ function registerIpc() {
     store.saveAccounts(accounts.filter(a => a.id !== id));
     accountProfile.removeAccount(id);
     browserService.deleteProfile(id);
-    const schedules = store.getSchedules().map(s => ({ ...s, accountIds: s.accountIds.filter(x => x !== id) })).filter(s => s.accountIds.length);
-    store.saveSchedules(schedules);
+    const schedules = store.getSchedules().map(s => ({ ...s, accountIds: s.accountIds.filter(x => x !== id) })).filter(s => s.accountIds.length); // @strip(basic)
+    store.saveSchedules(schedules); // @strip(basic)
     if (account) activity.add({ level: 'warning', accountId: id, accountName: account.name, message: 'Account removed.' });
     syncMcpServers();
     emitState(); return true;
@@ -930,7 +1130,50 @@ function registerIpc() {
     await engine.startAccount(id, taskId, { visibleBrowser: Boolean(account.visibleBrowser), forceFresh: false });
     emitState(); return true;
   });
-  ipcMain.handle('accounts:stop', async (_event, id) => { await engine.stopAccount(id, { reason: 'Stopped by user' }); emitState(); return true; });
+  // Start many (Auto Play page "Start all" / selected / group): one account after another, here in
+  // the main process so a Stop from any page cancels what is not started yet (user 2026-11-14: after
+  // "stop all" 131 accounts kept opening one by one). Every start carries `since`: an account the
+  // user stopped after the batch began is skipped, and one that was starting is stopped once up.
+  ipcMain.handle('accounts:start-many', async (_event, ids) => {
+    const list = (Array.isArray(ids) ? ids : []).filter(id => store.getAccounts().some(a => a.id === id));
+    const run = { since: Date.now(), total: list.length, done: 0, started: 0, cancelled: false };
+    startBatches.add(run);
+    apBatchState();
+    const failed = [];
+    try {
+      for (const id of list) {
+        if (run.cancelled) break;
+        run.done++;
+        const r = engine.states()?.[id];
+        if (r && ['running', 'preparing', 'starting', 'stopping'].includes(r.status)) continue;
+        if (engine.stoppedByUserSince(id, run.since)) continue;
+        const account = store.getAccounts().find(a => a.id === id);
+        const taskId = account?.selectedTaskId || defaultTaskId();
+        if (!account || !taskId) continue;
+        try {
+          const res = await engine.startAccount(id, taskId, { visibleBrowser: Boolean(account.visibleBrowser), forceFresh: false, since: run.since });
+          if (!res?.skipped) run.started++;
+        } catch (error) { failed.push(`${account.name}: ${error.message}`); }
+        apBatchState();
+      }
+    } finally {
+      startBatches.delete(run);
+      apBatchState();
+    }
+    return { started: run.started, failed, cancelled: run.cancelled };
+  });
+  ipcMain.handle('accounts:stop', async (_event, id) => { engine.markUserStop([id]); await engine.stopAccount(id, { reason: 'Stopped by user' }); emitState(); return true; });
+  // the Auto Play page's bulk Stop: every selected account at once
+  ipcMain.handle('accounts:stop-many', async (_event, ids) => {
+    const list = Array.isArray(ids) ? ids : [];
+    engine.markUserStop(list);
+    // every account asked (or all of them): the start batches stop going on at once
+    const all = new Set(list);
+    for (const run of startBatches) if (store.getAccounts().every(a => all.has(a.id))) run.cancelled = true;
+    apBatchState();
+    await engine.stopMany(list, { reason: 'Stopped by user' });
+    emitState(); return true;
+  });
   ipcMain.handle('accounts:select-task', async (_event, { id, taskId }) => {
     const accounts = store.getAccounts(); const account = accounts.find(a => a.id === id); if (!account) throw new Error('Account not found.');
     account.selectedTaskId = taskId; store.saveAccounts(accounts); emitState(); return true;
@@ -993,17 +1236,24 @@ function registerIpc() {
   ipcMain.handle('equipment:plan', async (_event, collectionId, slot) => equipment.planCollection(collectionId, slot || null));
   ipcMain.handle('equipment:batch', async (_event, opts) => equipment.batchCollections(opts || {}));
   ipcMain.handle('equipment:batch-stop', async () => equipment.stopBatch());
+  ipcMain.handle('equipment:materials', async (_event, opts) => equipment.batchMaterials(opts || {}));
+  ipcMain.handle('equipment:dismantle', async (_event, opts) => equipment.batchDismantle(opts || {}));
+  ipcMain.handle('equipment:many', async (_event, opts) => equipment.strengthenMany(opts || {}));
+  ipcMain.handle('equipment:equip', async (_event, { playerId, inventoryId }) => equipment.equip(playerId, inventoryId));
+  ipcMain.handle('equipment:unequip', async (_event, { playerId, slot }) => equipment.unequip(playerId, slot || null));
+  ipcMain.handle('equipment:quick-equip', async (_event, playerIds) => equipment.quickEquip(playerIds || null));
+  ipcMain.handle('equipment:unequip-all', async () => equipment.unequipAll());
   ipcMain.handle('equipment:prepare', async (_event, collectionId, slot) => equipment.prepareCollection(collectionId, slot || null));
   ipcMain.handle('tournament:start', async (_event, accountIds) => tournament.start(accountIds));
   ipcMain.handle('tournament:stop', async () => tournament.stop());
-  ipcMain.handle('tournament-level:check', async (_event, { swap } = {}) => tournamentLevel.check({ swap: Boolean(swap) }));
-  ipcMain.handle('tournament-level:auto', async (_event, { on } = {}) => tournamentLevel.setAuto(Boolean(on)));
+  ipcMain.handle('tournament-level:check', async (_event, { swap } = {}) => tournamentLevel.check({ swap: Boolean(swap) })); // @strip(basic)
+  ipcMain.handle('tournament-level:auto', async (_event, { on } = {}) => tournamentLevel.setAuto(Boolean(on))); // @strip(basic)
   ipcMain.handle('tournament:refresh', async () => tournament.refreshEvents());
 
-  ipcMain.handle('auto-trade:preflight', async (_event, options) => ({ conflicts: autoTradeConflicts(options.accountIds || []), ...(await autoTrade.preflight(options)) }));
+  ipcMain.handle('auto-trade:preflight', async (_event, options) => ({ conflicts: autoTradeConflicts(options.accountIds || [], { keepAutoPlay: Boolean(options.keepAutoPlay ?? options.config?.keepAutoPlay) }), ...(await autoTrade.preflight(options)) }));
   ipcMain.handle('auto-trade:attention', async (_event, kind) => { autoTradeAttention(kind); return true; });
   ipcMain.handle('auto-trade:start', async (_event, options) => {
-    if (options.stopConflicts) await stopAutoTradeConflicts(options.accountIds || []);
+    if (options.stopConflicts) await stopAutoTradeConflicts(options.accountIds || [], { keepAutoPlay: Boolean(options.keepAutoPlay ?? options.config?.keepAutoPlay) });
     return autoTrade.start(options);
   });
   // Hazırlık: a run that only does the bench decisions (list, fire, trade / card to main).
@@ -1042,6 +1292,7 @@ function registerIpc() {
   ipcMain.handle('tasks:refresh', async () => { registry.refresh(); emitState(); return registry.list(); });
   ipcMain.handle('tasks:open-folder', async () => { ensureDir(taskDir()); return shell.openPath(taskDir()); });
 
+  // @strip-begin(basic)
   ipcMain.handle('schedules:add', async (_event, payload) => {
     const schedules = store.getSchedules();
     const builtin = BUILTIN_TASKS[payload.taskId];
@@ -1069,11 +1320,12 @@ function registerIpc() {
     if (!item.startAt) throw new Error('Start time is required.');
     schedules.push(item); store.saveSchedules(schedules); emitState(); return item;
   });
-  ipcMain.handle('schedules:remove', async (_event, id) => { scheduler.cancel(id); store.saveSchedules(store.getSchedules().filter(s => s.id !== id)); emitState(); return true; });
+  ipcMain.handle('schedules:remove', async (_event, id) => { scheduler.cancel(id); store.saveSchedules(store.getSchedules().filter(s => s.id !== id)); emitState(); return true; }); // @strip(basic)
   ipcMain.handle('schedules:toggle', async (_event, { id, enabled }) => {
     const schedules = store.getSchedules(); const item = schedules.find(s => s.id === id); if (!item) throw new Error('Schedule not found.');
     item.enabled = Boolean(enabled); store.saveSchedules(schedules); emitState(); return true;
   });
+  // @strip-end
 
   ipcMain.handle('daily:refresh-tasks', async (_event, accountIds) => dailyRoutine.refreshTasks(Array.isArray(accountIds) ? accountIds : store.getAccounts().map(a => a.id)));
   ipcMain.handle('daily:claim-rewards', async (_event, accountIds) => dailyRoutine.claimRewards(Array.isArray(accountIds) ? accountIds : []));
@@ -1109,7 +1361,8 @@ function registerIpc() {
       `Created: ${new Date().toISOString()}`,
       `App: ${app.getVersion()} · Electron ${process.versions.electron} · ${os.type()} ${os.release()}`,
       `Accounts: ${store.getAccounts().length} · days: ${days.join(', ')}`,
-      `Running: Auto Play ${Object.values(engine.states()).filter(w => w.status === 'running').length} · Auto Buy ${buy?.snapshot().auto?.status || '-'} · Auto Trade ${autoTrade?.snapshot().run?.status || '-'} · game reachable ${!gameHealth?.isDown()}`,
+      `Running: Auto Play ${Object.values(engine.states()).filter(w => w.status === 'running').length} · Auto Buy ${buy?.snapshot().auto?.status || '-'} · Auto Trade ${autoTrade?.snapshot().run?.status || '-'} · game reachable ${!gameHealth?.isDown()}`, // @strip(basic)
+      //@only(basic) `Running: Auto Play ${Object.values(engine.states()).filter(w => w.status === 'running').length} · Auto Trade ${autoTrade?.snapshot().run?.status || '-'} · game reachable ${!gameHealth?.isDown()}`,
       '',
       ...entries.map(e => `${e.at} [${e.level}] ${e.taskName || ''} ${e.accountName || ''} ${e.code || ''} · ${e.message}`)
     ];
@@ -1120,14 +1373,32 @@ function registerIpc() {
   });
   ipcMain.handle('health:refresh', async () => accountHealth.refresh());
   ipcMain.handle('app:pause-all', async () => pauseAll());
+  // After a native confirm()/alert() Electron may leave the page without keyboard focus: inputs
+  // then take no typing until the window is clicked away and back (user 2026-11-13, Draft prices).
+  ipcMain.handle('app:refocus', async () => { if (mainWindow && !mainWindow.isDestroyed()) { mainWindow.blur(); mainWindow.focus(); mainWindow.webContents.focus(); } return true; });
   ipcMain.handle('app:resume-all', async () => resumeAll());
   ipcMain.handle('app:factory-reset', async (_event, options) => { setTimeout(() => factoryReset(options || {}).catch(error => console.warn('[factory reset]', error)), 300); return true; });
   ipcMain.handle('settings:open-data-folder', async () => shell.openPath(dataDir));
+  ipcMain.handle('data-cleanup:run', async () => dataCleanup.run({ source: 'manual' }));
+  ipcMain.handle('data-cleanup:set-days', async (_event, days) => dataCleanup.setDays(days));
   ipcMain.handle('activity:clear', async () => { activity.clear(); return true; });
   ipcMain.handle('players:refresh', async () => players.refresh());
   ipcMain.handle('rosters:refresh', async () => rosters.refresh());
+  ipcMain.handle('rotation:set-mode', async (_event, { mode, on }) => matchControl.setMode(mode, on)); // @strip(basic)
+  ipcMain.handle('rotation:stop', async (_event, accountId) => matchControl.stopAccount(accountId)); // @strip(basic)
+  ipcMain.handle('tlive:set-auto', async (_event, ids) => tournamentLive.setAuto(Array.isArray(ids) ? ids : [])); // @strip(basic)
+  ipcMain.handle('tlive:set-rotation', async (_event, { ids, on }) => tournamentLive.setRotation(Array.isArray(ids) ? ids : [], Boolean(on))); // @strip(basic)
+  ipcMain.handle('hunter:add', async (_event, players) => hunter.addWatch(players || [])); // @strip(basic)
+  ipcMain.handle('hunter:update', async (_event, { playerId, patch }) => hunter.updateWatch(playerId, patch || {})); // @strip(basic)
+  ipcMain.handle('hunter:remove', async (_event, ids) => hunter.removeWatch(ids || [])); // @strip(basic)
+  ipcMain.handle('hunter:start', async () => hunter.start()); // @strip(basic)
+  ipcMain.handle('hunter:stop', async () => hunter.stop()); // @strip(basic)
+  ipcMain.handle('hunter:clear-warnings', async () => hunter.clearWarnings()); // @strip(basic)
+  ipcMain.handle('hunter:set-option', async (_event, patch) => hunter.setOption(patch || {})); // @strip(basic)
+  ipcMain.handle('hunter:set-refresh', async (_event, patch) => hunter.setRefresh(patch || {})); // @strip(basic)
   ipcMain.handle('bag:read', async (_event, { accountIds } = {}) => bag.read(Array.isArray(accountIds) ? accountIds : null));
   ipcMain.handle('bag:use', async (_event, { accountIds, itemId } = {}) => bag.use(Array.isArray(accountIds) ? accountIds : [], { itemId: itemId || null }));
+  ipcMain.handle('bag:open-cards', async (_event, { accountIds, itemIds, count } = {}) => bag.openCards({ accountIds: Array.isArray(accountIds) ? accountIds : [], itemIds: Array.isArray(itemIds) ? itemIds : [], count }));
   ipcMain.handle('bag:status', async (_event, { accountId } = {}) => { await bag.status(accountId); return bag.snapshot(); });
   ipcMain.handle('vp:refresh', async () => valuePredict.refresh());
   ipcMain.handle('injuries:refresh', async () => injuries.refresh());
@@ -1140,14 +1411,16 @@ function registerIpc() {
   ipcMain.handle('buy:clear-bulk', async () => buy.clearBulk());
   ipcMain.handle('buy:convert', async (_event, entryId) => buy.convert(entryId));
   ipcMain.handle('buy:fire', async (_event, ids) => buy.fire(ids || []));
-  ipcMain.handle('buy:add-watch', async (_event, players) => buy.addWatch(players || []));
-  ipcMain.handle('buy:update-watch', async (_event, { id, patch }) => buy.updateWatch(id, patch || {}));
-  ipcMain.handle('buy:add-range', async (_event, id) => buy.addRange(id));
-  ipcMain.handle('buy:remove-watch', async (_event, ids) => buy.removeWatch(ids || []));
-  ipcMain.handle('buy:set-config', async (_event, patch) => buy.setConfig(patch || {}));
-  ipcMain.handle('buy:start-auto', async (_event, options) => startAutoBuy(options || {}));
-  ipcMain.handle('buy:stop-auto', async () => buy.stopAuto());
-  ipcMain.handle('props:run', async (_event, accountId) => props.run(accountId));
+  ipcMain.handle('buy:add-watch', async (_event, players) => buy.addWatch(players || [])); // @strip(basic)
+  ipcMain.handle('buy:update-watch', async (_event, { id, patch }) => buy.updateWatch(id, patch || {})); // @strip(basic)
+  ipcMain.handle('buy:add-range', async (_event, id) => buy.addRange(id)); // @strip(basic)
+  ipcMain.handle('buy:remove-watch', async (_event, ids) => buy.removeWatch(ids || [])); // @strip(basic)
+  ipcMain.handle('buy:set-config', async (_event, patch) => buy.setConfig(patch || {})); // @strip(basic)
+  ipcMain.handle('buy:start-auto', async (_event, options) => startAutoBuy(options || {})); // @strip(basic)
+  ipcMain.handle('buy:stop-auto', async () => buy.stopAuto()); // @strip(basic)
+  // props with rotation on: only the starting five get them, the aces go back on court first (user 2026-11-13)
+  ipcMain.handle('props:run', async (_event, accountId) => { matchControl?.forProps(accountId); return props.run(accountId); }); // @strip(basic)
+  //@only(basic) ipcMain.handle('props:run', async (_event, accountId) => props.run(accountId));
   ipcMain.handle('props:stop', async (_event, accountId) => { props.stop(accountId); return props.snapshot(); });
   ipcMain.handle('props:bags', async (_event, accountIds) => props.bagsOf(Array.isArray(accountIds) ? accountIds : null));
   ipcMain.handle('activate:start', async (_event, options) => activate.start(options || {}));
@@ -1174,6 +1447,11 @@ function registerIpc() {
   });
   ipcMain.handle('tk:stop', async () => { tkTransfer.stop(); return tkTransfer.snapshot(); });
   // APK / TIX transfer: Auto Play on the chosen accounts (and the spenders it may use) is stopped first.
+  ipcMain.handle('game:probe-now', async () => gameHealth.probeNow());
+  // Owner license panel — FULL edition only. All its code lives in license-admin-ipc.cjs, which the @strip(pro,basic)
+  // build pipeline deletes for pro/basic, so none of it is compiled into a shared edition. @strip(pro,basic)
+  if (BUILD_EDITION === 'full') { try { require('./license-admin-ipc.cjs').register(ipcMain); } catch { /* shared edition */ } } // @strip(pro,basic)
+  ipcMain.handle('apk:scan', async (_event, ids) => apkTransfer.scanBalances(Array.isArray(ids) ? ids : []));
   ipcMain.handle('apk:start', async (_event, raw) => {
     const config = apkTransfer.validate(raw || {});
     if (apkTransfer.snapshot().running) throw new Error('APK transfer is already running.');
@@ -1187,6 +1465,8 @@ function registerIpc() {
   ipcMain.handle('pro:start', async (_event, plan) => startProvingManual(professional, plan, 'Professional', 'pf', p => { proDone = p; }));
   ipcMain.handle('pro:stop', async () => { professional.stop(); return professional.snapshot(); });
   ipcMain.handle('pro:status', async (_event, accountIds) => professional.status(Array.isArray(accountIds) ? accountIds : null));
+  ipcMain.handle('pro:reset', async (_event, ids) => professional.resetProgress(Array.isArray(ids) ? ids : []));
+  ipcMain.handle('ascent:reset', async (_event, ids) => eliteAscent.resetProgress(Array.isArray(ids) ? ids : []));
   ipcMain.handle('pro:createHof', async (_event, accountId) => professional.createHof(accountId));
   ipcMain.handle('ascent:stop', async () => { eliteAscent.stop(); return eliteAscent.snapshot(); });
   ipcMain.handle('ascent:status', async (_event, accountIds) => eliteAscent.status(Array.isArray(accountIds) ? accountIds : null));
@@ -1214,6 +1494,9 @@ function registerIpc() {
   ipcMain.handle('skills:shuffle', async (_event, { accountId, containerId }) => skills.shuffle(accountId, containerId));
   ipcMain.handle('skills:lock', async (_event, { accountId, containerId, slot, locked }) => skills.toggleLock(accountId, containerId, slot, locked));
   ipcMain.handle('skills:assign', async (_event, { accountId, containerId, playerId }) => skills.assign(accountId, containerId, playerId || null));
+  ipcMain.handle('skills:auto', async (_event, { accountIds, plan }) => skills.autoMany(accountIds || [], plan || null));
+  ipcMain.handle('skills:auto-stop', async () => skills.stopAuto());
+  ipcMain.handle('skills:catalog', async () => skills.catalog());
   ipcMain.handle('goup:start', async (_event, { accountIds, mode, gapSec } = {}) => startGoUpManual(Array.isArray(accountIds) ? accountIds : [], { mode, gapSec }));
   ipcMain.handle('goup:stop', async () => { goup.stop(); return goup.snapshot(); });
   ipcMain.handle('goup:status', async (_event, accountIds) => goup.status(Array.isArray(accountIds) ? accountIds : null));
@@ -1227,6 +1510,7 @@ function registerIpc() {
   ipcMain.handle('social:friend-scout', async (_event, { accountId, friendId } = {}) => social.friendScout(accountId, friendId));
   ipcMain.handle('social:friend-sign', async (_event, { accountId, friendId, playerId } = {}) => social.friendSign(accountId, friendId, playerId));
   ipcMain.handle('social:act', async (_event, { accountId, action, targetId } = {}) => social.act(accountId, action, targetId));
+  ipcMain.handle('social:claimAllMail', async () => social.claimAllMail());
   ipcMain.handle('social:claimMail', async (_event, { accountId, mailId } = {}) => social.claimMail(accountId, mailId || null));
   ipcMain.handle('social:poll', async () => { await social.poll(); return social.snapshot(); });
   ipcMain.handle('slot:scan', async (_event, ids) => dailySlot.scan(Array.isArray(ids) ? ids : []));
@@ -1242,7 +1526,7 @@ function registerIpc() {
   ipcMain.handle('draft:join', async (_event, { accountId, slot }) => draft.join(accountId, slot));
   ipcMain.handle('draft:pick', async (_event, { accountId, playerId }) => draft.pick(accountId, playerId));
   ipcMain.handle('draft:list-players', async (_event, { accountId, items }) => draft.listPlayers(accountId, items));
-  ipcMain.handle('draft:clear-drafted', async (_event, accountId) => draft.clearDrafted(accountId));
+  ipcMain.handle('draft:clear-drafted', async (_event, arg) => (arg && typeof arg === 'object' ? draft.clearDrafted(arg.accountId, arg.source) : draft.clearDrafted(arg, 'draft')));
   // Kov / Karta çevir on drafted players: like a quick hand action, the accounts' other services
   // step aside for it; an account Auto Trade is working on right now is not touched.
   const draftHand = async (ids, fn) => {
@@ -1252,18 +1536,118 @@ function registerIpc() {
     try { for (const id of ids) resumes.push(await pauseAccountForBuy(id, 'Draft')); return await fn(); }
     finally { for (const r of resumes.reverse()) await r().catch(() => {}); }
   };
-  ipcMain.handle('draft:fire-players', async (_event, { accountId, playerIds }) => draftHand([accountId], () => draft.firePlayers(accountId, playerIds)));
-  ipcMain.handle('draft:to-cards', async (_event, { accountId, playerIds }) => {
-    const mainId = store.getAccountProfile()?.mainAccountId;
-    return draftHand([...new Set([accountId, mainId].filter(Boolean))], () => draft.toCards(accountId, playerIds));
-  });
+  // Kov while Auto Trade runs (user 2026-11-13): an account of the run fires over Auto Trade's own
+  // connection; another account Auto Trade holds waits and is fired once it is free.
+  const draftFireNow = async (accountId, playerIds) => {
+    const rows = (draft.snapshot().drafted?.[accountId] || []).filter(p => playerIds.includes(p.id));
+    if (autoTrade?.isRunning?.()) {
+      const fired = await autoTrade.fireForDraft(accountId, rows);
+      if (fired) { draft.firedByAutoTrade(accountId, fired); if (fired.length < rows.length) throw new Error(`${rows.length - fired.length} player(s) could not be fired.`); return { firedByAT: fired.length }; }
+    }
+    if (autoTrade?.usesAccount?.(accountId)) { draft.queueFire(accountId, playerIds); return { queued: rows.length }; }
+    await draftHand([accountId], () => draft.firePlayers(accountId, playerIds));
+    return { done: rows.length };
+  };
+  ipcMain.handle('draft:fire-players', async (_event, { accountId, playerIds }) => draftFireNow(accountId, playerIds || []));
+  // Karta çevir while Auto Trade runs (user 2026-11-13): an account of the run hands the players to
+  // Auto Trade (its own trade to main + Make does it); otherwise, while Auto Trade holds the
+  // account or main, the request waits and runs by itself once both are free.
+  const draftCardIds = accountId => [...new Set([accountId, store.getAccountProfile()?.mainAccountId].filter(Boolean))];
+  const draftCardsNow = async (accountId, playerIds) => {
+    const rows = (draft.snapshot().drafted?.[accountId] || []).filter(p => playerIds.includes(p.id));
+    if (autoTrade?.isRunning?.() && autoTrade.handToCards(accountId, rows)) { draft.handedToAutoTrade(accountId, playerIds); return { handed: rows.length }; }
+    if (draftCardIds(accountId).some(id => autoTrade?.usesAccount?.(id))) { draft.queueCards(accountId, playerIds); return { queued: rows.length }; }
+    await draftHand(draftCardIds(accountId), () => draft.toCards(accountId, playerIds));
+    return { done: rows.length };
+  };
+  ipcMain.handle('draft:to-cards', async (_event, { accountId, playerIds }) => draftCardsNow(accountId, playerIds || []));
+  // Laborer Contract (user 2026-11-18): the two accounts' other services step aside like for Draft's Kov.
+  ipcMain.handle('labor:read', async () => labor.read());
+  // Sakatlık / Anestezi (user 2026-11-18)
+  ipcMain.handle('injury:scan', async (_event, ids) => injuryGuard.scan(Array.isArray(ids) ? ids : null));
+  ipcMain.handle('injury:heal', async (_event, { items, quantity } = {}) => injuryGuard.heal(Array.isArray(items) ? items : [], quantity || 1));
+  ipcMain.handle('injury:swap', async (_event, ids) => injuryGuard.swap(Array.isArray(ids) ? ids : []));
+  ipcMain.handle('injury:view-start', async (_event, { accountIds, max } = {}) => injuryViewStart(Array.isArray(accountIds) ? accountIds : [], max));
+  ipcMain.handle('injury:view-stop', async () => injuryViewStop());
+  ipcMain.handle('injury:settings', async (_event, patch) => injuryGuard.saveSettings(patch || {}));
+  ipcMain.handle('labor:range', async (_event, playerId) => labor.range(playerId));
+  ipcMain.handle('labor:apply', async (_event, o = {}) => draftHand([...new Set([o.fromAccountId, o.toAccountId].filter(Boolean))], () => labor.apply(o)));
+  let draftCardsBusy = false;
+  setInterval(async () => {
+    if (draftCardsBusy) return;
+    const queued = draft?.queuedCards?.() || {};
+    const fires = draft?.queuedFire?.() || {};
+    if (!Object.keys(queued).length && !Object.keys(fires).length) return;
+    draftCardsBusy = true;
+    try {
+      for (const [accountId, ids] of Object.entries(fires)) {
+        const inRun = autoTrade?.isRunning?.() && autoTrade.state?.config?.accountIds?.includes(accountId);
+        if (autoTrade?.usesAccount?.(accountId) && !inRun) continue;
+        draft.queueFire(accountId, ids, false);
+        await draftFireNow(accountId, ids).catch(() => {});
+      }
+      for (const [accountId, ids] of Object.entries(queued)) {
+        if (draftCardIds(accountId).some(id => autoTrade?.usesAccount?.(id)) && !(autoTrade?.isRunning?.() && autoTrade.state?.config?.accountIds?.includes(accountId))) continue;
+        await draftCardsNow(accountId, ids).catch(() => draft.queueCards(accountId, ids, false));
+      }
+    } finally { draftCardsBusy = false; }
+  }, 20000).unref?.();
   ipcMain.handle('players:set-roles', async (_event, { playerId, roleIds }) => cards.setRolesById(playerId, roleIds));
 }
 
 app.on('second-instance', () => showMainWindow());
 
-app.whenReady().then(() => {
+// --- License gate (shared editions only; the full edition skips all of this) --------------------
+const { isLicensed: IS_LICENSED, EDITION: BUILD_EDITION } = require('./edition.cjs');
+let licenseClient = null;
+// The periodic check found the license gone. A short outage never lands here: the client covers it
+// with its offline grace (3 days), so this is a final answer (revoked, expired, blocked…) or a server
+// that stayed unreachable past the grace. Quitting goes through before-quit, so the services stop
+// cleanly first.
+const LICENSE_LOST_TEXT = {
+  revoked: 'Lisansınız iptal edildi.', expired: 'Lisansınızın süresi doldu.', blocked: 'Bu bilgisayar engellendi.',
+  'other-machine': 'Bu lisans başka bir bilgisayara bağlı.', 'not-found': 'Lisans bulunamadı.', edition: 'Bu lisans bu sürüm için değil.',
+  pending: 'Bu bilgisayar henüz onaylanmadı.', 'machine-limit': 'Bu lisansın cihaz sınırı dolu.',
+  offline: 'Lisans sunucusuna 3 gündür ulaşılamıyor. İnternet bağlantınızı kontrol edin.'
+};
+function onLicenseLost(status) {
+  if (status?.ok) return;
+  const why = LICENSE_LOST_TEXT[status?.reason] || 'Lisans doğrulanamadı.';
+  try { dialog.showErrorBox('DreamTeam Manager', `${why} Uygulama kapatılıyor.`); } catch {}
+  app.__reallyQuit = true;
+  app.quit();
+}
+function createLicenseWindow() {
+  const win = new BrowserWindow({
+    width: 480, height: 470, resizable: false, title: 'DreamTeam Manager', icon: ICON_PNG,
+    autoHideMenuBar: true, webPreferences: { nodeIntegration: true, contextIsolation: false }
+  });
+  win.loadFile(path.join(__dirname, 'license.html'));
+  return win;
+}
+// Returns true when the app may start. In the full edition it returns true at once.
+async function gateLicense() {
+  if (!IS_LICENSED) return true;
+  const { LicenseClient } = require('./services/license.cjs');
+  licenseClient = new LicenseClient({ app, config: require('./license-config.cjs'), edition: BUILD_EDITION });
+  ipcMain.handle('license:machine', () => licenseClient.machine);
+  const first = await licenseClient.check('validate');
+  if (first.ok) { licenseClient.startPeriodic(onLicenseLost); return true; }
+  return await new Promise(resolve => {
+    const win = createLicenseWindow();
+    let done = false;
+    ipcMain.handle('license:submit', async (_e, key) => {
+      const s = await licenseClient.activate(key, 'activate', []);
+      if (s.ok) { done = true; licenseClient.startPeriodic(onLicenseLost); try { win.close(); } catch {} resolve(true); }
+      return s;
+    });
+    win.on('closed', () => { if (!done) resolve(false); });
+  });
+}
+
+app.whenReady().then(async () => {
   if (!singleInstance) return;
+  if (!(await gateLicense())) { app.__reallyQuit = true; app.quit(); return; }
   initServices(); registerIpc(); createWindow();
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
 });
@@ -1274,7 +1658,10 @@ async function shutdownServices() {
   // Each step on its own: one failing service must not leave the others
   // (or their Chromium processes) running.
   const steps = [
-    () => scheduler?.stop(),
+    () => matchControl?.stop(), // @strip(basic)
+    () => tournamentLive?.stop(), // @strip(basic)
+    () => hunter?.stop({ remember: false }), // @strip(basic)
+    () => scheduler?.stop(), // @strip(basic)
     () => trading?.stop(),
     () => autoTrade?.shutdown?.(),
     () => market?.shutdown(),
@@ -1287,7 +1674,7 @@ async function shutdownServices() {
     () => eliteAscent?.stop(),
     () => magicTeam?.stop(),
     () => office?.stop(),
-    () => tournamentLevel?.stop(),
+    () => tournamentLevel?.stop(), // @strip(basic)
     () => big3?.stop(),
     () => professional?.stop(),
     () => tkTransfer?.stop(),
@@ -1299,6 +1686,7 @@ async function shutdownServices() {
     () => cheer?.stop(),
     () => dailySlot?.stop(),
     () => tower?.stop(),
+    () => dataCleanup?.stop(),
     () => gameHealth?.shutdown(),
     () => accountHealth?.stop(),
     () => activity?.flushArchive(),
@@ -1329,7 +1717,9 @@ async function factoryReset({ keepPasswords = true } = {}) {
   await shutdownServices();
   store.freeze();
   // Learned Daily Quiz answers are game knowledge, not personal data: always kept.
-  const keep = new Set(['mcp-profiles', 'quiz-bank.json', ...(keepPasswords ? KEEP_ON_RESET : [])]);
+  // The license key (userData/license.json) is outside the data folder, so a reset never asks
+  // for the license again; 'license.json' is listed too in case it ever lives here.
+  const keep = new Set(['mcp-profiles', 'quiz-bank.json', 'license.json', ...(keepPasswords ? KEEP_ON_RESET : [])]);
   for (const name of require('fs').readdirSync(dataDir)) {
     if (keep.has(name)) continue;
     try { require('fs').rmSync(path.join(dataDir, name), { recursive: true, force: true, maxRetries: 3 }); } catch (error) { console.warn('[factory reset]', name, error?.message || error); }

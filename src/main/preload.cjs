@@ -24,13 +24,13 @@ contextBridge.exposeInMainWorld('dreamteam', {
     clearBulk: () => ipcRenderer.invoke('buy:clear-bulk'),
     convert: (entryId) => ipcRenderer.invoke('buy:convert', entryId),
     fire: (ids) => ipcRenderer.invoke('buy:fire', ids),
-    addWatch: (players) => ipcRenderer.invoke('buy:add-watch', players),
-    updateWatch: (id, patch) => ipcRenderer.invoke('buy:update-watch', { id, patch }),
-    addRange: (id) => ipcRenderer.invoke('buy:add-range', id),
-    removeWatch: (ids) => ipcRenderer.invoke('buy:remove-watch', ids),
-    setConfig: (patch) => ipcRenderer.invoke('buy:set-config', patch),
-    startAuto: (options) => ipcRenderer.invoke('buy:start-auto', options),
-    stopAuto: () => ipcRenderer.invoke('buy:stop-auto')
+    addWatch: (players) => ipcRenderer.invoke('buy:add-watch', players), // @strip(basic)
+    updateWatch: (id, patch) => ipcRenderer.invoke('buy:update-watch', { id, patch }), // @strip(basic)
+    addRange: (id) => ipcRenderer.invoke('buy:add-range', id), // @strip(basic)
+    removeWatch: (ids) => ipcRenderer.invoke('buy:remove-watch', ids), // @strip(basic)
+    setConfig: (patch) => ipcRenderer.invoke('buy:set-config', patch), // @strip(basic)
+    startAuto: (options) => ipcRenderer.invoke('buy:start-auto', options), // @strip(basic)
+    stopAuto: () => ipcRenderer.invoke('buy:stop-auto') // @strip(basic)
   },
   activityArchive: {
     days: () => ipcRenderer.invoke('activity:days'),
@@ -46,6 +46,7 @@ contextBridge.exposeInMainWorld('dreamteam', {
   app: {
     factoryReset: (options) => ipcRenderer.invoke('app:factory-reset', options),
     pauseAll: () => ipcRenderer.invoke('app:pause-all'),
+    refocus: () => ipcRenderer.invoke('app:refocus'),
     resumeAll: () => ipcRenderer.invoke('app:resume-all')
   },
   props: {
@@ -79,8 +80,22 @@ contextBridge.exposeInMainWorld('dreamteam', {
     spin: (ids) => ipcRenderer.invoke('slot:spin', ids),
     stop: () => ipcRenderer.invoke('slot:stop')
   },
+  game: {
+    probeNow: () => ipcRenderer.invoke('game:probe-now')
+  },
+  // Owner license panel (full edition only; the handlers exist only there).
+  // @strip-begin(pro,basic)
+  licenseAdmin: {
+    overview: () => ipcRenderer.invoke('licenseAdmin:overview'),
+    createLicense: (p) => ipcRenderer.invoke('licenseAdmin:createLicense', p),
+    updateLicense: (p) => ipcRenderer.invoke('licenseAdmin:updateLicense', p),
+    deleteLicense: (key) => ipcRenderer.invoke('licenseAdmin:deleteLicense', key),
+    machine: (p) => ipcRenderer.invoke('licenseAdmin:machine', p)
+  },
+  // @strip-end
   apk: {
     start: (config) => ipcRenderer.invoke('apk:start', config),
+    scan: (ids) => ipcRenderer.invoke('apk:scan', ids),
     stop: () => ipcRenderer.invoke('apk:stop'),
     saveConfig: (config) => ipcRenderer.invoke('apk:save-config', config)
   },
@@ -92,7 +107,8 @@ contextBridge.exposeInMainWorld('dreamteam', {
     start: (plan) => ipcRenderer.invoke('pro:start', plan),
     stop: () => ipcRenderer.invoke('pro:stop'),
     status: (accountIds) => ipcRenderer.invoke('pro:status', accountIds),
-    createHof: (accountId) => ipcRenderer.invoke('pro:createHof', accountId)
+    createHof: (accountId) => ipcRenderer.invoke('pro:createHof', accountId),
+    reset: (accountIds) => ipcRenderer.invoke('pro:reset', accountIds)
   },
   magic: {
     start: (plan) => ipcRenderer.invoke('magic:start', plan),
@@ -124,12 +140,16 @@ contextBridge.exposeInMainWorld('dreamteam', {
     learn: (accountId) => ipcRenderer.invoke('skills:learn', { accountId }),
     shuffle: (accountId, containerId) => ipcRenderer.invoke('skills:shuffle', { accountId, containerId }),
     lock: (accountId, containerId, slot, locked) => ipcRenderer.invoke('skills:lock', { accountId, containerId, slot, locked }),
-    assign: (accountId, containerId, playerId) => ipcRenderer.invoke('skills:assign', { accountId, containerId, playerId })
+    assign: (accountId, containerId, playerId) => ipcRenderer.invoke('skills:assign', { accountId, containerId, playerId }),
+    auto: (accountIds, plan) => ipcRenderer.invoke('skills:auto', { accountIds, plan }),
+    autoStop: () => ipcRenderer.invoke('skills:auto-stop'),
+    catalog: () => ipcRenderer.invoke('skills:catalog')
   },
   ascent: {
     start: (plan) => ipcRenderer.invoke('ascent:start', plan),
     stop: () => ipcRenderer.invoke('ascent:stop'),
-    status: (accountIds) => ipcRenderer.invoke('ascent:status', accountIds)
+    status: (accountIds) => ipcRenderer.invoke('ascent:status', accountIds),
+    reset: (accountIds) => ipcRenderer.invoke('ascent:reset', accountIds)
   },
   goup: {
     start: (accountIds, options = {}) => ipcRenderer.invoke('goup:start', { accountIds, ...options }),
@@ -150,6 +170,7 @@ contextBridge.exposeInMainWorld('dreamteam', {
     friendScout: (accountId, friendId) => ipcRenderer.invoke('social:friend-scout', { accountId, friendId }),
     friendSign: (accountId, friendId, playerId) => ipcRenderer.invoke('social:friend-sign', { accountId, friendId, playerId }),
     claimMail: (accountId, mailId) => ipcRenderer.invoke('social:claimMail', { accountId, mailId }),
+    claimAllMail: () => ipcRenderer.invoke('social:claimAllMail'),
     poll: () => ipcRenderer.invoke('social:poll')
   },
   cheer: {
@@ -172,15 +193,52 @@ contextBridge.exposeInMainWorld('dreamteam', {
     join: (accountId, slot) => ipcRenderer.invoke('draft:join', { accountId, slot }),
     pick: (accountId, playerId) => ipcRenderer.invoke('draft:pick', { accountId, playerId }),
     listPlayers: (accountId, items) => ipcRenderer.invoke('draft:list-players', { accountId, items }),
-    clearDrafted: (accountId) => ipcRenderer.invoke('draft:clear-drafted', accountId),
+    clearDrafted: (accountId, source) => ipcRenderer.invoke('draft:clear-drafted', source ? { accountId, source } : accountId),
     firePlayers: (accountId, playerIds) => ipcRenderer.invoke('draft:fire-players', { accountId, playerIds }),
     toCards: (accountId, playerIds) => ipcRenderer.invoke('draft:to-cards', { accountId, playerIds })
   },
   rosters: { refresh: () => ipcRenderer.invoke('rosters:refresh') },
+  // @strip-begin(basic)
+  rotation: {
+    setMode: (mode, on) => ipcRenderer.invoke('rotation:set-mode', { mode, on }),
+    stop: (accountId) => ipcRenderer.invoke('rotation:stop', accountId)
+  },
+  // @strip-end
+  // @strip-begin(basic)
+  tlive: { setAuto: (ids) => ipcRenderer.invoke('tlive:set-auto', ids),
+    setRotation: (ids, on) => ipcRenderer.invoke('tlive:set-rotation', { ids, on })
+  },
+  // @strip-end
+  // @strip-begin(basic)
+  hunter: {
+    add: (players) => ipcRenderer.invoke('hunter:add', players),
+    update: (playerId, patch) => ipcRenderer.invoke('hunter:update', { playerId, patch }),
+    remove: (ids) => ipcRenderer.invoke('hunter:remove', ids),
+    start: () => ipcRenderer.invoke('hunter:start'),
+    stop: () => ipcRenderer.invoke('hunter:stop'),
+    clearWarnings: () => ipcRenderer.invoke('hunter:clear-warnings'),
+    setRefresh: (patch) => ipcRenderer.invoke('hunter:set-refresh', patch),
+    setOption: (patch) => ipcRenderer.invoke('hunter:set-option', patch)
+  },
+  // @strip-end
+  injury: {
+    scan: (ids) => ipcRenderer.invoke('injury:scan', ids),
+    heal: (items, quantity) => ipcRenderer.invoke('injury:heal', { items, quantity }),
+    swap: (ids) => ipcRenderer.invoke('injury:swap', ids),
+    settings: (patch) => ipcRenderer.invoke('injury:settings', patch),
+    viewStart: (accountIds, max) => ipcRenderer.invoke('injury:view-start', { accountIds, max }),
+    viewStop: () => ipcRenderer.invoke('injury:view-stop')
+  },
+  labor: {
+    read: () => ipcRenderer.invoke('labor:read'),
+    range: (playerId) => ipcRenderer.invoke('labor:range', playerId),
+    apply: (options) => ipcRenderer.invoke('labor:apply', options)
+  },
   bag: {
     read: (accountIds) => ipcRenderer.invoke('bag:read', { accountIds }),
     use: (accountIds, itemId) => ipcRenderer.invoke('bag:use', { accountIds, itemId }),
-    status: (accountId) => ipcRenderer.invoke('bag:status', { accountId })
+    status: (accountId) => ipcRenderer.invoke('bag:status', { accountId }),
+    openCards: (accountIds, itemIds, count) => ipcRenderer.invoke('bag:open-cards', { accountIds, itemIds, count })
   },
   players: {
     refresh: () => ipcRenderer.invoke('players:refresh'),
@@ -193,6 +251,8 @@ contextBridge.exposeInMainWorld('dreamteam', {
     remove: (id) => ipcRenderer.invoke('accounts:remove', id),
     start: (id) => ipcRenderer.invoke('accounts:start', id),
     stop: (id) => ipcRenderer.invoke('accounts:stop', id),
+    startMany: (ids) => ipcRenderer.invoke('accounts:start-many', ids),
+    stopMany: (ids) => ipcRenderer.invoke('accounts:stop-many', ids),
     selectTask: (id, taskId) => ipcRenderer.invoke('accounts:select-task', { id, taskId }),
     setMain: (id) => ipcRenderer.invoke('accounts:set-main', id),
     setRole: (id, role) => ipcRenderer.invoke('accounts:set-role', { id, role })
@@ -235,13 +295,22 @@ contextBridge.exposeInMainWorld('dreamteam', {
     firePlayers: (accountId, playerIds) => ipcRenderer.invoke('auto-trade:fire-players', { accountId, playerIds }),
     attention: (kind) => ipcRenderer.invoke('auto-trade:attention', kind)
   },
+  // @strip-begin(basic)
   signup: {
     create: (form) => ipcRenderer.invoke('signup:create', form),
     stop: () => ipcRenderer.invoke('signup:stop')
   },
+  // @strip-end
   equipment: {
     batch: (opts) => ipcRenderer.invoke('equipment:batch', opts),
     batchStop: () => ipcRenderer.invoke('equipment:batch-stop'),
+    materials: (opts) => ipcRenderer.invoke('equipment:materials', opts),
+    dismantle: (opts) => ipcRenderer.invoke('equipment:dismantle', opts),
+    many: (opts) => ipcRenderer.invoke('equipment:many', opts),
+    equip: (playerId, inventoryId) => ipcRenderer.invoke('equipment:equip', { playerId, inventoryId }),
+    unequip: (playerId, slot) => ipcRenderer.invoke('equipment:unequip', { playerId, slot }),
+    quickEquip: (playerIds) => ipcRenderer.invoke('equipment:quick-equip', playerIds),
+    unequipAll: () => ipcRenderer.invoke('equipment:unequip-all'),
     open: (accountId) => ipcRenderer.invoke('equipment:open', accountId),
     scan: () => ipcRenderer.invoke('equipment:scan'),
     close: () => ipcRenderer.invoke('equipment:close'),
@@ -258,10 +327,12 @@ contextBridge.exposeInMainWorld('dreamteam', {
     plan: (collectionId, slot) => ipcRenderer.invoke('equipment:plan', collectionId, slot),
     prepare: (collectionId, slot) => ipcRenderer.invoke('equipment:prepare', collectionId, slot)
   },
+  // @strip-begin(basic)
   tournamentLevel: {
     check: (swap) => ipcRenderer.invoke('tournament-level:check', { swap }),
     setAuto: (on) => ipcRenderer.invoke('tournament-level:auto', { on })
   },
+  // @strip-end
   tournament: {
     start: (accountIds) => ipcRenderer.invoke('tournament:start', accountIds),
     stop: () => ipcRenderer.invoke('tournament:stop'),
@@ -288,11 +359,17 @@ contextBridge.exposeInMainWorld('dreamteam', {
     refresh: () => ipcRenderer.invoke('tasks:refresh'),
     openFolder: () => ipcRenderer.invoke('tasks:open-folder')
   },
+  dataCleanup: {
+    run: () => ipcRenderer.invoke('data-cleanup:run'),
+    setDays: (days) => ipcRenderer.invoke('data-cleanup:set-days', days)
+  },
+  // @strip-begin(basic)
   schedules: {
     add: (payload) => ipcRenderer.invoke('schedules:add', payload),
     remove: (id) => ipcRenderer.invoke('schedules:remove', id),
     toggle: (id, enabled) => ipcRenderer.invoke('schedules:toggle', { id, enabled })
   },
+  // @strip-end
   daily: {
     claimRewards: (accountIds) => ipcRenderer.invoke('daily:claim-rewards', accountIds),
     refreshTasks: (accountIds) => ipcRenderer.invoke('daily:refresh-tasks', accountIds)

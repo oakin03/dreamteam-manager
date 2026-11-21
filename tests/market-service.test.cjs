@@ -50,8 +50,10 @@ function fakeGame(tickets, opts = {}) {
       }
       if (event === 'market:sellPlayer') {
         if (opts.sellFails?.includes(payload.playerId)) return reply('market:sellResult', { success: false, message: 'Salary cap exceeded' });
+        if (opts.busyOnce?.includes(payload.playerId) && !(state.busyDone ||= new Set()).has(payload.playerId)) { state.busyDone.add(payload.playerId); return reply('market:sellResult', { success: false, message: 'Item is currently being processed by another operation.' }); }
         state.roster.delete(payload.playerId);
         state.tickets.unshift(ticket(`new-${payload.playerId}${state.tickets.some(t => t.id === `new-${payload.playerId}`) ? `-${state.tickets.length}` : ""}`, 'LISTED', { price: payload.price, mode: payload.paymentMode, playerId: payload.playerId }));
+        state.tickets[0].createdAt = new Date().toISOString(); // a new listing is made now, as in the game
         return reply('market:sellResult', { type: 'player', success: true, playerId: payload.playerId, promoted: null });
       }
       if (event === 'getUserBasicInfo') return reply('userBasicInfo', { success: true, autoPKTickets: 120, ticket: 7, funds: 5000, level: 39, salaryCap: 9000, totalSalaryUsed: 1000 });
@@ -201,12 +203,12 @@ test('only one market operation runs at a time', async () => {
   await first;
 });
 
-test('the last 19:10 Turkey cutoff is found correctly around the boundary', () => {
+test('the last 19:05 Turkey cutoff (00:05 Manila) is found correctly around the boundary', () => {
   const { lastExpiryCutoff } = require('../src/main/services/market-service.cjs');
-  // 19:15 TR (16:15 UTC) -> today's 19:10; 19:05 TR -> yesterday's.
-  assert.equal(new Date(lastExpiryCutoff(Date.parse('2026-10-20T16:15:00Z'))).toISOString(), '2026-10-20T16:10:00.000Z');
-  assert.equal(new Date(lastExpiryCutoff(Date.parse('2026-10-20T16:05:00Z'))).toISOString(), '2026-10-19T16:10:00.000Z');
-  assert.equal(new Date(lastExpiryCutoff(Date.parse('2026-10-20T01:00:00Z'))).toISOString(), '2026-10-19T16:10:00.000Z');
+  // 19:15 TR (16:15 UTC) -> today's 19:05; 19:03 TR -> yesterday's.
+  assert.equal(new Date(lastExpiryCutoff(Date.parse('2026-10-20T16:15:00Z'))).toISOString(), '2026-10-20T16:05:00.000Z');
+  assert.equal(new Date(lastExpiryCutoff(Date.parse('2026-10-20T16:03:00Z'))).toISOString(), '2026-10-19T16:05:00.000Z');
+  assert.equal(new Date(lastExpiryCutoff(Date.parse('2026-10-20T01:00:00Z'))).toISOString(), '2026-10-19T16:05:00.000Z');
 });
 
 test('scheduled relist lists only yesterday\'s expired listings, at the same price and currency', async () => {
@@ -241,7 +243,9 @@ test('listing kind: on sale, was on sale yesterday, or stock', () => {
   const now = Date.parse('2026-10-20T16:15:00Z'); // 19:15 TR, just after today's expiry
   assert.equal(listingKind({ status: 'LISTED', createdAt: '2026-10-01T00:00:00Z' }, now), 'onSale');
   assert.equal(listingKind({ status: 'EXPIRED', createdAt: '2026-10-19T20:00:00Z' }, now), 'recent');
-  assert.equal(listingKind({ status: 'EXPIRED', createdAt: '2026-10-19T16:09:00Z' }, now), 'stock');
+  assert.equal(listingKind({ status: 'EXPIRED', createdAt: '2026-10-19T16:04:00Z' }, now), 'stock');
+  // made between 19:05 and 19:10 yesterday: on sale until today's expiry (was stock before 2026-11-17)
+  assert.equal(listingKind({ status: 'EXPIRED', createdAt: '2026-10-19T16:07:00Z' }, now), 'recent');
   assert.equal(listingKind({ status: 'SOLD', createdAt: '2026-10-19T20:00:00Z' }, now), null);
 });
 
@@ -283,4 +287,14 @@ test('take off market brings the players back; take off and fire also fires them
   assert.deepEqual(game.calls.filter(c => c.event === 'firePlayer').map(c => c.payload.playerId), ['p-l2', 'p-e1']);
   assert.ok(logs.some(l => l.code === 'mk.fired'));
   await assert.rejects(() => s.removePlayers([]), /Select at least one/);
+});
+
+test('a sale answered "being processed" right after the cancel is tried again (2026-11-17)', async () => {
+  const game = fakeGame([ticket('e1', 'EXPIRED', { price: 40 })], { busyOnce: ['p-e1'] });
+  const { s, logs } = service(game);
+  await s.loadRelist(['a1']);
+  const snap = await s.relistPlayers([{ ticketId: 'e1', price: 40, currency: 'APK' }]);
+  assert.equal(game.calls.filter(c => c.event === 'market:sellPlayer').length, 2);
+  assert.equal(snap.relist.report.listed, 1);
+  assert.ok(!logs.some(l => l.code === 'mk.relistSellFailed'));
 });

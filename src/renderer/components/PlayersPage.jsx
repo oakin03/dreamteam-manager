@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import ValuePredictPage from './ValuePredictPage';
 import SortTable from './SortTable';
 import { filOf } from '../i18n-fil';
 import { roleColors } from './roleColors';
@@ -16,44 +17,49 @@ const gapPct = p => p.base > 0 ? Math.round(((p.value - p.base) / p.base) * 1000
 
 const TEXT = {
   tr: {
-    tabAll: 'Tüm oyuncular', tabRosters: 'Kadrolarım',
+    tabAll: 'Tüm oyuncular', tabRosters: 'Kadrolarım', tabVp: 'Değer Tahmini',
     title: 'Oyuncular', subtitle: '{count} oyuncu · son güncelleme {at} · sonraki {next}', never: 'henüz yok', refresh: 'Yenile', refreshing: 'Yenileniyor…',
     up: 'Artan', down: 'Düşen', atBase: 'Base\'de / altında', same: 'Değişmeyen',
     search: 'Oyuncu ara', team: 'Takım', position: 'Mevki', rating: 'Rating', min: 'en az', max: 'en çok', value: 'Değer', base: 'Base', change: 'Değişim', gap: 'Base farkı', roles: 'Roller', card: 'Kart',
     all: 'Hepsi', changeUp: 'Artanlar', changeDown: 'Düşenler', changeNone: 'Değişmeyenler', baseOnly: 'Base\'de / altında', baseNear: 'Base\'e %10 yakın', baseNot: 'Base üstünde',
     roleAny: 'Rolü olanlar', roleNone: 'Rolü olmayanlar', cardHas: 'Kartı olanlar', cardNo: 'Kartı olmayanlar', cardNoTeam: 'No Team', injured: 'Sakat', healthy: 'Sağlıklı', health: 'Sağlık',
     reset: 'Filtreleri temizle', player: 'Oyuncu', shown: '{shown} / {total} gösteriliyor', page: 'Sayfa {p} / {n}', noData: 'Liste henüz alınmadı. "Yenile" ile şimdi alabilirsin; her gün 11:05\'ten sonra otomatik alınır.',
-    baseBadge: 'Base', baseHint: 'Değerinden %5 indirim düşünce Base ya da altında (75 TK altı gösterilmez)', ratingWas: 'önceki gün {g}', editRoles: 'Rolleri düzenle', addBuy: 'Auto Buy listesine ekle', addBuySel: 'Seçilileri Auto Buy listesine ekle ({n})', inBuy: 'Auto Buy listesinde', addedBuy: '{n} oyuncu Auto Buy listesine eklendi', clearSel: 'Seçimi temizle', noTeam: 'No Team', stars: '★{s}', cards: '{n} kart', modified: 'Değiştirilmiş'
+    baseBadge: 'Base', baseHint: 'Değerinden %5 indirim düşünce Base ya da altında (75 TK altı gösterilmez)', ratingWas: 'önceki gün {g}', editRoles: 'Rolleri düzenle', addBuy: 'Auto Buy listesine ekle', addBuySel: 'Seçilileri Auto Buy listesine ekle ({n})', inBuy: 'Auto Buy listesinde', removeBuy: 'Auto Buy listesinden çıkar', removedBuy: '{name} Auto Buy listesinden çıkarıldı', addHuntHint: 'Scout Avcısı listesine ekle', removeHuntHint: 'Scout Avcısı listesinden çıkar', addedHunt: '{name} Scout Avcısı listesine eklendi', removedHunt: '{name} Scout Avcısı listesinden çıkarıldı', addedBuy: '{n} oyuncu Auto Buy listesine eklendi', clearSel: 'Seçimi temizle', noTeam: 'No Team', stars: '★{s}', cards: '{n} kart', modified: 'Değiştirilmiş'
   },
   en: {
-    tabAll: 'All players', tabRosters: 'My rosters',
+    tabAll: 'All players', tabRosters: 'My rosters', tabVp: 'Value prediction',
     title: 'Players', subtitle: '{count} players · updated {at} · next {next}', never: 'not yet', refresh: 'Refresh', refreshing: 'Refreshing…',
     up: 'Up', down: 'Down', atBase: 'At / below base', same: 'Unchanged',
     search: 'Search player', team: 'Team', position: 'Position', rating: 'Rating', min: 'min', max: 'max', value: 'Value', base: 'Base', change: 'Change', gap: 'Over base', roles: 'Roles', card: 'Card',
     all: 'All', changeUp: 'Going up', changeDown: 'Going down', changeNone: 'Unchanged', baseOnly: 'At / below base', baseNear: 'Within 10% of base', baseNot: 'Above base',
     roleAny: 'With a role', roleNone: 'Without a role', cardHas: 'With cards', cardNo: 'Without cards', cardNoTeam: 'No Team', injured: 'Injured', healthy: 'Healthy', health: 'Health',
     reset: 'Clear filters', player: 'Player', shown: '{shown} / {total} shown', page: 'Page {p} / {n}', noData: 'No list yet. Press "Refresh" to get it now; it is fetched automatically every day after 11:05.',
-    baseBadge: 'Base', baseHint: 'At or below its Base after the 5% discount (players under 75 TK not shown)', ratingWas: 'was {g} yesterday', editRoles: 'Edit roles', addBuy: 'Add to Auto Buy', addBuySel: 'Add selected to Auto Buy ({n})', inBuy: 'On the Auto Buy list', addedBuy: '{n} player(s) added to Auto Buy', clearSel: 'Clear selection', noTeam: 'No Team', stars: '★{s}', cards: '{n} cards', modified: 'Modified'
+    baseBadge: 'Base', baseHint: 'At or below its Base after the 5% discount (players under 75 TK not shown)', ratingWas: 'was {g} yesterday', editRoles: 'Edit roles', addBuy: 'Add to Auto Buy', addBuySel: 'Add selected to Auto Buy ({n})', inBuy: 'On the Auto Buy list', removeBuy: 'Take off the Auto Buy list', removedBuy: '{name} taken off the Auto Buy list', addHuntHint: 'Add to the Scout Hunter list', removeHuntHint: 'Take off the Scout Hunter list', addedHunt: '{name} added to the Scout Hunter list', removedHunt: '{name} taken off the Scout Hunter list', addedBuy: '{n} player(s) added to Auto Buy', clearSel: 'Clear selection', noTeam: 'No Team', stars: '★{s}', cards: '{n} cards', modified: 'Modified'
   },
   get fil() { return filOf(this.en); }
 };
 const fill = (s, p = {}) => String(s).replace(/\{(\w+)\}/g, (_, k) => p[k] ?? '');
 const EMPTY = { q: '', team: '', position: '', ratingMin: '', ratingMax: '', valueMin: '', valueMax: '', change: '', base: '', role: '', card: '', health: '' };
 
-export default function PlayersPage({ state, t, toast }) {
+export default function PlayersPage({ state, t, toast, tab: openTab = null }) {
   const x = TEXT[t.lang] || TEXT.en;
   const data = state.players || {};
   const list = data.players || [];
   const roles = state.cards?.roles || [];
-  const [tab, setTab] = useState('all');
+  const [tab, setTab] = useState(openTab || 'all');
   const [f, setF] = useState(EMPTY);
   const [sort, setSort] = useState({ key: 'value', dir: 'desc' });
   const [page, setPage] = useState(0);
   const [editing, setEditing] = useState(null);
-  const [picked, setPicked] = useState(() => new Set());
-  const inBuy = useMemo(() => new Set((state.buy?.watch || []).map(w => w.playerId)), [state.buy]);
-  const togglePick = id => setPicked(p => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
-  const addToBuy = async list => { try { const r = await api.buy.addWatch(list.map(p => ({ id: p.id, name: p.name, team: p.team, position: p.position, rating: p.rating, value: p.value, base: p.base }))); toast(fill(x.addedBuy, { n: r?.added ?? list.length }), 'success'); setPicked(new Set()); } catch (e) { toast(e.message, 'error'); } };
+  const [picked, setPicked] = useState(() => new Set()); // @strip(basic)
+  const inBuy = useMemo(() => new Set((state.buy?.watch || []).map(w => w.playerId)), [state.buy]); // @strip(basic)
+  // Auto Buy / Scout Avcısı: the button adds the player and, when it is on the list, takes it off (user 2026-11-17)
+  const buyRow = useMemo(() => new Map((state.buy?.watch || []).map(w => [w.playerId, w.id])), [state.buy]); // @strip(basic)
+  const inHunt = useMemo(() => new Set((state.hunter?.watch || []).map(w => w.playerId)), [state.hunter]); // @strip(basic)
+  const removeFromBuy = async p => { try { await api.buy.removeWatch([buyRow.get(p.id)]); toast(fill(x.removedBuy, { name: p.name }), 'success'); } catch (e) { toast(e.message, 'error'); } }; // @strip(basic)
+  const toggleHunt = async p => { try { if (inHunt.has(p.id)) { await api.hunter.remove([p.id]); toast(fill(x.removedHunt, { name: p.name }), 'success'); } else { await api.hunter.add([{ id: p.id, name: p.name, team: p.team, rating: p.rating, position: p.position }]); toast(fill(x.addedHunt, { name: p.name }), 'success'); } } catch (e) { toast(e.message, 'error'); } }; // @strip(basic)
+  const togglePick = id => setPicked(p => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; }); // @strip(basic)
+  const addToBuy = async list => { try { const r = await api.buy.addWatch(list.map(p => ({ id: p.id, name: p.name, team: p.team, position: p.position, rating: p.rating, value: p.value, base: p.base }))); toast(fill(x.addedBuy, { n: r?.added ?? list.length }), 'success'); setPicked(new Set()); } catch (e) { toast(e.message, 'error'); } }; // @strip(basic)
   const set = patch => { setF(v => ({ ...v, ...patch })); setPage(0); };
   const teams = useMemo(() => [...new Set(list.map(p => p.team).filter(Boolean))].sort(), [list]);
   const counts = useMemo(() => ({ up: list.filter(p => p.change > 0).length, down: list.filter(p => p.change < 0).length, base: list.filter(p => p.atBase).length, same: list.filter(p => !p.change).length }), [list]);
@@ -99,7 +105,8 @@ export default function PlayersPage({ state, t, toast }) {
   const at = data.fetchedAt ? new Date(data.fetchedAt).toLocaleString() : x.never;
   const next = data.nextAt ? new Date(data.nextAt).toLocaleString() : '—';
 
-  const tabs = <div className="cards-tabs"><button className={tab === 'all' ? 'active' : ''} onClick={() => setTab('all')}>{x.tabAll}</button><button className={tab === 'rosters' ? 'active' : ''} onClick={() => setTab('rosters')}>{x.tabRosters}</button></div>;
+  const tabs = <div className="cards-tabs"><button className={tab === 'all' ? 'active' : ''} onClick={() => setTab('all')}>{x.tabAll}</button><button className={tab === 'rosters' ? 'active' : ''} onClick={() => setTab('rosters')}>{x.tabRosters}</button><button className={tab === 'vp' ? 'active' : ''} onClick={() => setTab('vp')}>{x.tabVp}</button></div>;
+  if (tab === 'vp') return <div className="page players-page"><div className="page-title"><div><h1>{x.title}</h1></div></div>{tabs}<div className="embedded-page"><ValuePredictPage state={state} t={t} toast={toast} /></div></div>;
   if (tab === 'rosters') return <div className="page players-page"><div className="page-title"><div><h1>{x.title}</h1></div></div>{tabs}<RostersTab state={state} t={t} toast={toast} /></div>;
 
   return <div className="page players-page">
@@ -128,13 +135,15 @@ export default function PlayersPage({ state, t, toast }) {
         <select value={f.card} onChange={e => set({ card: e.target.value })}><option value="">{x.card}: {x.all}</option><option value="has">{x.cardHas}</option><option value="no">{x.cardNo}</option><option value="noTeam">{x.cardNoTeam}</option></select>
         <select value={f.health} onChange={e => set({ health: e.target.value })}><option value="">{x.health}: {x.all}</option><option value="healthy">{x.healthy}</option><option value="injured">{x.injured}</option></select>
         <button className="btn ghost small" onClick={() => { setF(EMPTY); setPage(0); }}>{x.reset}</button>
-        {picked.size > 0 && <><button className="btn success small" onClick={() => addToBuy(list.filter(p => picked.has(p.id)))}>{fill(x.addBuySel, { n: picked.size })}</button><button className="btn ghost small" onClick={() => setPicked(new Set())}>{x.clearSel}</button></>}
+        {picked.size > 0 && <><button className="btn success small" onClick={() => addToBuy(list.filter(p => picked.has(p.id)))}>{fill(x.addBuySel, { n: picked.size })}</button><button className="btn ghost small" onClick={() => setPicked(new Set())}>{x.clearSel}</button></>}{/* @strip(basic) */}
         <span className="pl-count">{fill(x.shown, { shown: rows.length, total: list.length })}</span>
       </div>
       <div className="panel table-panel pl-table"><SortTable>
-        <thead><tr><th><input type="checkbox" checked={visible.length > 0 && visible.every(p => picked.has(p.id))} onChange={e => setPicked(prev => { const n = new Set(prev); for (const p of visible) e.target.checked ? n.add(p.id) : n.delete(p.id); return n; })} /></th>{th('name', x.player)}{th('team', x.team)}{th('position', x.position)}{th('rating', x.rating)}{th('value', x.value)}{th('base', x.base)}{th('change', x.change)}{th('gap', x.gap)}{th('roles', x.roles)}{th('card', x.card)}<th></th></tr></thead>
+        <thead><tr>
+<th><input type="checkbox" checked={visible.length > 0 && visible.every(p => picked.has(p.id))} onChange={e => setPicked(prev => { const n = new Set(prev); for (const p of visible) e.target.checked ? n.add(p.id) : n.delete(p.id); return n; })} /></th>{/* @strip(basic) */}
+{th('name', x.player)}{th('team', x.team)}{th('position', x.position)}{th('rating', x.rating)}{th('value', x.value)}{th('base', x.base)}{th('change', x.change)}{th('gap', x.gap)}{th('roles', x.roles)}{th('card', x.card)}<th></th></tr></thead>
         <tbody>{visible.map(p => <tr key={p.id} className={p.atBase ? 'pl-base-row' : ''}>
-          <td><input type="checkbox" checked={picked.has(p.id)} onChange={() => togglePick(p.id)} /></td>
+          <td><input type="checkbox" checked={picked.has(p.id)} onChange={() => togglePick(p.id)} /></td>{/* @strip(basic) */}
           <td><b>{p.name}</b><InjuryMark name={p.name} /></td>
           <td>{p.team || '—'}</td>
           <td>{p.position}</td>
@@ -151,7 +160,9 @@ export default function PlayersPage({ state, t, toast }) {
             {editing === p.id && <div className="role-chips pl-role-edit">{roles.map(r => { const on = p.roleIds.includes(r.id); return <button key={r.id} className={on ? 'on' : ''} style={on ? { background: r.color, borderColor: r.color, color: '#fff' } : undefined} onClick={() => toggleRole(p, r.id)}>{r.name}</button>; })}</div>}
           </td>
           <td>{p.card ? <span className="pl-card">{p.card.noTeam ? x.noTeam : fill(x.stars, { s: p.card.stars ?? 0 })} · {fill(x.cards, { n: p.card.cardCount })}</span> : <span className="muted-text">—</span>}</td>
-          <td className="actions">{inBuy.has(p.id) ? <span className="pill ok" title={x.inBuy}><i />Auto Buy</span> : <button className="btn ghost small" title={x.addBuy} onClick={() => addToBuy([p])}>+ Auto Buy</button>}</td>
+          <td className="actions">
+{inBuy.has(p.id) ? <button className="btn danger-soft small" title={x.removeBuy} onClick={() => removeFromBuy(p)}>× Auto Buy</button> : <button className="btn ghost small" title={x.addBuy} onClick={() => addToBuy([p])}>+ Auto Buy</button>}{' '}{inHunt.has(p.id) ? <button className="btn danger-soft small" title={x.removeHuntHint} onClick={() => toggleHunt(p)}>× Scouting</button> : <button className="btn ghost small" title={x.addHuntHint} onClick={() => toggleHunt(p)}>+ Scouting</button>}{/* @strip(basic) */}
+</td>
         </tr>)}</tbody>
       </SortTable></div>
       {pages > 1 && <div className="pl-pager"><button className="btn ghost small" disabled={page === 0} onClick={() => setPage(p => p - 1)}>‹</button><span>{fill(x.page, { p: Math.min(page, pages - 1) + 1, n: pages })}</span><button className="btn ghost small" disabled={page >= pages - 1} onClick={() => setPage(p => p + 1)}>›</button></div>}

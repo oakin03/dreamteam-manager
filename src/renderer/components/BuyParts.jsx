@@ -11,7 +11,7 @@ export const BUY_TEXT = {
     boughtTitle: 'Satın alınanlar', boughtHint: 'Fiyat ve para birimi seçip pazara koy. Pazardaysa önce çekilir, yeni fiyatla tekrar konur.', none: 'Henüz satın alınan oyuncu yok.',
     account: 'Hesap', player: 'Oyuncu', paid: 'Ödenen', salary: 'Maaş', base: 'Base', status: 'Durum', newPrice: 'Yeni fiyat', from: 'Nereden',
     owned: 'Kadroda', listed: 'Pazarda · {price} {cur}', parked: 'Pazarda · 9.999.999 TIX (bekliyor)', sell: 'Satışa koy', reprice: 'Fiyatı güncelle', remove: 'Listeden kaldır', fire: 'Pazardan çıkar ve kov', fireSel: 'Seçilileri pazardan çıkar ve kov', relistSel: 'Seçilileri tekrar listele', selected: '{count} seçili', fireTitle: 'Oyuncular kovulsun mu?', fireAsk: '{names} pazardan çekilip kovulacak. Bu geri alınamaz.', fireYes: 'Kov', okFired: '{count} oyuncu kovuldu', okRelisted: '{count} oyuncu listelendi', hall: 'Trading Hall', auto: 'Auto Buy',
-    filterAll: 'Tümü', filterHall: 'Trading Hall', filterAuto: 'Auto Buy', okBought: '{name} alındı', invalid: 'Geçersiz fiyat',
+    filterAll: 'Tümü', filterHall: 'Trading Hall', filterAuto: 'Auto Buy', filterScout: 'Scout Avcısı', fromScout: '{owner} Scout\'undan', okBought: '{name} alındı', invalid: 'Geçersiz fiyat',
     convert: 'Karta çevir', converting: 'Çevriliyor…', converted: 'Karta çevrildi', convertTitle: '{name} karta çevrilsin mi?', convertAsk: 'Oyuncu yıldız karta çevrilir ve kadrodan çıkar; geri alınamaz. Pazardaysa önce pazardan çekilir.', convertYes: 'Karta çevir', cancel: 'Vazgeç',
     warnLow: 'Maaşı ({salary}) değerinin ({value}) çok altında (%{pct}). Satarsan daha çok kazanabilirsin.', warnBase: 'Bu bir Base oyuncu (maaşı Base seviyesinde).', okConverted: '{name} karta çevrildi', value: 'Değer',
     clearList: 'Hepsini temizle', clearListAsk: 'Listedeki {n} kayıt silinsin mi? Yalnızca bu listeden silinir; oyuncular oyunda olduğu gibi kalır.', clearListYes: 'Temizle',
@@ -25,7 +25,7 @@ export const BUY_TEXT = {
     boughtTitle: 'Bought players', boughtHint: 'Pick a price and currency and list them. A listed player is taken off first and listed again at the new price.', none: 'No bought players yet.',
     account: 'Account', player: 'Player', paid: 'Paid', salary: 'Salary', base: 'Base', status: 'Status', newPrice: 'New price', from: 'From',
     owned: 'In roster', listed: 'On the market · {price} {cur}', parked: 'On the market · 9,999,999 TIX (waiting)', sell: 'List for sale', reprice: 'Update price', remove: 'Remove from list', fire: 'Take off market and fire', fireSel: 'Take selected off market and fire', relistSel: 'List selected again', selected: '{count} selected', fireTitle: 'Fire the players?', fireAsk: '{names} will be taken off the market and fired. This cannot be undone.', fireYes: 'Fire', okFired: '{count} player(s) fired', okRelisted: '{count} player(s) listed', hall: 'Trading Hall', auto: 'Auto Buy',
-    filterAll: 'All', filterHall: 'Trading Hall', filterAuto: 'Auto Buy', okBought: '{name} bought', invalid: 'Invalid price',
+    filterAll: 'All', filterHall: 'Trading Hall', filterAuto: 'Auto Buy', filterScout: 'Scout Hunter', fromScout: "from {owner}'s Scout", okBought: '{name} bought', invalid: 'Invalid price',
     convert: 'Turn into card', converting: 'Converting…', converted: 'Turned into a card', convertTitle: 'Turn {name} into a card?', convertAsk: 'The player becomes a star card and leaves the roster; this cannot be undone. A listed player is taken off the market first.', convertYes: 'Turn into card', cancel: 'Cancel',
     warnLow: 'The salary ({salary}) is far below the value ({value}) ({pct}%). Selling could earn more.', warnBase: 'This is a Base player (salary at its Base).', okConverted: '{name} turned into a card', value: 'Value',
     clearList: 'Clear all', clearListAsk: 'Remove the {n} row(s) of this list? They are only removed from this list; the players stay as they are in the game.', clearListYes: 'Clear',
@@ -122,6 +122,8 @@ export function BoughtList({ state, lang, toast, source = null, title = null, hi
   const name = id => (state.accounts || []).find(a => a.id === id)?.name || id;
   const mainId = state.accountProfile?.mainAccountId || null;
   const live = new Map((state.players?.players || []).map(p => [p.id, p]));
+  // the players list knows the real base (a secret signed off a Scout once saved its price as the base)
+  const baseOf = e => Number(live.get(e.playerId)?.base) || e.base;
   const [ask, setAsk] = useState(null);
   const [sel, setSel] = useState(() => new Set(BOUGHT_UI.get(uiKey)?.sel || []));
   useEffect(() => { BOUGHT_UI.set(uiKey, { sel: [...sel], edits }); }, [uiKey, sel, edits]);
@@ -159,7 +161,7 @@ export function BoughtList({ state, lang, toast, source = null, title = null, hi
     const value = Number(p?.value);
     const out = [];
     if (Number(e.salary) > 0 && value > 0 && e.salary < value * LOW_SALARY_SHARE) out.push(fill(x.warnLow, { salary: num(e.salary), value: num(value), pct: Math.round(e.salary / value * 100) }));
-    if (p?.atBase || (e.salary != null && e.base > 0 && e.salary <= e.base)) out.push(x.warnBase);
+    if (p?.atBase || (e.salary != null && baseOf(e) > 0 && e.salary <= baseOf(e))) out.push(x.warnBase);
     return out;
   };
   const convert = async e => {
@@ -176,17 +178,17 @@ export function BoughtList({ state, lang, toast, source = null, title = null, hi
   };
   return <section className="bought-list">
     <h3 className="section-title">{title || x.boughtTitle} <small>{hint || x.boughtHint}</small>{rows.length > 0 && <button className="btn ghost small bought-clear" onClick={() => setClearAsk(true)}>{x.clearList}</button>}</h3>
-    {!source && <div className="bought-filter">{[['', x.filterAll], ['hall', x.filterHall], ['auto', x.filterAuto], ['trade', 'Auto Trade']].map(([k, l]) => <button key={k} className={`chip ${filter === k ? 'on' : ''}`} onClick={() => setFilter(k)}>{l}</button>)}</div>}
+    {!source && <div className="bought-filter">{[['', x.filterAll], ['hall', x.filterHall], ['auto', x.filterAuto], ['trade', 'Auto Trade'], ['scout', x.filterScout]].map(([k, l]) => <button key={k} className={`chip ${filter === k ? 'on' : ''}`} onClick={() => setFilter(k)}>{l}</button>)}</div>}
     {chosen.length > 0 && <div className="bought-bulk"><b>{fill(x.selected, { count: chosen.length })}</b><button className="btn primary small" disabled={bulk} onClick={relist}>{x.relistSel}</button><button className="btn danger-soft small" disabled={bulk} onClick={() => setFireAsk(chosen)}>{x.fireSel}</button></div>}
-    <div className="panel table-panel">{rows.length ? <SortTable><thead><tr><th className="sel-col"><input type="checkbox" checked={allOn} disabled={!live2.length} onChange={() => setSel(allOn ? new Set() : new Set(live2.map(e => e.id)))} /></th><th>{x.account}</th><th>{x.player}</th><th>{source === 'trade' ? x.value : x.paid}</th><th>{x.salary}</th><th>{x.base}</th><th>{x.status}</th><th>{x.newPrice}</th><th></th></tr></thead>
+    <div className="panel table-panel">{rows.length ? <SortTable><thead><tr><th className="sel-col"><input type="checkbox" checked={allOn} disabled={!live2.length} onChange={() => setSel(allOn ? new Set() : new Set(live2.map(e => e.id)))} /></th><th>{x.account}</th><th>{x.player}</th><th>{source === 'trade' || source === 'scout' ? x.value : x.paid}</th><th>{x.salary}</th><th>{x.base}</th><th>{x.status}</th><th>{x.newPrice}</th><th></th></tr></thead>
       <tbody>{rows.map(e => { const v = get(e); const parked = e.state === 'listed' && e.listPrice === state.buy?.parkPrice; return <tr key={e.id} className={sel.has(e.id) ? 'selected' : ''}>
         <td className="sel-col">{e.state !== 'converted' && <input type="checkbox" checked={sel.has(e.id)} onChange={() => toggle(e.id)} />}</td>
-        <td>{name(e.accountId)}{!source && <small className="cell-sub">{e.source === 'auto' ? x.auto : e.source === 'trade' ? 'Auto Trade' : x.hall}</small>}</td>
-        <td><b>{e.name}</b><InjuryMark name={e.name} />{e.salary != null && e.base > 0 && e.salary <= e.base && <span className="base-badge">BASE</span>}{e.position && <small className="cell-sub">{e.position} · {e.grade}</small>}</td>
-        {source === 'trade' ? <td><b className="price">{num(live.get(e.playerId)?.value ?? e.value)}</b></td> : <td><b className="price">{num(e.boughtPrice)}</b> {e.currency}</td>}<td>{num(e.salary)}</td><td>{num(e.base)}</td>
+        <td>{name(e.accountId)}{!source && <small className="cell-sub">{e.source === 'auto' ? x.auto : e.source === 'trade' ? 'Auto Trade' : e.source === 'scout' ? x.filterScout : x.hall}</small>}{e.from && <small className="cell-sub">{String(x.fromScout).replace('{owner}', e.from)}</small>}</td>
+        <td><b>{e.name}</b><InjuryMark name={e.name} />{e.salary != null && baseOf(e) > 0 && e.salary <= baseOf(e) && <span className="base-badge">BASE</span>}{e.position && <small className="cell-sub">{e.position} · {e.grade}</small>}</td>
+        {source === 'trade' || source === 'scout' ? <td><b className="price">{num(live.get(e.playerId)?.value ?? e.value)}</b></td> : <td><b className="price">{num(e.boughtPrice)}</b> {e.currency}</td>}<td>{num(e.salary)}</td><td>{num(baseOf(e))}</td>
         <td>{e.state === 'converted' ? <span className="pill muted"><i />{x.converted}</span> : e.state === 'listed' ? <span className={`pill ${parked ? 'warn' : 'ok'}`}><i />{parked ? x.parked : fill(x.listed, { price: num(e.listPrice), cur: e.listCurrency })}</span> : <span className="pill muted"><i />{x.owned}</span>}</td>
         <td>{e.state !== 'converted' && <span className="bought-price"><input className="price-input" type="number" min="1" value={v.price} onChange={ev => edit(e.id, { price: ev.target.value })} /><span className="currency-toggle">{['APK', 'TIX'].map(c => <button type="button" key={c} className={v.currency === c ? 'on' : ''} onClick={() => edit(e.id, { currency: c })}>{c}</button>)}</span><PriceHint playerId={e.playerId} name={e.name} currency={v.currency} lang={lang} onPick={p => edit(e.id, { price: p })} /></span>}</td>
-        <td className="actions">{e.state !== 'converted' && <button className="btn primary small" disabled={busy[e.id]} onClick={() => sell(e)}>{e.state === 'listed' ? x.reprice : x.sell}</button>}{mainId && e.accountId === mainId && e.state !== 'converted' && <button className="btn accent small" disabled={busy[e.id]} onClick={() => setAsk({ e, warn: warnings(e) })}>{busy[e.id] ? x.converting : x.convert}</button>}{e.state !== 'converted' && <button className="btn danger-soft small" disabled={busy[e.id] || bulk} onClick={() => setFireAsk([e])}>{x.fire}</button>}<button className="icon-btn" title={x.remove} onClick={() => api.buy.removeBought([e.id])}>×</button></td>
+        <td className="actions">{e.state !== 'converted' && <button className="btn primary small" disabled={busy[e.id]} onClick={() => sell(e)}>{e.state === 'listed' ? x.reprice : x.sell}</button>}{source !== 'scout' && mainId && e.accountId === mainId && e.state !== 'converted' && <button className="btn accent small" disabled={busy[e.id]} onClick={() => setAsk({ e, warn: warnings(e) })}>{busy[e.id] ? x.converting : x.convert}</button>}{e.state !== 'converted' && <button className="btn danger-soft small" disabled={busy[e.id] || bulk} onClick={() => setFireAsk([e])}>{x.fire}</button>}<button className="icon-btn" title={x.remove} onClick={() => api.buy.removeBought([e.id])}>×</button></td>
       </tr>; })}</tbody></SortTable> : <div className="empty">{x.none}</div>}</div>
     {clearAsk && <div className="modal-backdrop" onMouseDown={ev => ev.target === ev.currentTarget && setClearAsk(false)}><div className="modal" style={{ maxWidth: 460 }}>
       <div className="modal-head"><b>{x.clearList}</b><button className="icon-btn" onClick={() => setClearAsk(false)}>×</button></div>

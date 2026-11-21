@@ -1,5 +1,6 @@
 const { io } = require('socket.io-client');
 const { httpLogin } = require('./http-login.cjs');
+const { handleInjury, waitInjuryClear, injuryBlocked } = require('./injury-guard.cjs');
 
 function abortError() {
   const error = new Error('Aborted');
@@ -24,8 +25,12 @@ function sleep(ms, signal) {
 }
 
 class TaskEngine {
-  constructor({ store, credentials, registry, browserService, activity, onChanged, beforeRun = null, beforeRunNextAt = null, gameHealth = null }) {
+  constructor({ store, credentials, registry, browserService, activity, onChanged, beforeRun = null, beforeRunNextAt = null, gameHealth = null, capWait = null }) {
     this.store = store;
+    // Optional `({ accountId, attempt, signal }) => Promise<boolean>`: a task over the salary cap
+    // may wait (true = try again) instead of stopping (Auto Trade making room, 2026-11-13).
+    this.capWait = capWait;
+    this.userStops = new Map();   // accountId -> when the user last stopped it (see startAccount)
     this.gameHealth = gameHealth; // shared "is the game reachable?" (game-health.cjs)
     // Optional `async ({ account, taskId, signal }) => {}` run before a task's loop
     // (the daily routine) and again at `beforeRunNextAt(accountId)` while it runs.
@@ -39,6 +44,9 @@ class TaskEngine {
     this.activity = activity;
     this.onChanged = onChanged;
     this.workers = new Map();
+    // a stop that must stay visible on the account's row after the task ended (user 2026-11-21:
+    // an injured starter stops Auto Play with an error instead of a silent wait). Cleared on the next start.
+    this.stops = new Map();
     this.prepared = new Map();
     // One Quick Play search at a time across the user's accounts: two of them searching
     // together were paired with each other (user 2026-10-30).
@@ -46,10 +54,20 @@ class TaskEngine {
   }
 
   // Runs `fn` alone: the next account's search starts only after this one is matched.
-  _matchTurn(fn) {
-    const run = this.matchChain.then(fn, fn);
+  // One account's search at a time. A stopped account leaves the line at once instead of waiting for
+  // its turn (user 2026-11-12: "stop all" stopped the last 50-60 accounts one by one), and a turn
+  // that comes after its stop is skipped.
+  _matchTurn(fn, signal = null) {
+    const go = () => { if (signal?.aborted) throw abortError(); return fn(); };
+    const run = this.matchChain.then(go, go);
     this.matchChain = run.catch(() => {});
-    return run;
+    if (!signal) return run;
+    return new Promise((resolve, reject) => {
+      const onAbort = () => reject(abortError());
+      if (signal.aborted) return onAbort();
+      signal.addEventListener('abort', onAbort, { once: true });
+      run.then(v => { signal.removeEventListener('abort', onAbort); resolve(v); }, e => { signal.removeEventListener('abort', onAbort); reject(e); });
+    });
   }
 
   states() {
@@ -69,6 +87,7 @@ class TaskEngine {
         opponentOwn: Boolean(worker.opponentOwn)
       };
     }
+    for (const [accountId, stop] of this.stops || []) if (!result[accountId]) result[accountId] = { ...stop };
     for (const [accountId, prepared] of this.prepared) {
       if (!result[accountId]) {
         result[accountId] = {
@@ -155,7 +174,16 @@ class TaskEngine {
       httpLogin: () => httpLogin(account.login, this.credentials.decryptSecret(account.passwordEncrypted), { signal }),
       // Quick Play: one account's search at a time (see _matchTurn) and the user ids of
       // all accounts, to see when the opponent is one of them.
-      matchTurn: fn => this._matchTurn(fn),
+      matchTurn: fn => this._matchTurn(fn, signal),
+      // over the salary cap: wait for Auto Trade to make room (true) or give up (false)
+      capWait: attempt => (this.capWait ? this.capWait({ accountId: account.id, attempt, signal }) : Promise.resolve(false)),
+      // an injured starter blocks every match (2026-11-18): the shared guard swaps / heals and
+      // the plugin waits instead of retrying every few seconds
+      injury: {
+        report: message => handleInjury(account.id, message, 'Auto Play'),
+        blocked: () => injuryBlocked(account.id),
+        waitClear: () => waitInjuryClear(account.id, signal)
+      },
       ownUserIds: () => new Set(Object.values(this.store.getAccountProfile?.()?.accounts || {}).map(a => a?.userId).filter(Boolean)),
       // Plugins wait here while the game is unreachable instead of retrying on their own.
       gameHealth: this.gameHealth ? {
@@ -291,6 +319,8 @@ class TaskEngine {
         if (error?.name !== 'AbortError') {
           worker.status = 'error';
           worker.message = error.message;
+          worker.errorCode = error?.code || null;
+          worker.errorParams = error?.params || null;
           if (!error?.suppressEngineLog) {
             this.activity.add({
               level: 'error',
@@ -313,6 +343,9 @@ class TaskEngine {
         const current = this.workers.get(accountId);
         if (current === worker) {
           this.workers.delete(accountId);
+          if (worker.status === 'error' && worker.errorCode === 'injured') {
+            (this.stops ||= new Map()).set(accountId, { status: 'error', taskId: worker.taskId, taskName: worker.taskName, mode: '', message: worker.message, code: 'injured', params: worker.errorParams || {}, stoppedAt: new Date().toISOString() });
+          }
           if (worker.status !== 'error') {
             this.activity.add({
               level: 'info',
@@ -371,12 +404,27 @@ class TaskEngine {
     this._scheduleBeforeRun(worker, this.accountById(accountId), Date.now());
   }
 
+  // The user's Stop wins over every start that was already on its way (user 2026-11-13: after
+  // "stop all" the accounts a resume loop had not reached yet still started). A loop that starts
+  // accounts one after another passes `since` (when it began); an account the user stopped after
+  // that is skipped. A start by the user's own click passes no `since` and always runs.
+  markUserStop(accountIds) { const at = Date.now(); for (const id of accountIds || []) this.userStops.set(id, at); }
+  stoppedByUserSince(accountId, since) { return since != null && (this.userStops.get(accountId) || 0) >= since; }
+
   async startAccount(accountId, taskId, options = {}) {
+    this.stops?.delete(accountId);
+    if (this.stoppedByUserSince(accountId, options.since)) return { skipped: true };
     await this.prepareAccount(accountId, taskId, options);
-    return this.activatePrepared(accountId);
+    // a Stop pressed while this one was preparing / starting wins (user 2026-11-14)
+    const stoppedMeanwhile = () => this.stoppedByUserSince(accountId, options.since);
+    if (stoppedMeanwhile()) { await this.stopAccount(accountId, { reason: 'Stopped by user', quiet: true }).catch(() => {}); return { skipped: true }; }
+    const result = await this.activatePrepared(accountId);
+    if (stoppedMeanwhile()) { await this.stopAccount(accountId, { reason: 'Stopped by user', quiet: true }).catch(() => {}); return { skipped: true }; }
+    return result;
   }
 
   async stopAccount(accountId, { reason = 'Stopped by user', quiet = false } = {}) {
+    if (!quiet) this.stops?.delete(accountId); // the user saw it and pressed Stop
     const prepared = this.prepared.get(accountId);
     if (prepared) {
       prepared.controller.abort();
@@ -432,11 +480,15 @@ class TaskEngine {
     this.onChanged?.();
   }
 
+  // Every account at once (user 2026-11-12: stopping one by one took long; starting stays
+  // one by one so the accounts meet different opponents). Each stop still waits for its own
+  // match to wind down (up to 10 s), but all of them wait together.
+  async stopMany(accountIds, options = {}) {
+    await Promise.all([...new Set(accountIds || [])].map(id => this.stopAccount(id, options).catch(() => {})));
+  }
+
   async stopAll() {
-    const ids = new Set([...this.workers.keys(), ...this.prepared.keys()]);
-    for (const id of ids) {
-      await this.stopAccount(id, { reason: 'Application closing', quiet: true });
-    }
+    await this.stopMany([...this.workers.keys(), ...this.prepared.keys()], { reason: 'Application closing', quiet: true });
   }
 }
 

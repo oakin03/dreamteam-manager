@@ -22,3 +22,8 @@ release.zip
 .mcp-accounts.json
 .mcp.json.yedek-*
 .claude/settings.local.json
+build-public/
+release-public/
+
+# Owner panel admin token (never commit)
+src/main/license-admin-secret.cjs

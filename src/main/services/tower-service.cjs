@@ -1,4 +1,5 @@
 const { GameSocket } = require('./game-socket.cjs');
+const { handleInjury, InjuredError } = require('./injury-guard.cjs');
 const { isNetError } = require('./game-health.cjs');
 const { matchStartSlot } = require('./match-start-gate.cjs');
 
@@ -167,6 +168,9 @@ class TowerService {
           const msg = String(r?.message || r?.error || 'refused');
           if (/salary cap/i.test(msg)) throw new SalaryCapError(msg);
           if (/already|in a match|active match/i.test(msg)) { await this._waitEnd(id, conn, signal, null); continue; }
+          const inj = await handleInjury(id, msg, 'Tower');
+          if (inj === false) throw new InjuredError(msg);
+          if (inj === true) continue;
           startFailures++;
           this._log(id, 'warning', 'tw.startFailed', { tower: t.label, floor: t.floor, error: msg }, `${t.label} floor ${t.floor} could not start: ${msg}`);
           if (startFailures >= MAX_START_FAILURES) throw new Error(msg);

@@ -2,6 +2,8 @@ const crypto = require('crypto');
 const { TradeGameAccount, sleep, abortError } = require('./trade-game-client.cjs');
 const { listingRow } = require('./market-service.cjs');
 const R = require('./trade-rules.cjs');
+const { GameSocket } = require('./game-socket.cjs');
+const { eachWithSocket } = require('./wide.cjs');
 
 // APK / TIX transfer (user 2026-11-07): moves the APK and/or TIX of side accounts to one account
 // (main, or the account chosen to act as main) through the market:
@@ -22,7 +24,8 @@ const R = require('./trade-rules.cjs');
 // market:buyPlayer, getFreeAgent / signFreeAgent, getFriendFreeAgents / signFriendFreeAgent,
 // getUserBasicInfo, Trade Center (trade-game-client).
 const PAGE_SIZE = 8;
-const CONCURRENCY = 4;
+// every account at once (user 2026-11-17: "4 er 4 er"); sockets are cheap, see wide.cjs
+const CONCURRENCY = 200;
 const ACCEPT_WAIT_MS = 7000;
 const ACCEPT_TRIES = 3;
 const TRADE_BATCH = 5;
@@ -74,6 +77,29 @@ class ApkTransferService {
     this.timing = { gapMs: 2500, ...timing };
     this.controller = null;
     this.run = null;
+  }
+
+  // "Hesapla" (user 2026-11-20): every chosen account at once, without signing in: APK
+  // (autoPKTickets) and TIX (ticket) of getUserBasicInfo, and the SOLD listings not claimed yet
+  // (their payout joins the balance when the transfer claims them first).
+  async scanBalances(accountIds) {
+    const userOf = id => this.store.getAccountProfile?.()?.accounts?.[id]?.userId || null;
+    const ids = [...new Set(accountIds || [])].filter(id => userOf(id));
+    const out = {};
+    await eachWithSocket(ids, () => GameSocket.open({ createSocket: this.createSocket }), async (gs, id) => {
+      const userId = userOf(id);
+      const info = await gs.call('getUserBasicInfo', { userId }, 'userBasicInfo', { timeoutMs: 12000 });
+      const sold = { APK: [], TIX: [] };
+      const seen = new Set();
+      for (let page = 1; page <= 20; page++) {
+        const d = await gs.call('market:getMyPlayerListings', { userId, page, search: '', basePlayersOnly: false }, 'market:myPlayerListingsData', { timeoutMs: 12000 });
+        const tickets = (d?.tickets || []).filter(t => t?.id && !seen.has(t.id) && seen.add(t.id));
+        for (const t of tickets) if (t.status === 'SOLD') sold[t.paymentMode === 'TICKET' ? 'TIX' : 'APK'].push(Number(t.price) || 0);
+        if (tickets.length < PAGE_SIZE || page >= Math.ceil(Number(d?.total || 0) / PAGE_SIZE)) break;
+      }
+      out[id] = { apk: Number(info?.autoPKTickets) || 0, tix: Number(info?.ticket) || 0, sold, at: new Date(this.now()).toISOString() };
+    }, { onError: (id, e) => { out[id] = { error: e.message }; } });
+    return out;
   }
 
   snapshot() {
@@ -320,9 +346,9 @@ class ApkTransferService {
     const where = name => this._step('scanning', { where: name });
     const readBoards = async (viewerId, us) => {
       const out = [];
-      for (let i = 0; i < us.length; i += 4) {
+      for (let i = 0; i < us.length; i += 50) {
         if (signal.aborted) throw abortError();
-        const part = us.slice(i, i + 4);
+        const part = us.slice(i, i + 50);
         const boards = await Promise.all(part.map(u => this.friendNet.board(viewerId, u, signal).catch(() => null)));
         part.forEach((u, k) => { if (!(boards[k]?.freeAgents || []).some(fits)) emptyOwners.add(u); else out.push([u, boards[k]]); });
       }
@@ -498,4 +524,7 @@ class ApkTransferService {
   }
 }
 
-module.exports = { ApkTransferService, normalizeConfig, planTransfers };
+// The market keeps max(3, 5 % rounded up) of a sale (every fee of the past transfers fits).
+const marketFee = price => Math.max(3, Math.ceil(Number(price) * 0.05));
+
+module.exports = { ApkTransferService, normalizeConfig, planTransfers, marketFee };

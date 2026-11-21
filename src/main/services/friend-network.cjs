@@ -17,7 +17,8 @@ const FRIENDS_TTL_MS = 10 * 60 * 1000;
 const MAX_FRIENDS = 50;
 const SPENDER_KEEP_FREE = 1; // a spender keeps one slot free
 const DEFAULT_PER_SIDE = 5; // Harcayıcı friends of every account: when one runs out of TK another one signs
-const MAX_SOCKETS = 6;       // plain connections kept open at once (a setup reads 140 accounts)
+const MAX_SOCKETS = 40;      // plain (cookie) connections kept open at once, for the writes only
+const LANES = 20;            // spenders worked on at the same time (each one's own steps in order)
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
@@ -29,6 +30,14 @@ class FriendNetwork {
     this.sockets = new Map();   // accountId -> { gs, userId, at }
     this.friends = new Map();   // accountId -> { ids: Set<userId>, names: Map, at }
     this.setupRun = null;
+    this.anon = null;           // one anonymous socket: friend lists read by user id (2026-11-14: 141 lists in 1.4 s)
+  }
+
+  async _anon(signal) {
+    if (this.anon && !this.anon.closed && this.anon.socket?.connected !== false) return this.anon;
+    try { this.anon?.close(); } catch {}
+    this.anon = await GameSocket.open({ createSocket: this.createSocket, signal });
+    return this.anon;
   }
 
   _accounts() { return this.store.getAccounts?.() || []; }
@@ -59,14 +68,16 @@ class FriendNetwork {
     this.sockets.set(accountId, entry);
     return entry;
   }
-  closeAll() { for (const { gs } of this.sockets.values()) { try { gs.close(); } catch {} } this.sockets.clear(); }
+  closeAll() { for (const { gs } of this.sockets.values()) { try { gs.close(); } catch {} } this.sockets.clear(); try { this.anon?.close(); } catch {} this.anon = null; }
 
   // Friend user ids of an account (cached for 10 minutes; `fresh` reads again).
   async friendsOf(accountId, { fresh = false, signal } = {}) {
     const cached = this.friends.get(accountId);
     if (!fresh && cached && this.now() - cached.at < FRIENDS_TTL_MS) return cached;
-    const c = await this.plain(accountId, signal);
-    const r = await c.gs.ack('getFriendsBootstrap', { userId: c.userId }, { signal, timeoutMs: TIMEOUT_MS });
+    const userId = this.userIdOf(accountId);
+    let r = null;
+    if (userId) r = await (await this._anon(signal)).ack('getFriendsBootstrap', { userId }, { signal, timeoutMs: TIMEOUT_MS }).catch(() => null);
+    if (!r?.success) { const c = await this.plain(accountId, signal); r = await c.gs.ack('getFriendsBootstrap', { userId: c.userId }, { signal, timeoutMs: TIMEOUT_MS }); }
     if (!r?.success) throw new Error(r?.error || 'The friend list could not be read.');
     const entry = { ids: new Set((r.friends || []).map(f => f.id)), names: new Map((r.friends || []).map(f => [f.id, f.teamName])), requests: r.requests || [], sent: r.sent || [], max: Number(r.maxFriends) || MAX_FRIENDS, at: this.now() };
     this.friends.set(accountId, entry);
@@ -145,17 +156,20 @@ class FriendNetwork {
     this._log('info', 'fn.reading', { count: spenders.length + sides.length }, `Friend network: reading ${spenders.length + sides.length} friend lists`);
     try {
       const friendsBy = new Map();
-      for (const id of [...spenders, ...sides]) {
-        if (signal?.aborted) break;
+      await Promise.all([...spenders, ...sides].map(async id => {
+        if (signal?.aborted) return;
         friendsBy.set(id, await this.friendsOf(id, { fresh: true, signal }).catch(() => ({ ids: new Set() })));
         this.setupRun.read++;
-        if (this.setupRun.read % 10 === 0) this.onChanged();
-      }
+      }));
+      this.onChanged();
       const pairs = this.plan(spenders, sides, friendsBy);
       Object.assign(this.setupRun, { total: pairs.length, step: 'adding' });
       this.onChanged();
       this._log('info', 'fn.planned', { count: pairs.length }, `Friend network: ${pairs.length} new friendship(s) to make`);
-      for (const { spender, side } of pairs) {
+      const bySpender = new Map();
+      for (const p of pairs) { if (!bySpender.has(p.spender)) bySpender.set(p.spender, []); bySpender.get(p.spender).push(p); }
+      const { eachAtOnce } = require('./wide.cjs');
+      await eachAtOnce([...bySpender.values()], async list => { for (const { spender, side } of list) {
         if (signal?.aborted) break;
         try {
           await this._befriend(spender, side, signal);
@@ -166,8 +180,8 @@ class FriendNetwork {
           this._log('warning', 'fn.failed', { spender: this._name(spender), side: this._name(side), error: error.message }, `Friendship ${this._name(spender)} ↔ ${this._name(side)} failed: ${error.message}`, side);
         }
         this.onChanged();
-        await sleep(300);
-      }
+        await sleep(150);
+      } }, LANES);
       this._log('success', 'fn.setupDone', { done: this.setupRun.done, total: pairs.length, failed: this.setupRun.failed }, `Friend network ready · ${this.setupRun.done}/${pairs.length} new friendship(s)`);
       return { done: this.setupRun.done, total: pairs.length, failed: this.setupRun.failed };
     } finally {
@@ -200,20 +214,22 @@ class FriendNetwork {
     this.setupRun = { running: true, step: 'cleaning', read: 0, toRead: spenders.length, done: 0, total: 0, failed: 0, startedAt: new Date(this.now()).toISOString() };
     this.onChanged();
     this._log('info', 'fn.cleaning', { count: spenders.length }, `Friend network: checking ${spenders.length} Harcayıcı lists`);
-    for (const sp of spenders) {
-      if (signal?.aborted) break;
-      const f = await this.friendsOf(sp, { fresh: true, signal }).catch(() => null);
-      this.setupRun.read++;
-      if (this.setupRun.read % 10 === 0) this.onChanged();
-      if (!f) continue;
+    const lists = new Map();
+    await Promise.all(spenders.map(async sp => { lists.set(sp, await this.friendsOf(sp, { fresh: true, signal }).catch(() => null)); this.setupRun.read++; }));
+    this.onChanged();
+    const { eachAtOnce } = require('./wide.cjs');
+    await eachAtOnce(spenders, async sp => {
+      if (signal?.aborted) return;
+      const f = lists.get(sp);
+      if (!f) return;
       for (const fid of f.ids) {
         if (fid === mainUser) continue;
         const own = this.accountOfUser(fid);
         if (own && sides.includes(own)) continue;
         try { await this._unfriend(sp, fid, signal); removed++; } catch (error) { this._log('warning', 'fn.removeFailed', { spender: this._name(sp), error: error.message }, `${this._name(sp)}: a friend could not be removed: ${error.message}`, sp); }
-        await sleep(200);
+        await sleep(150);
       }
-    }
+    }, LANES);
     this.setupRun = { ...this.setupRun, running: false };
     const result = await this.setup({ spenderIds: spenders, sideIds: sides, signal });
     const s = this.store.getSettings?.() || {};

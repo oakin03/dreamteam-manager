@@ -32,6 +32,10 @@ const TEXT = {
     tr: { planned: 'Planlandı', listing: 'Listeleniyor', listed: 'Listelendi', buying: 'Alınıyor', bought: 'Alındı', claimed: 'Tamam', noPlayer: 'Oyuncu bulunamadı', listFailed: 'Listelenemedi', buyFailed: 'Alınamadı', claimFailed: 'Toplanamadı' },
     step: { starting: 'Başlıyor', claiming: 'Satışlar toplanıyor ve bakiyeler okunuyor ({n} hesap)', finding: '{side} için oyuncu bulunuyor ve listeleniyor ({currency}, {n}/{of})', trading: '{spender} → main takası ({n} oyuncu)', scanning: 'Ucuz oyuncu aranıyor · {where}', buying: 'Hesaplar ilanlarını aynı anda alıyor ({n})', mainClaim: 'Main satışları topluyor' },
     reason: { done: 'Bitti', partial: 'Eksiklerle bitti', nothingEligible: 'Uygun hesap yoktu', noPlayers: 'Oyuncu bulunamadı', stopped: 'Durduruldu', error: 'Hata' },
+    calc: 'Hesaplama', calcBtn: 'Hesapla', calcBusy: 'Okunuyor…', calcLive: 'Canlı okundu: {time} · bekleyen satışlar dahil', calcApp: 'Uygulamadaki bakiyelere göre (bekleyen satışlar için “Hesapla”)',
+    calcLine: '{c}: {n}/{of} hesap uygun · gönderilecek {sent} · kesinti {fee} · main\'e geçecek ≈ {net}', calcMain: 'Main\'in bekleyen satışları: +{net} {c}', calcTotal: 'Main\'de olacak ≈ {total} {c} (şu an {now})',
+    calcHint: 'Her uygun hesap bütün bakiyesini (önce kendi bekleyen satışları toplanır) tek ilanla gönderir; oyun her satıştan max(3, %5) keser. Kadrosu dolu olan hesap aktarımda atlanır, burada sayılır.',
+    calcDetail: 'Hesap ayrıntısı', calcBal: 'Bakiye', calcPending: 'Bekleyen satış', calcSend: 'Gönderilecek', calcNet: 'Main\'e', calcNo: 'uygun değil',
     how: 'Nasıl çalışır?',
     howLines: [
       'Önce seçili bütün hesapların pazarı taranır ve satışları toplanır; toplanan oyuncular aşağıdaki tabloda görünür. Sonra her hesabın güncel APK / TIX\'i okunur.',
@@ -68,6 +72,10 @@ const TEXT = {
     tr: { planned: 'Planned', listing: 'Listing', listed: 'Listed', buying: 'Buying', bought: 'Bought', claimed: 'Done', noPlayer: 'No player found', listFailed: 'Not listed', buyFailed: 'Not bought', claimFailed: 'Not claimed' },
     step: { starting: 'Starting', claiming: 'Claiming sales and reading balances ({n} accounts)', finding: 'Finding and listing a player for {side} ({currency}, {n}/{of})', trading: '{spender} → main trade ({n} players)', scanning: 'Looking for a cheap player · {where}', buying: 'The accounts buy their listings at the same time ({n})', mainClaim: 'Main claims the sales' },
     reason: { done: 'Finished', partial: 'Finished with gaps', nothingEligible: 'No eligible account', noPlayers: 'No player found', stopped: 'Stopped', error: 'Error' },
+    calc: 'Calculation', calcBtn: 'Calculate', calcBusy: 'Reading…', calcLive: 'Read live: {time} · pending sales included', calcApp: 'From the balances in the app (press “Calculate” for pending sales)',
+    calcLine: '{c}: {n}/{of} account(s) eligible · to send {sent} · fee {fee} · to main ≈ {net}', calcMain: 'Main\'s pending sales: +{net} {c}', calcTotal: 'Main will have ≈ {total} {c} (now {now})',
+    calcHint: 'Every eligible account sends its whole balance (its own pending sales are claimed first) in one listing; the game keeps max(3, 5%) of each sale. An account with a full roster is skipped by the transfer but counted here.',
+    calcDetail: 'Per account', calcBal: 'Balance', calcPending: 'Pending sales', calcSend: 'To send', calcNet: 'To main', calcNo: 'not eligible',
     how: 'How it works',
     howLines: [
       'First the market of every chosen account is read and its sales are claimed; the claimed players show in the table below. Then the current APK / TIX of every account is read.',
@@ -85,6 +93,8 @@ const fill = (s, p = {}) => String(s).replace(/\{(\w+)\}/g, (_, k) => p[k] ?? ''
 const num = v => (Number.isFinite(Number(v)) && v !== null && v !== '' ? Number(v).toLocaleString('tr-TR') : '—');
 const isInt = v => String(v).trim() !== '' && Number.isInteger(Number(v)) && Number(v) >= 1;
 const TONE = { planned: 'muted', listing: 'warn', listed: 'info', buying: 'warn', bought: 'info', claimed: 'ok', noPlayer: 'bad', listFailed: 'bad', buyFailed: 'bad', claimFailed: 'bad' };
+// the market's fee: max(3, 5 % rounded up) (every fee of the past transfers fits)
+const feeOf = p => Math.max(3, Math.ceil(Number(p) * 0.05));
 const fmtPct = v => (v == null ? '—' : `${v > 0 ? '+' : ''}${v}%`);
 
 export default function ApkTransferTab({ state, t, toast, tabs }) {
@@ -121,6 +131,31 @@ export default function ApkTransferTab({ state, t, toast, tabs }) {
   const rows = shown ? Object.values(shown.accounts || {}) : [];
   const srcLabel = s => { if (!s) return '—'; const [k, n] = String(s).split(':'); return n ? `${x.src[k] || k} · ${n}` : (x.src[k] || k); };
   const ba = (r, k) => `${num(r.before?.[k])} → ${num(r.after?.[k])}`;
+  // "Hesapla" (user 2026-11-20): what this setup would move, live as the choices change; the
+  // button reads every chosen account at once (balances and pending sales) for the exact numbers.
+  const [scan, setScan] = useState(null);
+  const [scanning, setScanning] = useState(false);
+  const runScan = async () => { setScanning(true); try { setScan({ at: Date.now(), data: await api.apk.scan(chosen) }); } catch (e) { toast(e.message, 'error'); } finally { setScanning(false); } };
+  const est = useMemo(() => curs.map(c => {
+    const key = c === 'APK' ? 'apk' : 'tix';
+    const min = Number(c === 'APK' ? minApk : minTix) || 0;
+    const live = id => { const v = scan?.data?.[id]; return v && !v.error ? v : null; };
+    const pendingOf = id => (live(id)?.sold?.[c] || []).reduce((q, p) => q + p - feeOf(p), 0);
+    const rows = sideIds.map(id => {
+      const bal = live(id) ? live(id)[key] : Number(stat(id)[key]) || 0;
+      const pending = pendingOf(id);
+      const total = bal + pending;
+      const ok = total >= min && total > 0;
+      const fee = ok ? feeOf(total) : 0;
+      return { id, bal, pending, total, ok, fee, net: ok ? total - fee : 0 };
+    });
+    const ok = rows.filter(x => x.ok);
+    const mainPending = recv ? pendingOf(recv) : 0;
+    const mainNow = recv ? (live(recv) ? live(recv)[key] : Number(stat(recv)[key]) || 0) : 0;
+    const net = ok.reduce((q, x) => q + x.net, 0);
+    return { c, rows, n: ok.length, of: rows.length, sent: ok.reduce((q, x) => q + x.total, 0), fee: ok.reduce((q, x) => q + x.fee, 0), net, mainPending, mainNow, total: mainNow + mainPending + net };
+  }), [curs.join(), sideIds.join(), recv, minApk, minTix, scan, prof]);
+  const nameOf = id => accounts.find(a => a.id === id)?.name || id;
 
   return <div className="page tk-page">
     <div className="page-title"><div><h1>{x.title}</h1><span className="subtitle">{x.subtitle}</span></div>
@@ -145,6 +180,19 @@ export default function ApkTransferTab({ state, t, toast, tabs }) {
       </label>} /></div>
       {!chosen.includes(realMain) && chosen.length > 0 && <div className="tk-fields"><label><span>{x.receiver}</span><select disabled={running} value={recv} onChange={e => setReceiver(e.target.value)}><option value="">—</option>{chosen.map(id => <option key={id} value={id}>{accounts.find(a => a.id === id)?.name}</option>)}</select><small>{x.receiverHint}</small></label></div>}
       {sideIds.length > 0 && <div className="apk-eligible"><b>{fill(x.eligibleNow, { n: eligibleNow, of: sideIds.length })}</b><small className="muted-text"> · {x.eligibleNote}</small></div>}
+      {sideIds.length > 0 && <div className="apk-calc">
+        <div className="apk-calc-head"><b>{x.calc}</b><span className="muted-text">{scan ? fill(x.calcLive, { time: new Date(scan.at).toLocaleTimeString() }) : x.calcApp}</span><span className="sp" /><button className="btn ghost small" disabled={scanning || running} onClick={runScan}>{scanning ? x.calcBusy : x.calcBtn}</button></div>
+        {est.map(e => <div key={e.c} className="apk-calc-line">
+          <b>{fill(x.calcLine, { c: e.c, n: e.n, of: e.of, sent: num(e.sent), fee: num(e.fee), net: num(e.net) })}</b>
+          {e.mainPending > 0 && <small className="muted-text">{fill(x.calcMain, { net: num(e.mainPending), c: e.c })}</small>}
+          <small className="good-text">{fill(x.calcTotal, { total: num(e.total), c: e.c, now: num(e.mainNow) })}</small>
+        </div>)}
+        <small className="muted-text">{x.calcHint}</small>
+        <details><summary>{x.calcDetail}</summary>
+          <SortTable><thead><tr><th>{x.account}</th>{est.map(e => <th key={e.c}>{e.c} · {x.calcBal} / {x.calcPending} → {x.calcSend} ({x.calcNet})</th>)}</tr></thead>
+            <tbody>{sideIds.map(id => <tr key={id}><td><b>{nameOf(id)}</b></td>{est.map(e => { const row = e.rows.find(q => q.id === id); return <td key={e.c} className={row.ok ? 'num' : 'num muted-text'}>{num(row.bal)}{row.pending ? ` + ${num(row.pending)}` : ''} → {row.ok ? <>{num(row.total)} (<span className="good-text">{num(row.net)}</span>)</> : x.calcNo}</td>; })}</tr>)}</tbody></SortTable>
+        </details>
+      </div>}
       {errors.length > 0 && !running && <div className="tk-errors">{errors.map(e => <span key={e}>{e}</span>)}</div>}
     </div>
 

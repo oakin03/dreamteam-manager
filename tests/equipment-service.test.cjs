@@ -249,3 +249,16 @@ test('collections batch: every chosen account runs at the same time on its own c
   assert.equal(s.accountId, 'a1', 'the page stays on its account');
   assert.equal(codes(logs).at(-1), 'eq.batchDone');
 });
+
+test('dismantle: only pieces below BOTH limits and not worn (user 2026-11-18: +7 & Epic)', () => {
+  const { dismantlePick } = require('../src/main/services/equipment-service.cjs');
+  const g = (id, rarity, level, equipped = false) => ({ id, rarity, level, equipped });
+  const gear = [
+    g('rare6', 'RARE', 6), g('rare8', 'RARE', 8), g('epic5', 'EPIC', 5), g('common0', 'COMMON', 0),
+    g('unc7', 'UNCOMMON', 7), g('rare3worn', 'RARE', 3, true), g('leg1', 'LEGENDARY', 1)
+  ];
+  assert.deepEqual(dismantlePick(gear, 7, 'EPIC').map(x => x.id), ['rare6', 'common0']);
+  assert.deepEqual(dismantlePick(gear, 7, 'epic').map(x => x.id), ['rare6', 'common0'], 'rarity case does not matter');
+  assert.deepEqual(dismantlePick(gear, 7, 'NOPE'), []);
+  assert.deepEqual(dismantlePick(gear, 1, 'MYTHIC').map(x => x.id), ['common0']);
+});

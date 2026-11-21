@@ -12,7 +12,7 @@ function world(users) {
     const u = users[p.userId];
     if (event === 'big3:getUserActiveBig3Type') return { success: true, activeBig3Type: u.type || null };
     if (event === 'big3:getTeams') return { success: true, teams: u.teams || [] };
-    if (event === 'superBig3:getUserProgress') return u.super ? { success: true, progress: u.super, playerInfo: (u.super.players || []).map(n => ({ name: n })) } : { success: false, message: 'No Super Big3 team created yet' };
+    if (event === 'superBig3:getUserProgress') return u.super ? { success: true, progress: u.super, playerInfo: u.super.playerIds ? u.super.playerIds.map(id => ({ id, name: id.toUpperCase() })) : (u.super.players || []).map(n => ({ name: n })) } : { success: false, message: 'No Super Big3 team created yet' };
     if (event === 'superBig3:getUserPlayers') return { success: true, players: u.players || [] };
     if (event === 'getTeamOptimized') return { players: { starters: (u.starters || []).map(id => ({ id })), bench: [] } };
     if (event === 'big3:getUserProgress') return { success: true, progress: u.big3 };
@@ -120,5 +120,26 @@ test('bonus choice: switching to defense resets and moves the points; switched o
   users['u-A'].big3.trainingEnd = null;
   await svc.tick();
   assert.equal(writes.length, 0);
+  svc.stop();
+});
+
+test('broken Super Big 3 (a player left the roster): shown with the missing player, rebuilt with the best three; training logs it once', async () => {
+  const pl = [{ id: 'p1', name: 'One', offense: 200, defense: 200 }, { id: 'p2', name: 'Two', offense: 150, defense: 150 }, { id: 'p3', name: 'Three', offense: 120, defense: 120 }];
+  const users = {
+    'u-A': { type: 'SUPERBIG3', super: { id: 'sbA', level: 4, playerIds: ['p1', 'gone'] }, players: pl, starters: ['p1', 'p2', 'p3'] },
+    'u-B': { type: 'SUPERBIG3', super: { id: 'sbB', level: 2, playerIds: ['p1', 'p2', 'p3'] }, players: pl, starters: ['p1', 'p2', 'p3'] }
+  };
+  const { svc, writes, logs } = service(users);
+  await svc.scanAccounts(['A', 'B']);
+  const rows = svc.snapshot().scan.rows;
+  assert.equal(rows.A.broken, true);
+  assert.deepEqual(rows.A.superBig3.missing, ['GONE']);
+  assert.equal(rows.A.plan, 'rebuild');
+  assert.equal(rows.B.broken, false);
+  assert.equal(rows.B.plan, 'superKeep');
+  await svc.setup(['A']);
+  assert.ok(writes.some(w => w[0] === 'u-A' && w[1] === 'superBig3:updatePlayers' && w[2] === 'p1,p2,p3'));
+  assert.ok(!writes.some(w => w[0] === 'u-A' && w[1] === 'superBig3:activate'), 'already the active kind: no activate');
+  assert.ok(logs.some(l => l.code === 'b3.rebuilt'));
   svc.stop();
 });

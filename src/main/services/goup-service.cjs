@@ -1,4 +1,5 @@
 const { GameSocket } = require('./game-socket.cjs');
+const { handleInjury, InjuredError } = require('./injury-guard.cjs');
 const { WIDE, eachAtOnce, eachWithSocket } = require('./wide.cjs');
 const { isNetError } = require('./game-health.cjs');
 
@@ -77,10 +78,11 @@ class GoUpService {
 
   stop() { this.controller?.abort(); }
 
+  // one shared reading socket; 141 accounts asking at once open it once (not 141 times)
   async _anon(signal) {
     if (this.anon?.socket?.connected) return this.anon;
-    this.anon = await GameSocket.open({ createSocket: this.createSocket, signal });
-    return this.anon;
+    if (!this.anonOpening) this.anonOpening = GameSocket.open({ createSocket: this.createSocket, signal }).then(gs => { this.anon = gs; return gs; }).finally(() => { this.anonOpening = null; });
+    return this.anonOpening;
   }
   async _anonSim(signal) {
     if (this.anonSim?.socket?.connected) return this.anonSim;
@@ -94,7 +96,13 @@ class GoUpService {
   }
 
   async _read(id, userId, signal) {
-    const r = await (await this._anon(signal)).ack('getGoUpData', { userId }, { signal, timeoutMs: 10000 });
+    // the shared socket drops some answers when every account asks at once (2026-11-20: 141 accounts
+    // stopped with 'No reply to getGoUpData'): no answer → asked once more on a socket of its own
+    let r = await (await this._anon(signal)).ack('getGoUpData', { userId }, { signal, timeoutMs: 10000 }).catch(error => { if (error?.name === 'AbortError') throw error; return null; });
+    if (!r) {
+      const own = await GameSocket.open({ createSocket: this.createSocket, signal });
+      try { r = await own.ack('getGoUpData', { userId }, { signal, timeoutMs: 15000 }); } finally { try { own.close(); } catch {} }
+    }
     const p = r?.success ? pointsOf(r.data) : null;
     if (p) {
       this.points[id] = { ...p, readAt: new Date(this.now()).toISOString() };
@@ -217,6 +225,9 @@ class GoUpService {
           const msg = String(r?.error || r?.message || 'refused');
           if (/attempt|limit|no more|remaining/i.test(msg)) break;
           if (/inactive|not active|event/i.test(msg)) throw new InactiveError(msg);
+          const inj = await handleInjury(id, msg, 'Go-up');
+          if (inj === false) throw new InjuredError(msg);
+          if (inj === true) continue;
           failures++;
           this._log(id, 'warning', 'gu.findFailed', { error: msg, n: failures }, `Find Go-up match refused: ${msg}`);
           if (failures >= MAX_FIND_FAILURES) throw new Error(msg);

@@ -1,3 +1,4 @@
+import useDismiss from './useDismiss';
 import { useState } from 'react';
 import { filOf } from '../i18n-fil';
 import { GroupedPicks } from './AccountGroups';
@@ -117,11 +118,12 @@ export function RoleStart({ state, lang, busy, onStart }) {
   const profile = state.accountProfile || {};
   const [picked, setPicked] = useState(() => { try { return JSON.parse(localStorage.getItem('ap.startRoles') || '[]'); } catch { return []; } });
   const [open, setOpen] = useState(false);
+  const ref = useDismiss(open, () => setOpen(false));
   const toggle = id => setPicked(p => { const next = p.includes(id) ? p.filter(z => z !== id) : [...p, id]; try { localStorage.setItem('ap.startRoles', JSON.stringify(next)); } catch {} return next; });
   const valid = picked.filter(id => defs.some(d => d.id === id));
   // Side = every account but Main / 2. Main
   const ids = state.accounts.filter(a => { const r = roleOf(a, profile, defs); return valid.includes(r) || (valid.includes('side') && r !== 'main' && r !== 'main2'); }).map(a => a.id);
-  return <span className="role-start" title={x.startHint}>
+  return <span className="role-start" title={x.startHint} ref={ref}>
     <button type="button" className="btn ghost" onClick={() => setOpen(o => !o)}>{valid.length ? valid.map(id => <RolePill key={id} small def={defs.find(d => d.id === id)} />) : x.startRoles} ▾</button>
     {open && <div className="role-start-menu" onMouseLeave={() => setOpen(false)}>{defs.map(d => <label key={d.id}><input type="checkbox" checked={valid.includes(d.id)} onChange={() => toggle(d.id)} /><RolePill def={d} /></label>)}</div>}
     <button type="button" className="btn" disabled={busy || !ids.length} onClick={() => onStart(ids)}>▶ {fill(x.startBtn, { n: ids.length })}</button>

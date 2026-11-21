@@ -185,3 +185,26 @@ test("the 5-game rule is the player's own: his team's 5 games are not enough", a
   assert.equal(ed.season.pts, 20);
   assert.ok(ed.atFive, 'his level at game 5 is shown apart');
 });
+
+test('2026-11-16 rule: C and D tiers move by a share of the current value (at least 5)', () => {
+  const { capFor } = require('../src/main/services/value-predict-service.cjs');
+  assert.equal(capFor({}, 'C+', 94), 8);
+  assert.equal(capFor({}, 'C-', 74), 7);
+  assert.equal(capFor({}, 'D+', 62), 6);
+  assert.equal(capFor({}, 'D-', 55), 7);
+  assert.equal(capFor({}, 'D', 40), 5);
+  assert.equal(capFor({ 'A+': 12 }, 'A+', 140), 12);
+});
+
+test('the level comes from the last 5 games played (shooting from the totals) and keeps part of the current value', () => {
+  const { lastGamesFeatures, modelLevel, DEFAULT_MODEL } = require('../src/main/services/value-predict-service.cjs');
+  // [date, id, min, pts, reb, ast, stl, blk, to, pf, dreb, oreb, fgm, fga, tpm, tpa, ftm, fta]
+  const row = (date, min, pts, fgm, fga) => [date, 'g' + date, min, pts, 5, 3, 1, 0, 2, 2, 4, 1, fgm, fga, 1, 3, 2, 2];
+  const rows = [row('2026-11-01', 30, 40, 15, 20), row('2026-11-02', 0, 0, 0, 0), ...[3, 4, 5, 6, 7].map(dd => row(`2026-11-0${dd}`, 30, 10, 4, 10))];
+  const f = lastGamesFeatures(rows);
+  assert.equal(f.games, 5);
+  assert.equal(f.pts, 10);
+  assert.equal(f.fgp, 0.4);
+  const low = modelLevel(DEFAULT_MODEL.offense, f, 80), high = modelLevel(DEFAULT_MODEL.offense, f, 120);
+  assert.ok(high > low, 'a higher current value gives a higher level');
+});
