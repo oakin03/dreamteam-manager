@@ -7,7 +7,8 @@ function harness() {
   let now = 1000000;
   const emits = [];
   const logs = [];
-  const mgr = { now: () => now, isOff: () => false, _log: (level, code, params) => logs.push({ code, params }), _drop() {} };
+  const slept = [];
+  const mgr = { now: () => now, isOff: () => false, _log: (level, code, params) => logs.push({ code, params }), _drop() {}, sleep: async ms => { slept.push(ms); now += ms; } };
   const c = new Controller(mgr, { accountId: 'A', name: 'A', userId: 'me', match: { match_id: 'm1', Server: 2, type: 'MP' }, mode: 'tournament' });
   c.gs = c.ws = { socket: { emit: (...a) => emits.push(a) }, close() {} };
   const P = (id, slot, position, stamina) => ({ id, slot, benchSlot: null, position, stamina });
@@ -19,7 +20,7 @@ function harness() {
     offense: [{ name: 'Run and Gun', learned: true, beats: ['Full-court Press', '3-2 Zone Defense'] }, { name: 'Deep Cut', learned: true, beats: ['3-2 Zone Defense'] }],
     defense: [{ name: '2-3 Zone Defense', learned: true, beats: ['Deep Cut'] }, { name: 'Protect the Lane', learned: true, beats: ['Deep Cut', 'Pick and Roll'] }]
   };
-  return { c, emits, logs, set, advance: ms => { now += ms; }, mine: () => c.state.hostTeam };
+  return { c, emits, logs, slept, set, advance: ms => { now += ms; }, mine: () => c.state.hostTeam };
 }
 // apply the last updatePlayers to the fake state, like the server would
 const applySub = h => { const e = [...h.emits].reverse().find(x => x[0] === 'updatePlayers'); h.set({ hostTeam: { ...h.mine(), starters: e[2], bench: e[3] } }); };
@@ -83,11 +84,17 @@ test('rotation: no timeout in the first half; from Q3 one at max court stamina 9
   await h.c.tick();
   assert.equal(h.emits.filter(e => e[0] === 'useTimeout').length, 2, 'the last waits for an ace at 95');
   h.set({ hostTeam: { ...h.mine(), bench: h.mine().bench.map(p => (p.id === 'a3' ? { ...p, stamina: 95 } : p)) } });
+  const before = h.emits.length;
   await h.c.tick();
   assert.equal(h.emits.filter(e => e[0] === 'useTimeout').length, 3);
-  const back = h.emits.at(-1);
-  assert.equal(back[0], 'updatePlayers');
-  assert.deepEqual(Object.fromEntries(back[2].map(p => [p.slot, p.id])), { PG: 'a1', SG: 'a2', SF: 'a3', PF: 'a4', C: 'a5' }, 'every ace in its own slot, in one go');
+  // the aces come back ONE BY ONE inside the timeout (user 2026-11-21), not all in the same instant
+  const subs = h.emits.slice(before).filter(e => e[0] === 'updatePlayers');
+  assert.equal(subs.length, 5, 'five separate substitutions');
+  const acesOnCourt = e => e[2].filter(p => /^a/.test(p.id)).length;
+  assert.deepEqual(subs.map(acesOnCourt), [1, 2, 3, 4, 5], 'one more ace each time');
+  assert.deepEqual(Object.fromEntries(subs.at(-1)[2].map(p => [p.slot, p.id])), { PG: 'a1', SG: 'a2', SF: 'a3', PF: 'a4', C: 'a5' }, 'every ace in its own slot at the end');
+  const spread = h.slept.slice(-4);
+  assert.ok(spread.every(ms => ms > 0) && spread.reduce((a, b) => a + b, 0) <= 3500, 'spread out, within the ~4 s timeout');
 });
 
 test('rotation: a later stripped update keeps the full fields for updatePlayers', async () => {
@@ -129,4 +136,27 @@ test('rotation tactics: close game → our defense beats their offense', async (
   assert.ok(e, 'a tactic change');
   assert.equal(e[1].strategyType, 'defense');
   assert.equal(e[1].strategy.name, 'Protect the Lane', 'beats their Pick and Roll');
+});
+
+test('rotation: late in Q4 (no timeout left) the aces come back one at a time, 6 s apart, early enough for all', async () => {
+  const h = harness();
+  h.c.strategies = null;
+  const m = h.mine();
+  const benchNow = m.starters.map((p, i) => ({ ...p, slot: null, benchSlot: i + 1, stamina: 90 }));
+  const court = m.bench.map((p, i) => ({ ...p, slot: ['PG', 'SG', 'SF', 'PF', 'C'][i], benchSlot: null, stamina: 80 }));
+  h.c.aces = { PG: 'a1', SG: 'a2', SF: 'a3', PF: 'a4', C: 'a5' };
+  h.set({ quarter: 4, timeLeft: '12:00', timeouts: { me: 0 }, hostTeam: { ...m, starters: court, bench: benchNow } });
+  await h.c.tick();
+  assert.equal(h.emits.filter(e => e[0] === 'updatePlayers').length, 0, '12:00 (720 s) is too early');
+  h.set({ timeLeft: '11:00' }); // 660 s ≤ 240 + 5 × 90 = 690
+  for (let i = 0; i < 5; i++) {
+    await h.c.tick();
+    const n = h.emits.filter(e => e[0] === 'updatePlayers').length;
+    assert.equal(n, i + 1, `ace ${i + 1}`);
+    applySub(h);
+    await h.c.tick(); // within 6 s: nothing
+    assert.equal(h.emits.filter(e => e[0] === 'updatePlayers').length, i + 1, 'one per 6 s');
+    h.advance(6000);
+  }
+  assert.equal(h.c.acesBack, true);
 });

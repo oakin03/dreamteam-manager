@@ -33,6 +33,12 @@ const Q2_START_AFTER_S = 15;          // seconds into Q2 before the first substi
 // Q4: aces back at the latest this many game seconds before the end. The game clock runs ~13×
 // faster than real time (Q2's 5 substitutions took ~24 s), so this is a few real seconds only.
 const ACE_BACK_LATE_S = 240;
+// The aces come back ONE BY ONE, never all at once (user 2026-11-21: a whole lineup changing in the
+// same instant looks like a bot). In a timeout (the game clock stops ~4 s real, no sub cooldown)
+// they are spread over TIMEOUT_WINDOW_MS; outside a timeout one per SUB_GAP_MS, so late in Q4 the
+// return starts LATE_PER_ACE_S game seconds earlier for every ace still on the bench.
+const TIMEOUT_WINDOW_MS = 3200;
+const LATE_PER_ACE_S = 90;
 const FAR_BEHIND = 15;
 const EASY_LEAD = 10;
 const MODE_OF_TYPE = {
@@ -173,7 +179,7 @@ class Controller {
       // props asked (user 2026-11-13): only the starting five get them, so no Q2 rotation and the
       // aces go back on court before halftime (the game sends nothing during halftime)
       if (this.propsWanted && !this.acesBack && q <= 2) {
-        if (benchAces.length && now - this.lastSubAt >= SUB_GAP_MS) { await this._acesBack(); this._log('info', 'propsAces', {}, 'Rotation: props asked · the aces are back on court'); return; }
+        if (benchAces.length && now - this.lastSubAt >= SUB_GAP_MS) { if (!(await this._oneAceBack())) this._log('info', 'propsAces', {}, 'Rotation: props asked · the aces are back on court'); return; }
         if (!benchAces.length) this.acesBack = true;
       }
       if (q === 2 && left != null && left <= 12 * 60 - Q2_START_AFTER_S && !this.acesBack && !this.propsWanted) {
@@ -194,21 +200,25 @@ class Controller {
         const rotated = benchAces.length > 0;
         const lastOne = myTimeouts === 1;
         if (rotated && lastOne) {
-          if (Math.max(...benchAces.map(stam)) >= 95) { await this._timeout('aces'); await this._acesBack(); return; }
+          if (Math.max(...benchAces.map(stam)) >= 95) { await this._timeout('aces'); await this._acesBack(TIMEOUT_WINDOW_MS); return; }
         } else if (court.length && Math.max(...court.map(stam)) <= 95) {
           await this._timeout('stamina');
           return;
         }
       }
       // ---- the match always ends with the aces
-      if (benchAces.length && !this.acesBack && q >= 4 && left != null && left <= ACE_BACK_LATE_S && now - this.lastSubAt >= SUB_GAP_MS) { await this._acesBack(); return; }
+      if (benchAces.length && !this.acesBack && q >= 4 && left != null && (this.lateReturn || left <= ACE_BACK_LATE_S + benchAces.length * LATE_PER_ACE_S)) {
+        // once started it goes on until every ace is back (the window shrinks as the bench empties)
+        this.lateReturn = true;
+        if (now - this.lastSubAt >= SUB_GAP_MS) { await this._oneAceBack(); return; }
+      }
       // ---- tactics
       await this._tactics(mine, theirs);
     } finally { this.busy = false; }
   }
 
   // one or more players in: [{slot, inId}] (the player in that slot goes to the bench)
-  async _swap(moves) {
+  async _swap(moves, { counted = moves.length } = {}) {
     const mine = this._mine();
     const whole = p => ({ ...(this.full?.get(p.id) || {}), ...p });
     const starters = (mine.starters || []).map(whole); const bench = (mine.bench || []).map(whole);
@@ -225,8 +235,8 @@ class Controller {
     }
     this._emit('updatePlayers', this.match.match_id, starters, bench, this.userId);
     this.lastSubAt = this.mgr.now();
-    this.subs += moves.length;
-    this._log('info', 'sub', { count: moves.length, quarter: this.state.quarter, time: this.state.timeLeft }, `Rotation: ${moves.length} substitution(s) · Q${this.state.quarter} ${this.state.timeLeft}`);
+    this.subs += counted;
+    this._log('info', 'sub', { count: counted, quarter: this.state.quarter, time: this.state.timeLeft }, `Rotation: ${counted} substitution(s) · Q${this.state.quarter} ${this.state.timeLeft}`);
   }
 
   async _timeout(why) {
@@ -234,16 +244,46 @@ class Controller {
     this.lastTimeoutAt = this.mgr.now();
     this.timeoutsUsed += 1;
     this._log('info', 'timeout', { why, quarter: this.state.quarter, time: this.state.timeLeft }, `Rotation: timeout (${why}) · Q${this.state.quarter} ${this.state.timeLeft}`);
-    await new Promise(r => setTimeout(r, 400));
+    await this._sleep(400);
   }
 
-  // every ace back to its own slot in one go (in a timeout, or late in Q4)
-  async _acesBack() {
-    if (!this.aces) return;
+  _sleep(ms) { return this.mgr.sleep ? this.mgr.sleep(ms) : new Promise(r => setTimeout(r, ms)); }
+
+  // The moves one at a time over `windowMs`. Every send carries the latest state plus every move so
+  // far: if the server's update has not come in yet, the earlier player is not put back by mistake.
+  async _swapInTurn(moves, windowMs) {
+    const gap = moves.length > 1 ? Math.floor(windowMs / (moves.length - 1)) : 0;
+    for (let i = 0; i < moves.length; i++) {
+      if (this.ended) return;
+      if (i) await this._sleep(gap);
+      await this._swap(moves.slice(0, i + 1), { counted: 1 });
+    }
+  }
+
+  // the aces on the bench and the slot each one goes back to
+  _aceMoves() {
     const mine = this._mine();
-    const moves = Object.entries(this.aces).filter(([slot, id]) => !(mine.starters || []).some(p => p.slot === slot && p.id === id) && (mine.bench || []).some(p => p.id === id)).map(([slot, id]) => ({ slot, inId: id }));
+    return Object.entries(this.aces || {}).filter(([slot, id]) => !(mine.starters || []).some(p => p.slot === slot && p.id === id) && (mine.bench || []).some(p => p.id === id)).map(([slot, id]) => ({ slot, inId: id }));
+  }
+
+  // outside a timeout: one ace back (the most rested first); returns how many are still on the bench
+  async _oneAceBack() {
+    if (!this.aces) return 0;
+    const moves = this._aceMoves();
+    if (!moves.length) { this.acesBack = true; return 0; }
+    const stamina = id => Number((this._mine().bench || []).find(p => p.id === id)?.stamina ?? 0);
+    const next = [...moves].sort((a, b) => stamina(b.inId) - stamina(a.inId))[0];
+    await this._swap([next]);
+    if (moves.length === 1) this.acesBack = true;
+    return moves.length - 1;
+  }
+
+  // every ace back to its own slot during a timeout: one by one, all within the timeout
+  async _acesBack(windowMs = TIMEOUT_WINDOW_MS) {
+    if (!this.aces) return;
+    const moves = this._aceMoves();
     if (!moves.length) { this.acesBack = true; return; }
-    await this._swap(moves);
+    await this._swapInTurn(moves, windowMs);
     this.acesBack = true;
   }
 

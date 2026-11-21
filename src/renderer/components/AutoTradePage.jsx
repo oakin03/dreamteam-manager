@@ -595,9 +595,9 @@ function Preflight({ pre, x, decisions, setDecisions, onCancel, onStart, onPrepa
             </div>}</td></tr>;
         })}</tbody></SortTable></div>)}</> : <p className="muted-text">{x.noBench}</p>}
     <div className="modal-actions">
+      {pre.mode === 'prep' && !anyDecision && <span className="muted-text actions-note">{x.prepAllNone}</span>}
       <button className="btn ghost" onClick={onCancel}>{x.cancel}</button>
       {pre.mode === 'prep' ? <>
-        {!anyDecision && <span className="muted-text">{x.prepAllNone}</span>}
         <button className={`btn ${pre.conflicts.length ? 'danger-soft' : 'primary'}`} title={x.prepHint} onClick={() => onPrepare(pre.conflicts.length > 0)}>{x.prepTop}</button>
       </> : <>
       {!starting && anyDecision && <button className="btn ghost" title={x.prepHint} onClick={() => onPrepare(pre.conflicts.length > 0)}>{x.prepBtn}</button>}
