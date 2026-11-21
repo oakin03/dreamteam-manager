@@ -497,6 +497,8 @@ class MarketService {
       if (prep.ok) {
         swap = { os, record: prep.record };
         removed = await this._write(conn, 'market:cancelPlayerListing', { userId: conn.userId, ticketId: row.ticketId }, 'cancelResult', null);
+      } else if (prep.reason === 'temporary') {
+        this.log(account, 'warning', `${row.name} is in the roster as a temporary player · the game never lets a temporary player be sold, so this listing cannot be taken back while it is there`, 'os.temporary', { name: row.name });
       } else if (prep.reason !== 'noListings' && prep.reason !== 'notInRoster') {
         this.log(account, 'warning', `${row.name}: the already-owned workaround failed · ${prep.message || prep.reason}`, 'os.failed', { name: row.name, error: prep.message || prep.reason });
       }

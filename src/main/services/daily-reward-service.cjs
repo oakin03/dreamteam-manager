@@ -14,7 +14,8 @@ const { GameSocket } = require('./game-socket.cjs');
 
 const ERROR_RETRY_MS = 60 * 1000;
 const SAFETY_MS = 1500; // claim a moment after the timer, the server clock may lag
-const IDLE_STAGGER_MS = 4000; // accounts without Auto Play start one after another, not all at once
+// every account at once (user 2026-11-21: 141 accounts 4 s apart took ~10 min; parallel by default since 11-11)
+const IDLE_STAGGER_MS = 0;
 const KICKED_RETRY_MS = 10 * 60 * 1000; // the claim connection was taken back: try again later, quietly
 const IN_MATCH_RETRY_MS = 60 * 1000;    // Auto Play account in a match: claim after the match
 const KICK_LOG_MS = 60 * 60 * 1000;     // one log line per account per hour for those

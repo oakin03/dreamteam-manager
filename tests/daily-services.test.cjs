@@ -9,6 +9,7 @@ const { QuizService, keyOf } = require('../src/main/services/quiz-service.cjs');
 const { CheerService, cheerDay, nextReset } = require('../src/main/services/cheer-service.cjs');
 const { ChatService, normalizeConfig } = require('../src/main/services/chat-service.cjs');
 
+const NO_REPLY = Symbol('noReply');
 // A fake socket.io client: `acks(path, event, payload, args)` answers acks,
 // `events(path, event, payload, emitLocal)` answers plain emits.
 function fakeSockets({ acks = () => undefined, events = () => {} }) {
@@ -25,10 +26,12 @@ function fakeSockets({ acks = () => undefined, events = () => {} }) {
       events(p, event, args[0], (n, d) => setTimeout(() => !s.closed && emitLocal(n, d), 1));
       return true;
     };
-    s.timeout = () => ({ emit: (event, ...args) => {
+    s.timeout = ms => ({ emit: (event, ...args) => {
       const cb = args.pop();
       calls.push({ path: p, event, args, cookie: Boolean(options.extraHeaders) });
-      const d = acks(p, event, args[0], args);
+      const d = acks(p, event, args[0], args, { cookie: Boolean(options.extraHeaders) });
+      // NO_REPLY: the game never answers; socket.io reports a timeout after `ms`
+      if (d === NO_REPLY) return setTimeout(() => cb(new Error('operation has timed out')), Math.min(ms || 20, 20));
       setTimeout(() => cb(null, d), 1);
     } });
     setTimeout(() => emitLocal('connect'), 1);
@@ -289,4 +292,61 @@ test('Cheer for several targets: waits for the 2nd half, cheerers take turns, a 
   const cheers = calls.filter(c => c.event === 'useCheer');
   assert.ok(cheers.length === 4);
   assert.ok(!svc.snapshot().busy);
+});
+
+// 2026-11-21 17:16: every account polled one shared socket; it stopped answering and all 141
+// accounts ended their Go-up mid-match with "No reply to getGoUpMatches".
+function goupGame({ noReply }) {
+  const st = { left: 2, season: 1000, total: 1300, match: null, phase: 0, reads: 0 };
+  return { st, acks: (p, event, payload, args, meta) => {
+    if (event === 'getGoUpData') return { success: true, data: { goUpValue: st.season, goUpPoints: st.total, attemptsRemaining: st.left, maxAttempts: 2, isEventActive: true } };
+    if (event === 'getUserActiveMatch') return noReply(event, meta) ? NO_REPLY : { success: true, match: null };
+    if (event === 'findGoUpMatch') { st.left--; st.phase = 0; st.match = { match_id: 'g1', status: 'waiting', host: 'u-a' }; return { success: true }; }
+    if (event === 'getGoUpMatches') {
+      st.reads++;
+      if (noReply(event, meta)) return NO_REPLY;
+      if (!st.match) return { success: true, userMatch: null };
+      st.phase++;
+      if (st.phase === 2) st.match = { ...st.match, status: 'started' };
+      if (st.phase === 4) { st.match = null; st.season += 20; st.total += 20; }
+      return { success: true, userMatch: st.match };
+    }
+  } };
+}
+const fastTiming = { pollMs: 1, appearGraceMs: 50, readTimeoutMs: 20, readRetryMs: 1, restartMs: 5 };
+
+test('Go-up: the shared socket stops answering → the account reads on its own socket and plays on', async () => {
+  // only the anonymous (shared) socket is silent; the account's own socket answers
+  const g = goupGame({ noReply: (event, meta) => event === 'getGoUpMatches' && !meta.cookie });
+  const { createSocket } = fakeSockets({ acks: g.acks });
+  const logs = []; const s = store();
+  await new GoUpService({ store: s, activity: activity(logs), sessions, createSocket, timing: fastTiming }).runAndWait(['a']);
+  const row = s.saved.goup.rows[0];
+  assert.equal(row.status, 'done');
+  assert.equal(row.played, 2);
+  assert.ok(!logs.some(l => l.code === 'gu.failed' || l.code === 'gu.noReply'));
+});
+
+test('Go-up: the game says nothing for a while → the account waits and goes on where it was (no stop)', async () => {
+  // the 3rd to 8th match reads get no answer anywhere (own and shared sockets alike)
+  let n = 0;
+  const g = goupGame({ noReply: event => event === 'getGoUpMatches' && (++n >= 3 && n <= 8) });
+  const { createSocket } = fakeSockets({ acks: g.acks });
+  const logs = []; const s = store();
+  await new GoUpService({ store: s, activity: activity(logs), sessions, createSocket, timing: fastTiming }).runAndWait(['a']);
+  const row = s.saved.goup.rows[0];
+  assert.equal(row.status, 'done', JSON.stringify(row));
+  assert.equal(g.st.left, 0, 'both attempts used');
+  assert.ok(logs.some(l => l.code === 'gu.noReply'), 'the pause is logged');
+  assert.ok(!logs.some(l => l.code === 'gu.failed'), 'never stopped');
+});
+
+test('Go-up: a game that never answers again stops the account after the restarts (no endless loop)', async () => {
+  const g = goupGame({ noReply: event => event === 'getGoUpMatches' || event === 'getUserActiveMatch' });
+  const { createSocket } = fakeSockets({ acks: g.acks });
+  const logs = []; const s = store();
+  await new GoUpService({ store: s, activity: activity(logs), sessions, createSocket, timing: fastTiming }).runAndWait(['a']);
+  assert.equal(s.saved.goup.rows[0].status, 'error');
+  assert.equal(logs.filter(l => l.code === 'gu.noReply').length, 3);
+  assert.ok(logs.some(l => l.code === 'gu.failed'));
 });

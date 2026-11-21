@@ -20,6 +20,16 @@ const POLL_MS = 3000;
 const APPEAR_GRACE_MS = 30000;            // a found match shows up in getGoUpMatches within this
 const MATCH_MAX_MS = 20 * 60 * 1000;      // once started, a match never takes longer
 const MAX_FIND_FAILURES = 3;
+// A read the game does not answer (2026-11-21 17:16: all 141 accounts stopped mid-match with
+// "No reply to getGoUpMatches" — every account polled ONE shared socket). Now each account polls on
+// its own socket, an unanswered read is asked again on a fresh shared one (READ_TRIES), and if the
+// game still says nothing the account waits RESTART_MS and goes on where it was (MAX_RESTARTS).
+const READ_TIMEOUT_MS = 10000;
+const READ_TRIES = 3;
+const READ_RETRY_MS = 1000;
+const RESTART_MS = 15000;
+const MAX_RESTARTS = 3;
+const isNoReply = error => /no reply/i.test(String(error?.message || ''));
 
 function abortError() { const e = new Error('Aborted'); e.name = 'AbortError'; return e; }
 function sleep(ms, signal) {
@@ -52,7 +62,7 @@ class GoUpService {
   constructor({ store, activity, sessions, onChanged, createSocket, gameHealth = null, now = () => Date.now(), timing = {} }) {
     Object.assign(this, { store, activity, sessions, createSocket, gameHealth, now });
     this.onChanged = onChanged || (() => {});
-    this.timing = { pollMs: POLL_MS, appearGraceMs: APPEAR_GRACE_MS, matchMaxMs: MATCH_MAX_MS, ...timing };
+    this.timing = { pollMs: POLL_MS, appearGraceMs: APPEAR_GRACE_MS, matchMaxMs: MATCH_MAX_MS, readTimeoutMs: READ_TIMEOUT_MS, readRetryMs: READ_RETRY_MS, restartMs: RESTART_MS, ...timing };
     this.run = null;
     this.controller = null;
     this.points = {};         // accountId -> pointsOf(...) + readAt
@@ -84,10 +94,31 @@ class GoUpService {
     if (!this.anonOpening) this.anonOpening = GameSocket.open({ createSocket: this.createSocket, signal }).then(gs => { this.anon = gs; return gs; }).finally(() => { this.anonOpening = null; });
     return this.anonOpening;
   }
+  // opened once even when every account needs it at the same moment (it used to open one per caller)
   async _anonSim(signal) {
     if (this.anonSim?.socket?.connected) return this.anonSim;
-    this.anonSim = await GameSocket.open({ createSocket: this.createSocket, path: SIM_PATH, signal });
-    return this.anonSim;
+    if (!this.anonSimOpening) this.anonSimOpening = GameSocket.open({ createSocket: this.createSocket, path: SIM_PATH, signal }).then(gs => { this.anonSim = gs; return gs; }).finally(() => { this.anonSimOpening = null; });
+    return this.anonSimOpening;
+  }
+  _dropAnonSim(gs) {
+    if (gs && this.anonSim === gs) { try { gs.close(); } catch {} this.anonSim = null; }
+  }
+  // A simulation-socket read: first on the account's own socket (when it has one), then on a fresh
+  // shared socket; an unanswered read throws only after READ_TRIES.
+  async _simRead(event, payload, signal, own = null) {
+    let last = null;
+    for (let i = 0; i < READ_TRIES; i++) {
+      const gs = i === 0 && own?.socket?.connected ? own : await this._anonSim(signal);
+      try {
+        return await gs.ack(event, payload, { signal, timeoutMs: this.timing.readTimeoutMs });
+      } catch (error) {
+        if (error?.name === 'AbortError') throw error;
+        last = error;
+        if (gs !== own) this._dropAnonSim(gs); // a shared socket that stopped answering: open a new one
+        if (i < READ_TRIES - 1) await sleep(this.timing.readRetryMs * (i + 1), signal);
+      }
+    }
+    throw last;
   }
   _closeAnon() {
     try { this.anon?.close(); } catch {}
@@ -110,11 +141,11 @@ class GoUpService {
     }
     return p;
   }
-  async _userMatch(userId, signal) {
-    return (await (await this._anonSim(signal)).ack('getGoUpMatches', { userId }, { signal, timeoutMs: 10000 }))?.userMatch || null;
+  async _userMatch(userId, signal, own = null) {
+    return (await this._simRead('getGoUpMatches', { userId }, signal, own))?.userMatch || null;
   }
-  async _activeMatch(userId, signal) {
-    return (await (await this._anonSim(signal)).ack('getUserActiveMatch', { userId }, { signal, timeoutMs: 10000 }))?.match || null;
+  async _activeMatch(userId, signal, own = null) {
+    return (await this._simRead('getUserActiveMatch', { userId }, signal, own))?.match || null;
   }
 
   // Points, league and attempts of every account (no login). Used by the page.
@@ -198,11 +229,12 @@ class GoUpService {
     }
   }
 
-  async _account(id, signal, delayMs = 0) {
+  async _account(id, signal, delayMs = 0, restarts = 0) {
     const account = this.store.getAccounts().find(a => a.id === id);
     let sim = null;
     let userId = this._userId(id);
     let retry = false;
+    let again = false;
     try {
       if (delayMs > 0) { this._row(id, { status: 'waitingStart' }); await sleep(delayMs, signal); }
       if (this.gameHealth?.isDown()) { this._row(id, { status: 'waitingGame' }); await this.gameHealth.waitUp(signal); }
@@ -242,8 +274,8 @@ class GoUpService {
         // Queue (waiting) → started → gone. The queue may take long: no time limit
         // there, the Stop button leaves the queue.
         const appearUntil = this.now() + this.timing.appearGraceMs;
-        let m = await this._userMatch(userId, signal);
-        while (!m && this.now() < appearUntil) { await sleep(this.timing.pollMs, signal); m = await this._userMatch(userId, signal); }
+        let m = await this._userMatch(userId, signal, sim);
+        while (!m && this.now() < appearUntil) { await sleep(this.timing.pollMs, signal); m = await this._userMatch(userId, signal, sim); }
         let started = false;
         let until = Infinity;
         while (m) {
@@ -255,7 +287,7 @@ class GoUpService {
           }
           if (this.now() > until) throw new Error('The match did not end in time.');
           await sleep(this.timing.pollMs, signal);
-          m = await this._userMatch(userId, signal);
+          m = await this._userMatch(userId, signal, sim);
         }
         if (!started) this._row(id, { played: n });
         const before = this.run.accounts[id].season;
@@ -291,6 +323,15 @@ class GoUpService {
         retry = true;
         return;
       }
+      // the game did not answer even after the retries: not the end of this account's Go-up — it
+      // goes on after a pause (waits for a running match first, the played count is kept)
+      if (isNoReply(error) && restarts < MAX_RESTARTS) {
+        this._row(id, { status: 'waitingGame', reason: null });
+        this._log(id, 'warning', 'gu.noReply', { error: error.message, s: Math.round(this.timing.restartMs / 1000), n: restarts + 1, max: MAX_RESTARTS },
+          `The game did not answer (${error.message}) · Go-up goes on in ${Math.round(this.timing.restartMs / 1000)} s (${restarts + 1}/${MAX_RESTARTS})`);
+        again = true;
+        return;
+      }
       if (/auth|session|login/i.test(error.message)) this.sessions.invalidate?.(id);
       this._row(id, { status: 'error', reason: error.message });
       this._log(id, 'error', 'gu.failed', { error: error.message }, `Go-up stopped: ${error.message}`);
@@ -299,6 +340,10 @@ class GoUpService {
       if (retry) {
         try { await this.gameHealth.waitUp(signal); } catch { this._row(id, { status: 'stopped', reason: 'stopped' }); return; }
         return this._account(id, signal);
+      }
+      if (again) {
+        try { await sleep(this.timing.restartMs, signal); } catch { this._row(id, { status: 'stopped', reason: 'stopped' }); return; }
+        return this._account(id, signal, 0, restarts + 1);
       }
     }
   }

@@ -12,7 +12,10 @@ export default function LicensePanel() {
   const [data, setData] = useState(null);
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
-  const [form, setForm] = useState({ key: '', label: '', edition: 'basic', expiresAt: '', maxMachines: 1, requireApproval: false });
+  const [form, setForm] = useState({ label: '', edition: 'basic', expiresAt: '', maxMachines: 1, requireApproval: false });
+  const [made, setMade] = useState(null); // the key just created (random, made by the app)
+  const [copied, setCopied] = useState('');
+  const copy = k => { navigator.clipboard?.writeText(k).then(() => { setCopied(k); setTimeout(() => setCopied(''), 1500); }).catch(() => {}); };
 
   const load = useCallback(async () => {
     setErr('');
@@ -24,7 +27,8 @@ export default function LicensePanel() {
   useEffect(() => { load(); }, [load]);
 
   const act = async fn => { setBusy(true); try { const r = await fn(); if (r && r.ok === false) setErr(r.error || 'Hata'); await load(); } catch (e) { setErr(e.message); } finally { setBusy(false); } };
-  const create = () => act(async () => { if (!form.key.trim()) return { ok: false, error: 'Anahtar gir' }; const p = { ...form, maxMachines: Number(form.maxMachines) || 1, expiresAt: form.expiresAt || null }; const r = await api().createLicense(p); if (r?.ok) setForm({ key: '', label: '', edition: 'basic', expiresAt: '', maxMachines: 1, requireApproval: false }); return r; });
+  // the key is generated randomly by the app; only label / edition / limits are typed
+  const create = () => act(async () => { const p = { ...form, maxMachines: Number(form.maxMachines) || 1, expiresAt: form.expiresAt || null }; const r = await api().createLicense(p); if (r?.ok) { setMade({ key: r.key, label: form.label, edition: form.edition }); setForm({ label: '', edition: 'basic', expiresAt: '', maxMachines: 1, requireApproval: false }); } return r; });
 
   const machinesByKey = k => (data?.machines || []).filter(m => m.key === k);
 
@@ -37,14 +41,20 @@ export default function LicensePanel() {
     <div className="panel eq-form" style={{ marginBottom: 14 }}>
       <b>Yeni lisans</b>
       <div className="eq-row" style={{ flexWrap: 'wrap', gap: 8 }}>
-        <input placeholder="Anahtar (ör. ALI-2026-XXXX)" value={form.key} onChange={e => setForm(f => ({ ...f, key: e.target.value }))} />
         <input placeholder="Etiket / kişi" value={form.label} onChange={e => setForm(f => ({ ...f, label: e.target.value }))} />
         <select value={form.edition} onChange={e => setForm(f => ({ ...f, edition: e.target.value }))}><option value="basic">Düz</option><option value="pro">Pro</option></select>
         <label style={{ fontSize: 12 }}>Cihaz sınırı <input type="number" min="1" style={{ width: 60 }} value={form.maxMachines} onChange={e => setForm(f => ({ ...f, maxMachines: e.target.value }))} /></label>
         <label style={{ fontSize: 12 }} title="Boş = süresiz">Bitiş <input type="date" value={form.expiresAt} onChange={e => setForm(f => ({ ...f, expiresAt: e.target.value }))} /></label>
         <label className="switchline" style={{ fontSize: 12 }}><input type="checkbox" checked={form.requireApproval} onChange={e => setForm(f => ({ ...f, requireApproval: e.target.checked }))} /> Yeni cihaz onay bek: </label>
-        <button className="btn primary" disabled={busy} onClick={create}>Ekle</button>
+        <button className="btn primary" disabled={busy} onClick={create}>Anahtar oluştur</button>
       </div>
+      <span style={{ fontSize: 12, color: 'var(--d-mut)' }}>Anahtar rastgele üretilir (DT-XXXX-XXXX-XXXX-XXXX-XXXX).</span>
+      {made && <div className="eq-row" style={{ gap: 8, alignItems: 'center' }}>
+        <span className="pill ok"><i />oluşturuldu</span>
+        <code style={{ fontSize: 14, userSelect: 'all' }}>{made.key}</code>
+        <span style={{ fontSize: 12 }}>{made.label || '(etiketsiz)'} · {EDN[made.edition]}</span>
+        <button className="btn ghost small" onClick={() => copy(made.key)}>{copied === made.key ? 'Kopyalandı' : 'Kopyala'}</button>
+      </div>}
     </div>
 
     {(data?.licenses || []).map(l => {
@@ -52,7 +62,8 @@ export default function LicensePanel() {
       return <div className="panel" key={l.key} style={{ marginBottom: 12 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
           <b>{l.label || '(etiketsiz)'}</b>
-          <code style={{ fontSize: 12 }}>{l.key}</code>
+          <code style={{ fontSize: 12, userSelect: 'all' }}>{l.key}</code>
+          <button className="btn ghost small" onClick={() => copy(l.key)}>{copied === l.key ? 'Kopyalandı' : 'Kopyala'}</button>
           <span className="pill">{EDN[l.edition] || l.edition}</span>
           {l.revoked ? <span className="pill bad"><i />iptal</span> : <span className="pill ok"><i />aktif</span>}
           <span style={{ fontSize: 12, color: 'var(--d-mut)' }}>cihaz {ms.length}/{l.max_machines} · {l.expires_at ? `bitiş ${when(l.expires_at)}` : 'süresiz'}{l.require_approval ? ' · onay gerekli' : ''}</span>

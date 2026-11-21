@@ -30,6 +30,11 @@ const EQUIP_SLOTS = [['HEADBAND', 'headbandInventoryId'], ['JERSEY', 'jerseyInve
 const PAYMENT_MODE = { APK: 'APK_TICKET', TIX: 'TICKET' };
 
 const isOwnedError = message => /already own/i.test(String(message || ''));
+// the game never lets a temporary player be sold, so it can never be parked (2026-11-19, Trophy)
+const isTemporaryError = message => /temporary player/i.test(String(message || ''));
+const FILLER_TRIES = 5;
+const BUSY_RE = /being processed|another operation/i;
+const BUSY_RETRIES = [1500, 3000, 5000, 8000];
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 const waitOf = r => r?.retryAfter ?? Number(String(r?.message || r?.error || '').match(/(?:please wait|try again in)\s*(\d+)/i)?.[1]);
 
@@ -77,6 +82,9 @@ class OwnedSwap {
       this.onActivity();
       const wait = waitOf(r);
       if (r?.success === false && Number.isFinite(wait) && attempt < 4) { await sleep(wait * 1000 + 250); continue; }
+      // "Item is currently being processed by another operation": the game is still busy with the
+      // previous step (unequip, take-back) — the park failed 27 times on 2026-11-17 without waiting
+      if (r?.success === false && BUSY_RE.test(String(r?.message || r?.error || '')) && attempt < BUSY_RETRIES.length) { await sleep(BUSY_RETRIES[attempt]); continue; }
       await sleep(this.gapMs);
       return r;
     }
@@ -120,15 +128,27 @@ class OwnedSwap {
       at: new Date().toISOString()
     };
     // Only 5 players: the roster may not drop to 4, so one own listing comes back first.
+    // It must be a player NOT in the roster (the game refuses to take back a player the account
+    // already has: Pascal Siakam on Pipelne7, 2026-11-20); a refused one → the next candidate.
     if (squad.length <= ROSTER_MIN) {
       const skip = new Set(excludeTickets);
-      const own = (await this.listings()).filter(r => r.playerId !== playerId && !skip.has(r.ticketId));
-      const filler = pickFiller(own, await this.cap());
-      if (!filler) return { ok: false, reason: 'noListings' };
-      const r = await this.cancel(filler.ticketId);
-      if (!r?.success) return { ok: false, reason: 'failed', message: `Listing ${filler.name} could not be taken back: ${r?.message || '?'}` };
-      record.filler = { playerId: filler.playerId, name: filler.name, price: filler.price, currency: filler.currency, kind: filler.kind };
-      this.log('info', 'os.fillerTaken', { name: filler.name, kind: filler.kind }, `${filler.name} taken back from the market to make room`);
+      const inRoster = new Set(squad.map(p => p.playerId));
+      let own = (await this.listings()).filter(r => r.playerId !== playerId && !skip.has(r.ticketId) && !inRoster.has(r.playerId));
+      const cap = await this.cap();
+      let lastError = null;
+      for (let i = 0; i < FILLER_TRIES && !record.filler; i++) {
+        const filler = pickFiller(own, cap);
+        if (!filler) break;
+        const r = await this.cancel(filler.ticketId);
+        if (r?.success) {
+          record.filler = { playerId: filler.playerId, name: filler.name, price: filler.price, currency: filler.currency, kind: filler.kind };
+          this.log('info', 'os.fillerTaken', { name: filler.name, kind: filler.kind }, `${filler.name} taken back from the market to make room`);
+        } else {
+          lastError = `Listing ${filler.name} could not be taken back: ${r?.message || '?'}`;
+          own = own.filter(x => x.ticketId !== filler.ticketId && x.playerId !== filler.playerId);
+        }
+      }
+      if (!record.filler) return lastError ? { ok: false, reason: 'failed', message: lastError } : { ok: false, reason: 'noListings' };
     }
     const undo = async () => { await this._refill(record).catch(() => {}); };
     if (record.equipment.length) {
@@ -140,7 +160,10 @@ class OwnedSwap {
       if (!r?.success) { await this._dress(record).catch(() => {}); await undo(); return { ok: false, reason: 'failed', message: `Skill could not be taken off: ${r?.message || r?.error || '?'}` }; }
     }
     const parked = await this.sell(playerId, PARK_PRICE, 'TIX');
-    if (!parked?.success) { await this._dress(record).catch(() => {}); await undo(); return { ok: false, reason: 'failed', message: `${record.name} could not be parked: ${parked?.message || '?'}` }; }
+    if (!parked?.success) {
+      await this._dress(record).catch(() => {}); await undo();
+      return { ok: false, reason: isTemporaryError(parked?.message) ? 'temporary' : 'failed', message: `${record.name} could not be parked: ${parked?.message || '?'}` };
+    }
     // Remember which listing is the park, so restore takes back exactly this one (a
     // relist puts a second listing of the same player on the market).
     const parkRow = (await this.listings().catch(() => [])).find(r => r.playerId === playerId && r.status === 'LISTED' && r.price === PARK_PRICE);
@@ -184,21 +207,34 @@ class OwnedSwap {
       return { ok: false, reason: 'failed', message: `${record.name} is neither on the market nor in the roster`, problems };
     }
     problems.push(...await this._dress(record));
-    const squad = await this.squad();
-    const want = lineupFor(record.lineup, squad);
-    if (!sameLineup(squad, want)) {
-      this.onActivity();
-      const r = await this.gs.ack('updatePlayerPositions', { userId: this.userId, starters: want.starters, bench: want.bench }, { timeoutMs: TIMEOUT_MS }).catch(e => ({ success: false, message: e.message }));
-      if (!r?.success) problems.push(`lineup: ${r?.message || '?'}`);
-    }
     if (record.filler) {
       const name = record.filler.name;
       const r = await this._refill(record);
       if (!r?.success) problems.push(`${name} could not be listed again: ${r?.message || '?'}`);
     }
-    this.log(problems.length ? 'warning' : 'success', 'os.restored', { name: record.name, problems: problems.join(' · ') }, `${record.name} back in the roster${problems.length ? ' · ' + problems.join(' · ') : ' · equipment, skill and lineup restored'}`);
+    // Last, once everything else is done (user 2026-11-21): the starting five should be back on
+    // their own positions by themselves; read the roster again, fix it if not and check once more.
+    const lineup = await this.checkLineup(record.lineup);
+    if (!lineup.ok) problems.push(lineup.message);
+    this.log(problems.length ? 'warning' : 'success', 'os.restored', { name: record.name, problems: problems.join(' · '), lineupFixed: Boolean(lineup.fixed) },
+      `${record.name} back in the roster${problems.length ? ' · ' + problems.join(' · ') : ` · equipment, skill restored · lineup ${lineup.fixed ? 'fixed' : 'checked'}`}`);
     return { ok: true, problems };
+  }
+
+  // The remembered starting five on their positions: { ok, fixed?, message? }
+  async checkLineup(remembered, tries = 2) {
+    for (let i = 0; i < tries; i++) {
+      const squad = await this.squad();
+      const want = lineupFor(remembered, squad);
+      if (sameLineup(squad, want)) return { ok: true, fixed: i > 0 };
+      this.onActivity();
+      const r = await this.gs.ack('updatePlayerPositions', { userId: this.userId, starters: want.starters, bench: want.bench }, { timeoutMs: TIMEOUT_MS }).catch(e => ({ success: false, message: e.message }));
+      if (!r?.success) return { ok: false, message: `lineup: ${r?.message || '?'}` };
+      await sleep(this.gapMs);
+    }
+    const squad = await this.squad();
+    return sameLineup(squad, lineupFor(remembered, squad)) ? { ok: true, fixed: true } : { ok: false, message: 'lineup: the starting five are still not on their positions' };
   }
 }
 
-module.exports = { OwnedSwap, pickFiller, lineupFor, isOwnedError, PARK_PRICE };
+module.exports = { OwnedSwap, pickFiller, lineupFor, isOwnedError, isTemporaryError, PARK_PRICE };
