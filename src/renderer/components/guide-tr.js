@@ -153,7 +153,7 @@ export const GUIDE_TR = {
         "Okumalar giriş yapmadan yapılır; mesaj gönderme ve istek kabul etme hesabın kendi oturumuyla yapılır, hesap oyundan atılmaz.",
         "Uygulama her dakika bütün hesaplarda yeni istek, okunmamış mesaj ve ödüllü posta arar; varsa sol menüde sayı çıkar, Aktivite'ye yazılır ve Windows bildirimi gelir.",
         "Oyun sohbet geçmişini her gün 19:00 civarında siler; uygulama gördüğü mesajları saklar, böylece önceki günün sohbeti de okunabilir.",
-        "Auto Play çalışırken posta ödülleri 30 dakikada bir kendiliğinden toplanır.",
+        "Auto Play çalışırken posta ödülleri 10 dakikada bir kendiliğinden toplanır.",
         "Arkadaşlık isteği aramasında takım adının en az 2 harfi yazılır; oyunun kendi aramasıyla bütün takımlar ve kendi hesapların bulunur, arkadaşlık durumu da görünür."
       ],
       tips: [], problems: []

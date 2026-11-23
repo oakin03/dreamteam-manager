@@ -384,12 +384,44 @@ class TaskEngine {
     return gate;
   }
 
+  // Accounts whose Auto Play runs and that nothing holds right now: Group Match helpers (user
+  // 2026-11-23). `message` lets the caller prefer accounts that only wait (daily PK limit).
+  idleRunning() {
+    return [...this.workers.values()]
+      .filter(w => w.status === 'running' && !w.controller.signal.aborted && !this.gates.has(w.accountId))
+      .map(w => ({ accountId: w.accountId, message: w.message || '' }));
+  }
+
+  // Holds an account's Auto Play while fn(signal) runs: its loop stops at the next ctx.sleep()
+  // (a match already running is not cut; fn waits for it). Never rejects (the loop awaits it).
+  // null when the account does not run or something else holds it.
+  hold(accountId, fn, phase = 'helper') {
+    const worker = this.workers.get(accountId);
+    if (!worker || worker.controller.signal.aborted || this.gates.has(accountId)) return null;
+    const gate = (async () => {
+      worker.phase = phase;
+      this.onChanged?.();
+      try { return await fn(worker.controller.signal); }
+      catch (error) { return { error }; }
+      finally {
+        worker.phase = null;
+        if (this.gates.get(accountId) === gate) this.gates.delete(accountId);
+        this.onChanged?.();
+      }
+    })();
+    this.gates.set(accountId, gate);
+    return gate;
+  }
+
   // While the task runs, the routine runs again at the next due time (19:12 TR).
   _scheduleBeforeRun(worker, account, at = null) {
     if (!this.beforeRunNextAt || worker.controller.signal.aborted) return;
     clearTimeout(worker.beforeRunTimer);
     const delay = Math.max(1000, Number(at ?? this.beforeRunNextAt(account.id)) - Date.now());
     worker.beforeRunTimer = setTimeout(async () => {
+      if (this.workers.get(account.id) !== worker || worker.controller.signal.aborted) return;
+      // the account may be helping another one's Group Match right now: the routine waits
+      for (let busy; (busy = this.gates.get(account.id));) await busy;
       if (this.workers.get(account.id) !== worker || worker.controller.signal.aborted) return;
       await this._runBeforeRun(worker, account);
       this._scheduleBeforeRun(worker, account);

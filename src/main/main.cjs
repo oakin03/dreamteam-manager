@@ -859,6 +859,8 @@ function initServices() {
     beforeRun: ({ account, signal }) => dailyRoutine.runIfDue(account, { signal }),
     beforeRunNextAt: accountId => dailyRoutine.nextDueAt(accountId)
   });
+  // Group Match helpers: accounts whose Auto Play runs fill a short party / form the opponent party
+  dailyRoutine.setHelpers({ idle: () => engine.idleRunning(), hold: (id, fn) => engine.hold(id, fn) });
   scheduler = new SchedulerService({ store, engine, activity, onChanged: emitState, pauseServices: (ids, name) => pauseServicesFor(ids, name) }); // @strip(basic)
   scout = new ScoutService({ store, activity, sessions: gameSessions, cardsService: cards, accountProfile, gameHealth, onChanged: emitState });
   trading = new TradingHallService({ store, credentials, browserService, activity, onChanged: emitState });

@@ -373,7 +373,7 @@ test('task rewards: Claim All for several, nothing sent when none are ready, coo
   assert.ok(!game.calls.some(c => /TaskReward/.test(c.event)), 'nothing ready → no claim call');
 });
 
-test('while Auto Play runs, a done routine still claims rewards every 30 minutes', async () => {
+test('while Auto Play runs, a done routine still claims rewards every 10 minutes', async () => {
   const game = fakeGame({ signInClaimed: true, signed600: true, tasksStarted: true, fmDone: true });
   let t = NOW;
   const { s, mem } = routine(game);
@@ -382,10 +382,10 @@ test('while Auto Play runs, a done routine still claims rewards every 30 minutes
   assert.equal(s.nextDueAt('a1'), t, 'never checked → now');
   await s.runIfDue(account);
   assert.equal(game.calls.filter(c => c.event === 'claimDailyTaskReward').length, 1);
-  assert.equal(s.nextDueAt('a1'), t + 30 * 60 * 1000);
-  t += 10 * 60 * 1000; game.calls.length = 0;
+  assert.equal(s.nextDueAt('a1'), t + 10 * 60 * 1000);
+  t += 5 * 60 * 1000; game.calls.length = 0;
   await s.runIfDue(account);
-  assert.equal(game.calls.length, 0, 'not again within 30 minutes');
+  assert.equal(game.calls.length, 0, 'not again within 10 minutes');
 });
 
 test('Mail rewards are claimed with the task rewards and summed up by item', async () => {

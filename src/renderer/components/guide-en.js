@@ -153,7 +153,7 @@ export const GUIDE_EN = {
         "Reading needs no sign-in; sending messages and accepting requests use the account's own session, so it is not signed out of the game.",
         "Every minute the app looks for new requests, unread messages and mail with rewards on all accounts; if there are any, a number shows in the sidebar, Activity gets an entry and Windows shows a notification.",
         "The game deletes its chat history every day around 19:00; the app keeps what it has seen, so yesterday's chat can still be read.",
-        "While Auto Play runs, mail rewards are also collected every 30 minutes.",
+        "While Auto Play runs, mail rewards are also collected every 10 minutes.",
         "The friend request search needs at least 2 letters of the team name; it uses the game's own search and finds every team plus your own accounts, with the friendship status."
       ],
       tips: [], problems: []

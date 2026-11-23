@@ -26,14 +26,23 @@ const DEFAULT_TIMING = {
   unreadyKickMs: 60 * 1000,       // our full party: a member not ready this long is kicked (leader)
   idleLeaderMs: 60 * 1000,        // a stranger's full, ready party whose leader does not search: leave
   leaveWaitMs: 10 * 60 * 1000,    // the party cannot be left while its games run: wait this long
-  groupTotalMs: 40 * 60 * 1000
+  groupTotalMs: 40 * 60 * 1000,
+  // Group Match helpers (user 2026-11-23): instead of giving up, accounts whose Auto Play runs
+  // fill our party, and if no opponent party comes, 3 more form one.
+  helperAfterMs: 2 * 60 * 1000,   // our party still not full this long -> 1-2 helpers join it
+  opponentAfterMs: 2 * 60 * 1000, // our full party searching this long without a match -> 3 helpers form an opponent party
+  helperMaxMs: 20 * 60 * 1000,    // a helper goes back to Auto Play after this at the latest
+  helperBusyMs: 6 * 60 * 1000,    // a helper's Quick Play match from before the hold: wait this long
+  helperGraceMs: 8 * 1000         // our party matched but the helpers' party not: not them -> break up
 };
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const RUN_DELAY_MS = 2 * 60 * 1000;   // runs at 19:12 TR, after the game's reset settles
 const RETRY_MS = 30 * 60 * 1000;      // an incomplete routine is tried again after this
 const RECHECK_MS = 60 * 60 * 1000;    // and the schedule is looked at again at least hourly
-const REWARD_CHECK_MS = 30 * 60 * 1000; // while Auto Play runs, finished task rewards are claimed this often
+// while Auto Play runs, finished task rewards are claimed this often (was 30 min: the PK tasks
+// finished between two checks sat unclaimed for up to half an hour, user 2026-11-23)
+const REWARD_CHECK_MS = 10 * 60 * 1000;
 const DONATION_TK = 100;                // daily alliance donation (the game's minimum)
 
 function abortError() { const e = new Error('Aborted'); e.name = 'AbortError'; return e; }
@@ -98,7 +107,13 @@ class DailyRoutineService {
     this.timing = { ...DEFAULT_TIMING, ...timing };
     this.live = new Map(); // accountId -> { status, step, stepParams, error }
     this.lastClaimCheck = new Map(); // accountId -> ms of the last task reward check
+    this.helpers = null;             // { idle(): [{accountId, message}], hold(accountId, fn) } from the task engine
+    this.helping = new Set();        // accountIds helping a Group Match right now
+    this.helperRuns = [];            // their promises (tests wait for them)
   }
+
+  // The task engine lends accounts whose Auto Play runs (main.cjs).
+  setHelpers(helpers) { this.helpers = helpers; }
 
   // Never configured → every account; the Daily column can untick them.
   selectedIds() {
@@ -692,25 +707,42 @@ class DailyRoutineService {
           }
         }
         // in the party: ready up, the leader finds the match, wait for the games
-        const joinedAt = this.now();
+        let joinedAt = this.now();
         let matched = false;
+        let searchingSince = null;
+        // what the helpers see of this party (status) and whether help was already sent for it
+        const help = { partyId: party.party_id, requester: userId, status: party.status, over: false, filled: false, opponent: false };
         let unreadySince = null;
         let idleSince = null;
         while (party && this.now() < deadline) {
           if (await this._taskDone(main, userId, 'group_match', signal)) {
+            help.over = true;
             this._log(account, 'success', 'dr.gmDone', {}, 'Group Match finished · daily task complete');
             return 'played';
           }
           const members = party.members || [];
           const me = members.find(m => m.userId === userId);
           const full = members.length >= (party.maxMembers || 3);
+          help.status = party.status;
           if (party.status === 'matched') {
             if (!matched) this._log(account, 'info', 'dr.gmMatched', {}, 'Group Match found · the games are being played');
             matched = true;
             this._step(account, 'gmPlaying');
           } else if (party.status === 'searching') {
             this._step(account, 'gmSearchingMatch');
+            searchingSince ??= this.now();
+            // nobody to play against: 3 of our Auto Play accounts form the opponent party
+            if (!help.opponent && this.now() - searchingSince >= this.timing.opponentAfterMs) {
+              help.opponent = true;
+              if (this._sendOpponents(account, help)) joinedAt = this.now();
+            }
           } else {
+            searchingSince = null;
+            // our party stays short: Auto Play accounts of ours fill it
+            if (!help.filled && !full && this.now() - joinedAt >= this.timing.helperAfterMs) {
+              help.filled = true;
+              if (this._sendFillers(account, help, (party.maxMembers || 3) - members.length)) joinedAt = this.now();
+            }
             if (me && !me.ready) await sim.ack('setPartyReady', { userId, ready: true }, { signal }).catch(() => null);
             const unready = members.filter(m => !m.ready && m.userId !== userId);
             if (party.leader === userId && full && !unready.length) {
@@ -760,7 +792,9 @@ class DailyRoutineService {
           party = await this._myParty(sim, userId, signal);
           // put out of the party by its leader: look for another one
           if (!party && !matched) this._log(account, 'warning', 'dr.gmRemoved', {}, 'Removed from the party · looking for another one');
+          if (!party || party.party_id !== help.partyId) help.over = true;
         }
+        help.over = true;
       }
       // No opponent party showed up (3v3 needs a second full party; our own accounts rarely get
       // paired by the game's public matchmaking). This is not a fault of the account — give up for
@@ -769,6 +803,130 @@ class DailyRoutineService {
       return 'noOpponent';
     } finally {
       await this._leaveParty(account, sim, userId);
+    }
+  }
+
+  // ---- Group Match helpers (user 2026-11-23) ----
+  // Accounts whose Auto Play runs lend a hand: their Quick Play waits (task engine hold) while
+  // they fill our party or form the opponent party, then goes on. Main / second main are never
+  // used; accounts that only wait for the daily PK reset come first; injured ones never.
+  _pickHelpers(n, exclude = []) {
+    if (!this.helpers || n <= 0) return [];
+    const prof = this.store.getAccountProfile?.() || {};
+    const skip = new Set([prof.mainAccountId, prof.secondMainId, ...exclude, ...this.helping].filter(Boolean));
+    const users = prof.accounts || {};
+    const byId = new Map((this.store.getAccounts?.() || []).map(a => [a.id, a]));
+    const pool = (this.helpers.idle() || []).filter(h => byId.has(h.accountId) && !skip.has(h.accountId) && users[h.accountId]?.userId
+      && !this.live.has(h.accountId) && !injuryBlocked(h.accountId));
+    pool.sort((a, b) => Number(/pk limit/i.test(b.message)) - Number(/pk limit/i.test(a.message)));
+    return pool.slice(0, n).map(h => byId.get(h.accountId));
+  }
+
+  _lend(helper, fn) {
+    this.helping.add(helper.id);
+    const run = this.helpers.hold(helper.id, signal => fn(signal));
+    if (!run) { this.helping.delete(helper.id); return false; }
+    const done = Promise.resolve(run).finally(() => this.helping.delete(helper.id));
+    this.helperRuns.push(done);
+    return true;
+  }
+
+  // 1-2 helpers join our party that stays short.
+  _sendFillers(account, help, count) {
+    const helpers = this._pickHelpers(count, [account.id]);
+    if (!helpers.length) return false;
+    const sent = helpers.filter(h => this._lend(h, signal => this._helpParty(h, { help, partyId: help.partyId }, signal)));
+    if (!sent.length) return false;
+    const names = sent.map(h => h.name).join(', ');
+    this._log(account, 'info', 'dr.gmHelpers', { names }, `The party stays short · ${names} join it (their Auto Play waits meanwhile)`);
+    return true;
+  }
+
+  // 3 helpers form the opponent party: the first creates it, the other two join it.
+  _sendOpponents(account, help) {
+    const helpers = this._pickHelpers(3, [account.id]);
+    if (helpers.length < 3) {
+      this._log(account, 'warning', 'dr.gmNoHelpers', {}, 'No opponent party and not enough free Auto Play accounts to form one');
+      return false;
+    }
+    let created; const partyReady = new Promise(resolve => { created = resolve; });
+    const [lead, ...rest] = helpers;
+    if (!this._lend(lead, signal => this._helpParty(lead, { help, lead: true, onCreated: created }, signal))) return false;
+    for (const h of rest) this._lend(h, signal => this._helpParty(h, { help, partyReady }, signal));
+    const names = helpers.map(h => h.name).join(', ');
+    this._log(account, 'info', 'dr.gmOpponents', { names }, `No opponent party · ${names} form one (their Auto Play waits meanwhile)`);
+    return true;
+  }
+
+  // One helper's part. Filling (partyId): join our party, ready up, play, leave. Opponent
+  // (lead / partyReady): be in the second party; it searches when full and ready. If OUR party is
+  // matched while this one is not, it was matched with someone else: the second party breaks up
+  // at once (user 2026-11-23). Our party gone / its account done: the helpers leave too.
+  async _helpParty(helper, { help, partyId = null, lead = false, onCreated = null, partyReady = null }, signal) {
+    const t = this.timing;
+    const until = this.now() + t.helperMaxMs;
+    const opponent = Boolean(lead || partyReady);
+    let sim = null; let userId = null; let joined = false;
+    try {
+      const session = await this.sessions.get(helper, { owner: 'daily-routine' });
+      userId = session.userId;
+      sim = await GameSocket.open({ createSocket: this.createSocket, path: '/simulation-socket/', cookie: session.cookieHeader, signal });
+      // a Quick Play match started before the hold: let it end first
+      const busyUntil = this.now() + t.helperBusyMs;
+      while ((await sim.ack('getUserActiveMatch', { userId }, { signal }).catch(() => null))?.match) {
+        if (this.now() >= busyUntil || help.over) { onCreated?.(null); return 'busy'; }
+        await sleep(t.pollMs, signal);
+      }
+      if (help.over) { onCreated?.(null); return 'over'; }
+      if (lead) {
+        const r = await sim.ack('createParty', { userId }, { signal });
+        if (!r?.success) { onCreated?.(null); this._log(helper, 'warning', 'dr.gmHelpFailed', { error: reasonOf(r) }, `Group Match help: ${reasonOf(r)}`); return 'failed'; }
+        partyId = (r.party || await this._myParty(sim, userId, signal))?.party_id;
+        onCreated?.(partyId);
+      } else {
+        if (partyReady) partyId = await partyReady;
+        if (!partyId || help.over) return 'over';
+        const r = await sim.ack('joinParty', { userId, partyId }, { signal });
+        if (!r?.success) { this._log(helper, 'warning', 'dr.gmHelpFailed', { error: reasonOf(r) }, `Group Match help: ${reasonOf(r)}`); return 'failed'; }
+      }
+      joined = true;
+      this._log(helper, 'info', 'dr.gmHelping', {}, 'Helping a Group Match · Auto Play waits meanwhile');
+      let matched = false; let otherMatchedAt = null;
+      while (this.now() < until) {
+        const party = await this._myParty(sim, userId, signal);
+        if (!party) break;
+        if (party.status === 'matched') matched = true;
+        else if (matched) break; // the games are over (the party opened again)
+        else {
+          const members = party.members || [];
+          const me = members.find(m => m.userId === userId);
+          if (me && !me.ready) await sim.ack('setPartyReady', { userId, ready: true }, { signal }).catch(() => null);
+          const full = members.length >= (party.maxMembers || 3);
+          if (opponent) {
+            // our party found its match elsewhere (or is done): this party is not needed any more
+            if (help.status === 'matched') otherMatchedAt ??= this.now(); else otherMatchedAt = null;
+            if (help.over || (otherMatchedAt != null && this.now() - otherMatchedAt >= t.helperGraceMs)) {
+              this._log(helper, 'info', 'dr.gmHelpDisband', {}, 'Our party was matched with another party · the helper party breaks up');
+              break;
+            }
+            if (lead && party.status === 'open' && full && members.every(m => m.ready || m.userId === userId)) {
+              await sim.ack('findPartyMatch', { userId }, { signal }).catch(() => null);
+            }
+          } else if (help.over || !members.some(m => m.userId === help.requester)) break; // the account we help left
+        }
+        await sleep(t.pollMs, signal);
+      }
+      return matched ? 'played' : 'left';
+    } catch (error) {
+      if (!joined) onCreated?.(null);
+      if (error?.name !== 'AbortError') this._log(helper, 'warning', 'dr.gmHelpFailed', { error: error.message }, `Group Match help: ${error.message}`);
+      return 'error';
+    } finally {
+      if (sim && userId) {
+        const p = await this._myParty(sim, userId, null).catch(() => null);
+        if (p) await this._leaveParty(helper, sim, userId).catch(() => {});
+        try { sim.close(); } catch {}
+      }
     }
   }
 
