@@ -3,6 +3,8 @@ import SortTable from './SortTable';
 import { filOf } from '../i18n-fil';
 import RatingBadge from './RatingBadge';
 import { Drafted, DRAFT_TEXT } from './DraftPage';
+import { MultiPick } from './MultiPick';
+import { groupAccounts } from './AccountGroups';
 
 // Çanta → Laborer Contract (user 2026-11-18): pick a player from our teams or our own market
 // listings, the account whose contract is used; the player is taken off the market / traded there,
@@ -15,7 +17,7 @@ const TEXT = {
   tr: {
     contracts: 'Sözleşmesi olan hesaplar', noContracts: 'Okunan hesaplarda Laborer Contract yok.', account: 'Hesap',
     read: 'Oyuncuları ve sözleşmeleri oku', reading: 'Okunuyor…', readAt: 'Okundu: {time}',
-    pickTitle: '1 · Oyuncu seç', search: 'Oyuncu ya da hesap ara…', all: 'Hepsi', team: 'Takımda', market: 'Pazarda',
+    pickTitle: '1 · Oyuncu seç', search: 'Oyuncu ara (virgülle birden fazla: ad1, ad2)', grade: 'Rating', accountsN: '{n} hesap', showList: 'Hesapları göster', hideList: 'Gizle', reset: 'Sıfırla', others: 'Diğer hesaplar', all: 'Hepsi', team: 'Takımda', market: 'Pazarda',
     player: 'Oyuncu', where: 'Nerede', value: 'Değer', salary: 'Maaş', base: 'Base', choose: 'Seç', chosen: 'Seçildi',
     onMarket: 'Pazarda · {price} {cur}', more: '{n} oyuncu daha · aramayı daralt',
     applyTitle: '2 · Sözleşme', range: 'Son 30 günde {count} maç · maaş aralığı {min} ~ {max} · şimdi {now}', rangeBad: 'Kullanılamaz: {why}',
@@ -35,7 +37,7 @@ const TEXT = {
   en: {
     contracts: 'Accounts with contracts', noContracts: 'No Laborer Contract on the accounts read.', account: 'Account',
     read: 'Read players and contracts', reading: 'Reading…', readAt: 'Read: {time}',
-    pickTitle: '1 · Choose a player', search: 'Search player or account…', all: 'All', team: 'On a team', market: 'On the market',
+    pickTitle: '1 · Choose a player', search: 'Search players (several with commas: a, b)', grade: 'Rating', accountsN: '{n} accounts', showList: 'Show accounts', hideList: 'Hide', reset: 'Reset', others: 'Other accounts', all: 'All', team: 'On a team', market: 'On the market',
     player: 'Player', where: 'Where', value: 'Value', salary: 'Salary', base: 'Base', choose: 'Choose', chosen: 'Chosen',
     onMarket: 'On the market · {price} {cur}', more: '{n} more player(s) · narrow the search',
     applyTitle: '2 · Contract', range: '{count} matches in the last 30 days · salary range {min} ~ {max} · now {now}', rangeBad: 'Cannot be used: {why}',
@@ -63,8 +65,10 @@ export default function LaborTab({ state, t, toast }) {
   const accounts = state.accounts || [];
   const accName = id => accounts.find(a => a.id === id)?.name || id;
   const [cands, setCands] = useState(null);
-  const [q, setQ] = useState('');
-  const [where, setWhere] = useState('all');
+  const NO_FILTERS = { q: '', where: 'all', accountIds: [], grades: [], valueMin: '', valueMax: '', salaryMin: '', salaryMax: '' };
+  const [f, setF] = useState(NO_FILTERS);
+  const setFilter = (k, v) => setF(o => ({ ...o, [k]: v }));
+  const [showContracts, setShowContracts] = useState(false);
   const [pick, setPick] = useState(null);
   const [range, setRange] = useState(null);
   const [target, setTarget] = useState('');
@@ -75,10 +79,22 @@ export default function LaborTab({ state, t, toast }) {
   const contracts = lb.contracts || {};
   const withContract = Object.keys(contracts);
   const kinds = useMemo(() => { const m = new Map(); for (const list of Object.values(contracts)) for (const c of list) m.set(c.itemId, c.name); return [...m.entries()]; }, [contracts]);
-  const rows = useMemo(() => {
-    const s = q.trim().toLocaleLowerCase('tr');
-    return (cands || []).filter(c => (where === 'all' || c.where === where) && (!s || String(c.name || '').toLocaleLowerCase('tr').includes(s) || accName(c.accountId).toLocaleLowerCase('tr').includes(s)));
-  }, [cands, q, where, accounts]);
+  // the same filters as the Market tables (user 2026-11-24): accounts (groups at once), ratings,
+  // value / salary ranges, several names with commas
+  const terms = f.q.split(',').map(v => v.trim().toLocaleLowerCase('tr')).filter(Boolean);
+  const inRange = (v, min, max) => { const n = Number(v); if (min !== '' && !(Number.isFinite(n) && n >= Number(min))) return false; if (max !== '' && !(Number.isFinite(n) && n <= Number(max))) return false; return true; };
+  const rows = useMemo(() => (cands || []).filter(c => (f.where === 'all' || c.where === f.where)
+    && (!terms.length || terms.some(v => String(c.name || '').toLocaleLowerCase('tr').includes(v)))
+    && (!f.accountIds.length || f.accountIds.includes(c.accountId)) && (!f.grades.length || f.grades.includes(c.rating))
+    && inRange(c.value, f.valueMin, f.valueMax) && inRange(c.salary, f.salaryMin, f.salaryMax)), [cands, f]);
+  const candAccounts = useMemo(() => accounts.filter(a => (cands || []).some(c => c.accountId === a.id)), [cands, accounts]);
+  const candGroups = useMemo(() => groupAccounts(candAccounts), [candAccounts]);
+  const grades = useMemo(() => [...new Set((cands || []).map(c => c.rating).filter(Boolean))].sort(), [cands]);
+  // accounts with a contract, in groups (Pipelne…, Trophy…), for the summary and the target choice
+  const contractGroups = useMemo(() => groupAccounts(accounts.filter(a => contracts[a.id])), [accounts, contracts]);
+  const shortKind = n => n.replace(/laborer contract/i, '').replace(/[()]/g, '').trim() || n;
+  const kindTotals = useMemo(() => { const m = new Map(); for (const list of Object.values(contracts)) for (const c of list) { const k = shortKind(c.name); m.set(k, (m.get(k) || 0) + Number(c.quantity || 0)); } return [...m.entries()]; }, [contracts]);
+  const contractLabel = id => accName(id) + ' · ' + (contracts[id] || []).map(c => shortKind(c.name) + ' ×' + c.quantity).join(', ');
   const choose = c => {
     setPick(c); setRange(null);
     const tg = contracts[c.accountId] ? c.accountId : (withContract[0] || '');
@@ -118,15 +134,22 @@ export default function LaborTab({ state, t, toast }) {
       {lb.readAt && <span className="muted-text">{fill(x.readAt, { time: new Date(lb.readAt).toLocaleTimeString() })}</span>}
       <span className="sp" />
       <span className="muted-text">{x.contracts}:</span>
-      {withContract.length ? withContract.map(id => <span key={id} className="pill muted"><i />{accName(id)} · {contracts[id].map(c => `${c.name.replace(/laborer contract/i, '').trim() || c.name} ×${c.quantity}`).join(', ')}</span>) : <span className="muted-text">{x.noContracts}</span>}
+      {withContract.length ? <><b>{fill(x.accountsN, { n: withContract.length })}</b>{kindTotals.map(([k, n]) => <span key={k} className="pill muted"><i />{k} ×{n}</span>)}
+        <button className="chip" onClick={() => setShowContracts(o => !o)}>{showContracts ? x.hideList : x.showList}</button></> : <span className="muted-text">{x.noContracts}</span>}
     </div>
+    {showContracts && withContract.length > 0 && <div className="panel labor-contracts">{contractGroups.map(g => g.accounts
+      ? <details key={g.key}><summary><b>{g.label}</b> <small className="muted-text">{g.accounts.length}</small></summary><div className="labor-contract-list">{g.accounts.map(a => <span key={a.id}>{contractLabel(a.id)}</span>)}</div></details>
+      : <div key={g.key} className="labor-contract-list"><span>{contractLabel(g.account.id)}</span></div>)}</div>}
 
     {pick && <div className="panel labor-pick">
       <h3 className="section-title">{x.applyTitle}</h3>
       <p><b>{pick.name}</b> <RatingBadge grade={pick.rating} mini /> <span className="muted-text">{pick.position} · {accName(pick.accountId)} · {pick.where === 'market' ? fill(x.onMarket, { price: num(pick.price), cur: pick.currency }) : x.team}</span></p>
       <p className={range && !range.ok ? 'bad-text' : 'muted-text'}>{!range ? x.rangeLoading : range.error ? range.error : range.ok ? fill(x.range, { count: range.count, min: num(range.min), max: num(range.max), now: num(pick.salary) }) : fill(x.rangeBad, { why: range.count < 10 ? fill(x.fewMatches, { count: range.count }) : x.same })}</p>
       <div className="labor-form">
-        <label>{x.target} <select value={target} onChange={e => pickTarget(e.target.value)}>{withContract.map(id => <option key={id} value={id}>{accName(id)}</option>)}</select></label>
+        <label>{x.target} <select value={target} onChange={e => pickTarget(e.target.value)}>
+          {contractGroups.filter(g => !g.accounts).length > 0 && <optgroup label={x.others}>{contractGroups.filter(g => !g.accounts).map(g => <option key={g.account.id} value={g.account.id}>{contractLabel(g.account.id)}</option>)}</optgroup>}
+          {contractGroups.filter(g => g.accounts).map(g => <optgroup key={g.key} label={g.label}>{g.accounts.map(a => <option key={a.id} value={a.id}>{contractLabel(a.id)}</option>)}</optgroup>)}
+        </select></label>
         <label>{x.kind} <select value={kind} onChange={e => setKind(e.target.value)}>{(contracts[target] || []).map(c => <option key={c.itemId} value={c.itemId}>{c.name} ×{c.quantity}</option>)}</select></label>
         <span className="sp" />
         <button className="btn ghost" onClick={() => { setPick(null); setRange(null); }}>{x.cancel}</button>
@@ -137,8 +160,15 @@ export default function LaborTab({ state, t, toast }) {
 
     <h3 className="section-title">{x.pickTitle}</h3>
     <div className="panel pg-bar">
-      <input className="ab-list-search" placeholder={x.search} value={q} onChange={e => setQ(e.target.value)} />
-      {[['all', x.all], ['team', x.team], ['market', x.market]].map(([k, l]) => <button key={k} className={`chip ${where === k ? 'active' : ''}`} onClick={() => setWhere(k)}>{l}</button>)}
+      <div className="listing-filters labor-filters">
+        <MultiPick label={x.account} allText={x.all} options={candAccounts.map(a => ({ value: a.id, label: a.name }))} groups={candGroups} value={f.accountIds} onChange={v => setFilter('accountIds', v)} />
+        <input className="listing-name" placeholder={x.search} title={x.search} value={f.q} onChange={e => setFilter('q', e.target.value)} />
+        <MultiPick label={x.grade} allText={x.all} options={grades.map(g => ({ value: g, label: g }))} value={f.grades} onChange={v => setFilter('grades', v)} />
+        <span className="range-filter"><b>{x.value}</b><input type="number" min="0" placeholder="min" value={f.valueMin} onChange={e => setFilter('valueMin', e.target.value)} /><i>–</i><input type="number" min="0" placeholder="max" value={f.valueMax} onChange={e => setFilter('valueMax', e.target.value)} /></span>
+        <span className="range-filter"><b>{x.salary}</b><input type="number" min="0" placeholder="min" value={f.salaryMin} onChange={e => setFilter('salaryMin', e.target.value)} /><i>–</i><input type="number" min="0" placeholder="max" value={f.salaryMax} onChange={e => setFilter('salaryMax', e.target.value)} /></span>
+        {[['all', x.all], ['team', x.team], ['market', x.market]].map(([k, l]) => <button key={k} className={'chip ' + (f.where === k ? 'active' : '')} onClick={() => setFilter('where', k)}>{l}</button>)}
+        <button className="chip reset-chip" onClick={() => setF(NO_FILTERS)}>{x.reset}</button>
+      </div>
     </div>
     <div className="panel table-panel"><SortTable>
       <thead><tr><th>{x.player}</th><th>{x.account}</th><th>{x.where}</th><th>{x.value}</th><th>{x.salary}</th><th>{x.base}</th><th /></tr></thead>

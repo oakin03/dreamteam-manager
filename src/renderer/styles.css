@@ -1246,3 +1246,5 @@ tr.b3-broken td{background:color-mix(in srgb, var(--bg-fff0ee) 70%, transparent)
 .multi-pick-menu{position:absolute;z-index:40;top:36px;left:0;min-width:220px;max-height:360px;overflow:auto;padding:8px;display:grid;gap:3px;box-shadow:0 10px 30px rgba(0,0,0,.18)}.multi-pick-menu label{display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;white-space:nowrap}
 .multi-pick-head{display:flex;gap:6px;margin-bottom:4px}.multi-pick-group{display:grid;grid-template-columns:1fr auto;align-items:center}.multi-pick-sub{grid-column:1/-1;padding-left:18px;display:grid;gap:2px}.grp-arrow-btn{border:0;background:none;cursor:pointer;color:inherit}
 .range-filter{display:inline-flex;align-items:center;gap:4px;font-size:11.5px}.range-filter b{font-weight:600;margin-right:2px}.range-filter input{width:78px}.range-filter i{font-style:normal;opacity:.6}.listing-filters .listing-name{min-width:220px}
+
+.labor-filters{margin:0;align-items:center}.labor-contracts{display:grid;gap:6px;margin-bottom:10px}.labor-contracts details summary{cursor:pointer}.labor-contract-list{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:12px;padding:4px 0 2px 14px}
