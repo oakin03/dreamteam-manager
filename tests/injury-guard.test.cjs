@@ -116,4 +116,8 @@ test('replace: the most expensive healthy player of that position within the cap
   assert.ok(logs.includes('inj.replaced'));
   assert.ok(!calls.some(c => c.event === 'register'), 'nobody is signed out: no register');
   assert.ok(r.results.A);
+  // the game fires / sells only bench players: the injured one leaves after the new one took its slot
+  const order = calls.map(c => c.event);
+  assert.ok(order.lastIndexOf('updatePlayerPositions') < order.indexOf('market:sellPlayer'), 'lineup first, then the market');
+  assert.ok(lineup.payload.bench.some(b => b.playerId === 'hurt'), 'the injured one went to the bench');
 });

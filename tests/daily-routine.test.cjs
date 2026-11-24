@@ -170,10 +170,11 @@ test('fresh day: claims, signs in, starts tasks, joins an open match and waits f
   const results = await s.runIfDue(account);
   assert.deepEqual(results, { signIn: 'claimed', signIn600: 'signed', tasks: 'started', donate: 'noAlliance', friendly: 'played', group: 'already' });
   const joins = game.calls.filter(c => c.event === 'joinFM').map(c => c.payload.matchId);
-  assert.deepEqual(joins, ['fm-full', 'fm-open'], 'never tries the passworded or started match');
+  // joined in a random order now (2026-11-24: hundreds of accounts all went for the first match)
+  assert.ok(joins.every(id => ['fm-full', 'fm-open'].includes(id)) && joins[joins.length - 1] === 'fm-open', 'never tries the passworded or started match');
   assert.ok(!game.calls.some(c => c.event === 'createFM'));
   assert.equal(game.calls.filter(c => c.event === 'register').length, 1, 'only the alliance check registers, on a socket of its own');
-  assert.deepEqual(codes(logs), ['dr.start', 'dr.signIn', 'dr.signIn600', 'dr.tasksStarted', 'dr.donateNoAlliance', 'dr.fmJoinFailed', 'dr.fmJoined', 'dr.fmDone', 'dr.rewardsClaimed', 'dr.done']);
+  assert.deepEqual(codes(logs).filter(c => !['dr.fmJoinFailed', 'dr.fmRaced'].includes(c)), ['dr.start', 'dr.signIn', 'dr.signIn600', 'dr.tasksStarted', 'dr.donateNoAlliance', 'dr.fmJoined', 'dr.fmDone', 'dr.rewardsClaimed', 'dr.done']);
   assert.deepEqual(game.calls.filter(c => /TaskReward/.test(c.event)).map(c => [c.event, c.payload.taskId]), [['claimDailyTaskReward', 't-fm']], 'one task ready → Obtain');
   assert.deepEqual(s.snapshot().accounts.a1.rewards, { count: 1, xp: 250, at: new Date(NOW).toISOString() });
   assert.equal(mem.daily.accounts.a1.cycle, '2026-10-21T16:10:00.000Z');

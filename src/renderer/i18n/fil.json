@@ -3980,5 +3980,12 @@
  "{n} player(s) not found on the market (sold or taken off by hand) · removed from the list": "{n} player ang hindi nakita sa market (nabenta o inalis nang mano-mano) · inalis sa listahan",
  "{count}/{total} player(s) could not be read in this scan · they are read again in the next one": "{count}/{total} player ang hindi nabasa sa scan na ito · babasahin ulit sa susunod",
  "scan took {s}s ({n} players)": "inabot ng {s}s ang scan ({n} player)",
- "The game asks to wait {sec} s ({event}){error}": "Hinihiling ng laro na maghintay ng {sec} s ({event}){error}"
+ "The game asks to wait {sec} s ({event}){error}": "Hinihiling ng laro na maghintay ng {sec} s ({event}){error}",
+ "{name}: empty position {slots} · lineup set ({lineup})": "{name}: bakante ang posisyong {slots} · naayos ang lineup ({lineup})",
+ "{name}: empty position {slots} could not be filled": "{name}: hindi napunan ang bakanteng posisyong {slots}",
+ "{n} Friendly Match(es) were taken by others before joining": "{n} Friendly Match ang nakuha ng iba bago makasali",
+ "The Friendly Match did not start · looking for another one": "Hindi nagsimula ang Friendly Match · naghahanap ng iba",
+ "Empty starter position {slots} filled · {lineup}": "Napunan ang bakanteng starter na posisyong {slots} · {lineup}",
+ "Empty starter position {slots} · no healthy player to put there": "Bakanteng starter na posisyong {slots} · walang malusog na player na mailalagay",
+ "Empty starter position could not be filled: {error}": "Hindi napunan ang bakanteng starter na posisyon: {error}"
 }

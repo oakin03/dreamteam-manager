@@ -3,6 +3,9 @@ const { handleInjury, InjuredError, injuryBlocked } = require('./injury-guard.cj
 const { WIDE, eachAtOnce, eachWithSocket } = require('./wide.cjs');
 // The routine's day turns at 19:10 TR (16:10 UTC); it runs at 19:12. Its own copy: the market's listing
 // expiry moved to the real 19:05 (2026-11-17) and the saved cycle keys stay on 16:10 (DAY_MS below).
+// a random order (Fisher–Yates)
+function shuffle(list) { const a = [...list]; for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
+
 function lastExpiryCutoff(now = Date.now()) {
   const d = new Date(now);
   const today = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 16, 10);
@@ -592,7 +595,11 @@ class DailyRoutineService {
     const busyUntil = this.now() + busyWaitMs;
     for (;;) {
       const active = (await sim.ack('getUserActiveMatch', { userId }, { signal }))?.match;
-      if (active && isFmEntry(active)) return this._waitMatchEnd(account, sim, main, userId, active, signal);
+      if (active && isFmEntry(active)) {
+        const res = await this._waitMatchEnd(account, sim, main, userId, active, signal);
+        if (res !== 'notStarted') return res;
+        break;
+      }
       if (!active) break;
       if (this.now() > busyUntil) throw new Error('Another match is still running.');
       this._step(account, 'fmBusy');
@@ -601,13 +608,20 @@ class DailyRoutineService {
 
     while (this.now() < deadline) {
       const list = await this._list(sim, userId, signal);
-      if (list.myActive) return this._waitMatchEnd(account, sim, main, userId, list.myActive, signal);
+      if (list.myActive) {
+        const res = await this._waitMatchEnd(account, sim, main, userId, list.myActive, signal);
+        if (res !== 'notStarted') return res;
+        this._fmNotStarted(account);
+        continue;
+      }
 
       let own = list.myPending?.match_id || null;
       if (!own) {
         this._step(account, 'fmSearching');
         const open = (list.matches || []).filter(m => isFmEntry(m) && m.status === 'waiting' && !m.opponent && m.host !== userId);
-        const joinable = open.filter(m => !m.hasPassword);
+        const joinable = shuffle(open.filter(m => !m.hasPassword));
+        let raced = 0;
+        let rejoin = false;
         for (const m of joinable) {
           const r = await sim.ack('joinFM', { userId, matchId: m.match_id }, { signal });
           // an injured starter: no other match can be joined either (33 000 refusals on 2026-11-18)
@@ -616,10 +630,18 @@ class DailyRoutineService {
           if (inj === true) break;
           if (r?.success) {
             this._log(account, 'success', 'dr.fmJoined', { host: m.hostName || '?' }, `Friendly Match joined · host ${m.hostName || '?'}`);
-            return this._waitMatchEnd(account, sim, main, userId, m, signal);
+            const res = await this._waitMatchEnd(account, sim, main, userId, m, signal);
+            if (res !== 'notStarted') return res;
+            this._fmNotStarted(account);
+            rejoin = true;
+            break;
           }
+          // someone else was faster / the host left: expected with many accounts, not a warning
+          if (/not joinable|no longer|not found|already (has|have) an opponent|full|started/i.test(reasonOf(r))) { raced++; continue; }
           this._log(account, 'warning', 'dr.fmJoinFailed', { host: m.hostName || '?', error: reasonOf(r) }, `Could not join ${m.hostName || '?'}: ${reasonOf(r)}`);
         }
+        if (rejoin) continue;
+        if (raced) this._log(account, 'info', 'dr.fmRaced', { n: raced }, `${raced} Friendly Match(es) were taken by others before joining`);
         // Not cut short by a stop: a match created meanwhile must still be cancelled.
         const r = await sim.ack('createFM', { userId, password: '' });
         const injC = r?.success ? null : await handleInjury(account.id, reasonOf(r), 'Friendly Match');
@@ -642,11 +664,20 @@ class DailyRoutineService {
       }
 
       const started = await this._waitOpponent(account, sim, userId, own, Math.min(opponentWaitMs, deadline - this.now()), signal);
-      if (started) return this._waitMatchEnd(account, sim, main, userId, started, signal);
+      if (started) {
+        const res = await this._waitMatchEnd(account, sim, main, userId, started, signal);
+        if (res !== 'notStarted') return res;
+        this._fmNotStarted(account);
+        continue;
+      }
       await sim.ack('cancelMatch', { userId, matchId: own }).catch(() => {});
       this._log(account, 'warning', 'dr.fmNoOpponent', { minutes: Math.round(opponentWaitMs / 60000) }, 'Nobody joined; the match was cancelled, looking again');
     }
     throw new Error('No Friendly Match could be played in time.');
+  }
+
+  _fmNotStarted(account) {
+    this._log(account, 'info', 'dr.fmNotStarted', {}, 'The Friendly Match did not start · looking for another one');
   }
 
   // userIds of our own accounts: their parties are joined first
@@ -695,6 +726,8 @@ class DailyRoutineService {
             }
             // over the salary cap: every party (and our own) says the same, stop here
             if (CAP_RE.test(reasonOf(r))) throw new Error(reasonOf(r));
+            // filled / closed by someone else a moment before: expected with many accounts (2026-11-24: 111)
+            if (/is full|no longer open|not found|not open/i.test(reasonOf(r))) continue;
             this._log(account, 'warning', 'dr.gmJoinFailed', { leader: p.leaderName || '?', error: reasonOf(r) }, `Could not join the party of ${p.leaderName || '?'}: ${reasonOf(r)}`);
           }
           if (!party) {
@@ -1002,7 +1035,11 @@ class DailyRoutineService {
       else if (seen || this.now() > appearBy) {
         // Ended (or never started): the task counter can lag a moment behind.
         if (++goneChecks > 5) {
-          throw new Error(seen ? 'The match ended but the Friendly Match task is not complete.' : 'The match never started.');
+          // never seen running (2026-11-22..24: 181 times, mostly the host cancelled right as we
+          // joined while hundreds of our accounts raced for the same matches): the caller looks
+          // for another match instead of giving the Friendly Match up
+          if (!seen) return 'notStarted';
+          throw new Error('The match ended but the Friendly Match task is not complete.');
         }
       }
       await sleep(this.timing.pollMs, signal);

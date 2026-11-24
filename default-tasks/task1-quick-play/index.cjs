@@ -230,7 +230,11 @@ async function doSocketAction(ctx, prepared) {
   // (refreshTeamPosition) fills it, then the next try plays (326 refusals on 2026-11-14..17)
   if (/missing starter|starter positions/i.test(reason)) {
     const fixed = await emitAck(socket, 'refreshTeamPosition', { userId }, 15000).catch(() => null);
-    ctx.log(fixed?.success ? 'info' : 'warning', fixed?.success ? 'Empty starter slot · Auto Lineup filled the lineup' : `Quick Play was not started: ${reason} · Auto Lineup failed`);
+    if (fixed?.success) { ctx.log('info', 'Empty starter slot · Auto Lineup filled the lineup'); return false; }
+    // Auto Lineup cannot (e.g. two SG and no C, nobody for C on the bench): the starters are
+    // spread over the five positions by the shared guard (2026-11-24)
+    const moved = ctx.injury ? await ctx.injury.report(reason).catch(() => false) : false;
+    ctx.log(moved ? 'info' : 'warning', moved ? 'Empty starter slot · the lineup was rearranged · Quick Play tries again' : `Quick Play was not started: ${reason} · Auto Lineup failed`);
     return false;
   }
 

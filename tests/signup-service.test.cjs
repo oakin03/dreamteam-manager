@@ -5,7 +5,8 @@ const { SignupService } = require('../src/main/services/signup-service.cjs');
 const { AppStore } = require('../src/main/services/store.cjs');
 
 // A game where "Farm1" is taken; X players, a roster and the team / avatar events answer.
-function fakeGame({ taken = ['farm1'], registerStatus = 201, injuredRolls = 0 } = {}) {
+function fakeGame({ taken = ['farm1'], registerStatus = 201, injuredRolls = 0, badLineup = false, fail500 = 0 } = {}) {
+  const st = { badLineup, fail500, lineups: [] };
   const calls = [];
   let rolls = 0;
   const teams = new Set(taken);
@@ -29,6 +30,9 @@ function fakeGame({ taken = ['farm1'], registerStatus = 201, injuredRolls = 0 } 
         calls.push({ event, payload });
         if (event === 'checkTeamName') setTimeout(() => cb(null, teams.has(String(payload).toLowerCase())), 1);
         if (event === 'updateAvatar') setTimeout(() => cb(null, { success: true, avatarUrl: payload.avatarUrl }), 1);
+        // a team like the game stored some on 2026-11-24: two SG, no C (only when asked for)
+        if (event === 'getTeamOptimized') setTimeout(() => cb(null, { players: st.badLineup ? { starters: [{ id: 'a', slot: 'PG', position: 'PG' }, { id: 'b', slot: 'SG', position: 'SG' }, { id: 'c', slot: 'SG', position: 'SG/SF' }, { id: 'd', slot: 'SF', position: 'SF/PF' }, { id: 'e', slot: 'PF', position: 'PF/C' }], bench: [] } : { starters: ['PG', 'SG', 'SF', 'PF', 'C'].map((sl, i) => ({ id: 's' + i, slot: sl, position: sl })), bench: [] } }), 1);
+        if (event === 'updatePlayerPositions') { st.lineups.push(payload); setTimeout(() => cb(null, { success: true }), 1); }
       }
     });
     setTimeout(() => local('connect'), 1);
@@ -44,10 +48,11 @@ function fakeGame({ taken = ['farm1'], registerStatus = 201, injuredRolls = 0 } 
     if (url.endsWith('/api/auth/session')) { const m = /session-token=s-([^;]+)/.exec(init.headers?.cookie || ''); return res(200, m ? { user: { id: `u-${m[1]}` } } : {}); }
     if (url.endsWith('/domains')) return res(200, { domains: [{ name: 'yzcalo.com', type: 'public' }, { name: 'lnovic.com', type: 'public' }] });
     if (url.endsWith('/email/new')) return res(200, { email: `${body.name}@${body.domain}`, token: 't' });
+    if (url.endsWith('/api/register') && st.fail500 > 0) { st.fail500--; return res(500, { message: 'Internal server error' }); }
     if (url.endsWith('/api/register')) return registerStatus === 201 ? res(201, { message: 'User registered successfully' }) : res(registerStatus, { message: 'Too many requests' });
     throw new Error('unexpected ' + url);
   };
-  return { createSocket, fetchImpl, calls };
+  return { createSocket, fetchImpl, calls, st };
 }
 
 function service(game, existing = [], extra = {}) {
@@ -171,3 +176,20 @@ test('the starting roster: rosters with an injured player are asked for again; a
   assert.ok(b.logs.some(l => l.code === 'su.teamInjured'));
   assert.ok(all.calls.some(c => c.event === 'createTeam'), 'the team is still made');
 });
+
+test('a busy server (500) on register: the same address is tried again, no number is lost; a stored lineup without C is spread over the five positions', async () => {
+  const game = fakeGame({ taken: [], fail500: 2, badLineup: true });
+  const { svc, accounts, logs } = service(game);
+  svc.gapMs = 0;
+  await svc.create({ prefix: 'Busy', count: 1, password: '123456', avatar: 1, parallel: 1 });
+  await svc.done?.catch?.(() => {});
+  const regs = game.calls.filter(c => String(c.event).endsWith('/api/register'));
+  assert.equal(regs.length, 3, 'two 500s, then it went through');
+  assert.equal(new Set(regs.map(c => c.payload.email)).size, 1, 'the same address every time');
+  assert.deepEqual(accounts.map(a => a.name), ['Busy1'], 'Busy1, not Busy2');
+  assert.ok(!logs.some(l => l.code === 'failed'));
+  const lineup = game.st.lineups[0];
+  assert.ok(lineup, 'the lineup was fixed');
+  assert.deepEqual(lineup.starters.map(x => x.slot).sort(), ['C', 'PF', 'PG', 'SF', 'SG']);
+  assert.equal(lineup.starters.find(x => x.slot === 'C').playerId, 'e', 'the PF/C player plays C');
+}, { timeout: 30000 });

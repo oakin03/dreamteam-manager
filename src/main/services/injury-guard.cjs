@@ -23,6 +23,8 @@ const FIX_GAP_MS = 5 * 60 * 1000;
 // replaceAuto: the new-player replacement also runs by itself (daily player refresh, Anesthesia page)
 // injuredAction: what happens to the injured starter that is replaced: 'fire' | 'list'
 const SETTINGS_DEFAULT = { autoSwap: true, autoHeal: false, healAccounts: [], replaceAuto: false, injuredAction: 'fire' };
+const ROSTER_MAX = 11;
+const BOARD_TTL_MS = 60 * 1000; // our accounts' Scout boards are read once a minute for every replacement
 const PARK_PRICE = 999999; // an injured starter waits on the market at this price (nobody buys it)
 const salaryOf = p => Number(p?.signedSalary ?? p?.salary ?? p?.baseSalary) || 0;
 
@@ -72,6 +74,7 @@ class InjuryGuard {
     this.teams = {};     // accountId -> { players: [{id, name, position, starter, injured, healed, healedUntil}], anesthesia, readAt, error }
     this.reading = false;
     this.busy = new Set();
+    this._claimed = new Set(); // "owner:playerId" a replacement of this run already took
     this.waiters = new Map(); // accountId -> Set(resolve)
     this.timer = setInterval(() => this._recheck().catch(() => {}), RECHECK_MS);
     this.timer.unref?.();
@@ -104,7 +107,7 @@ class InjuryGuard {
   async _readOne(gs, id) {
     const userId = this._userId(id);
     const team = await gs.ack('getTeamOptimized', { userId }, { timeoutMs: READ_TIMEOUT_MS });
-    const all = [...(team?.players?.starters || []).map((p, i) => ({ ...p, __starter: true, __slot: SLOTS[i] })), ...(team?.players?.bench || []).map(p => ({ ...p, __starter: false }))];
+    const all = rosterRows(team);
     const inv = await gs.call('getUserInventory', { userId }, 'userInventoryData', { timeoutMs: READ_TIMEOUT_MS }).catch(() => null);
     const list = Array.isArray(inv) ? inv : (inv?.inventory || inv?.items || []);
     const anesthesia = list.filter(x => (x.itemId || x.item?.id) === ANESTHESIA_ID).reduce((n, x) => n + (Number(x.quantity) || 0), 0);
@@ -275,6 +278,32 @@ class InjuryGuard {
     return true;
   }
 
+  // "Missing starter players in positions: C" (seen 2026-11-24 on 64 new accounts): an empty
+  // starter slot gets a healthy bench player, one that plays that position when there is one.
+  // true when every slot is filled afterwards (the caller tries the match again).
+  async fillMissing(id) {
+    if (this._filling?.has(id)) return this._filling.get(id);
+    const run = (async () => {
+      const all = await this._roster(id);
+      const plan = lineupFix(all);
+      if (!plan) return true;
+      if (plan.short) {
+        this._log(id, 'warning', 'slotNoBench', { slots: plan.empty.join(', ') }, `Empty starter position ${plan.empty.join(', ')} · no healthy player to put there`);
+        return false;
+      }
+      const c = await this._conn(id);
+      try {
+        const r = await this._write(c, 'updatePlayerPositions', { userId: c.userId, starters: plan.starters, bench: plan.bench });
+        if (!r?.success) throw new Error(r?.message || r?.error || 'refused');
+      } finally { if (c.own) { try { c.gs.close(); } catch {} } }
+      this._log(id, 'success', 'slotFilled', { slots: plan.empty.join(', '), lineup: plan.text }, `Empty starter position ${plan.empty.join(', ')} filled · ${plan.text}`);
+      return true;
+    })().catch(error => { this._log(id, 'warning', 'slotFillFailed', { error: error.message }, `Empty starter position could not be filled: ${error.message}`); return false; })
+      .finally(() => this._filling.delete(id));
+    (this._filling ||= new Map()).set(id, run);
+    return run;
+  }
+
   // A swapped-out starter that is healthy again goes back to its slot (when nothing else moved).
   async _restore(id) {
     const all2 = this._swapsSaved();
@@ -367,6 +396,9 @@ class InjuryGuard {
   // `action` ('fire' | 'list') is what happens to the injured one (the user chose it there).
   async replace(accountIds, action = this.settings().injuredAction) {
     const results = {};
+    if (!this._replacing) this._claimed = new Set();
+    this._replacing = (this._replacing || 0) + 1;
+    try {
     await eachAtOnce(accountIds || [], async id => {
       if (this.busy.has(id)) { results[id] = { ok: false, error: 'busy' }; return; }
       if (this.isBusy(id)) { results[id] = { ok: false, error: 'Auto Trade is using this account' }; return; }
@@ -380,7 +412,8 @@ class InjuryGuard {
         if (ok) this._clear(id);
       } catch (e) { results[id] = { ok: false, error: e.message }; this._log(id, 'warning', 'replaceFailed', { error: e.message }, `Injured starter could not be replaced: ${e.message}`); }
       finally { this.busy.delete(id); this.onChanged(); }
-    }, 4);
+    }, 10);
+    } finally { this._replacing -= 1; }
     return { results, ...this.snapshot() };
   }
 
@@ -410,25 +443,47 @@ class InjuryGuard {
   }
 
   // every Scout board this account can sign from: its own, its friends', our other accounts'
+  // Every Scout board this account can sign from: its own, its friends', and our other accounts'
+  // (read without signing in). 2026-11-24: they were read one by one for every injured player
+  // (1000+ accounts → minutes each); now our accounts' boards are read once, 40 at a time on one
+  // connection (acks), and kept for BOARD_TTL_MS for every account of the run.
+  async _ourBoards(gs) {
+    const c = this._boardCache;
+    if (c && this.now() - c.at < BOARD_TTL_MS) return c.boards;
+    if (this._boardLoading) return this._boardLoading;
+    this._boardLoading = (async () => {
+      const boards = new Map();
+      const accs = this._accounts().map(a => [a.id, this._userId(a.id)]).filter(([, u]) => u);
+      let i = 0;
+      await Promise.all(Array.from({ length: Math.min(40, accs.length) }, async () => {
+        for (let k; (k = i++) < accs.length;) {
+          const [accId, u] = accs[k];
+          const r = await gs.ack('getFreeAgent', { userId: u }, { timeoutMs: READ_TIMEOUT_MS }).catch(() => null);
+          if (r?.freeAgents?.length) boards.set(u, { accId, agents: r.freeAgents });
+        }
+      }));
+      this._boardCache = { at: this.now(), boards };
+      return boards;
+    })().finally(() => { this._boardLoading = null; });
+    return this._boardLoading;
+  }
+
   async _boards(id, gs) {
     const out = [];
     const me = this._userId(id);
-    const own = await gs.ack('getFreeAgent', { userId: me }, { timeoutMs: READ_TIMEOUT_MS }).catch(() => null);
-    out.push({ owner: null, ownerId: id, agents: own?.freeAgents || [] });
+    const ours = await this._ourBoards(gs);
+    const own = ours.get(me);
+    out.push({ owner: null, ownerId: id, agents: own?.agents || [] });
     let friends = null;
     if (this.friendNet) friends = await this.friendNet.friendsOf(id).catch(() => null);
     const friendIds = friends?.ids || new Set();
-    if (this.friendNet) for (const u of friendIds) {
-      const b = await this.friendNet.board(id, u).catch(() => null);
-      if (b) out.push({ owner: u, ownerId: null, agents: b.freeAgents || [], friend: true });
+    // friends that are not our accounts: their boards through the friend list, 4 at a time
+    const others = [...friendIds].filter(u => !ours.has(u));
+    for (let k = 0; k < others.length && this.friendNet; k += 4) {
+      const got = await Promise.all(others.slice(k, k + 4).map(u => this.friendNet.board(id, u).then(b => [u, b]).catch(() => [u, null])));
+      for (const [u, b2] of got) if (b2) out.push({ owner: u, ownerId: null, agents: b2.freeAgents || [], friend: true });
     }
-    // our other accounts that are not friends yet: their boards read without signing in
-    for (const a of this._accounts()) {
-      const u = this._userId(a.id);
-      if (!u || a.id === id || friendIds.has(u)) continue;
-      const b = await gs.ack('getFreeAgent', { userId: u }, { timeoutMs: READ_TIMEOUT_MS }).catch(() => null);
-      if (b?.freeAgents?.length) out.push({ owner: u, ownerId: a.id, agents: b.freeAgents, friend: false });
-    }
+    for (const [u, b2] of ours) if (u !== me) out.push({ owner: u, ownerId: b2.accId, agents: b2.agents, friend: friendIds.has(u) });
     return out;
   }
 
@@ -449,10 +504,13 @@ class InjuryGuard {
       for (const b of boards) for (const a of b.agents) {
         const price = Number(a.baseSalary) || 0;
         if (a.isSigned || a.isSecret || a.isInjured || have.has(a.id) || !plays(a, slot)) continue;
+        if (this._claimed.has(`${b.owner || this._userId(id)}:${a.id}`)) continue;
         if (price <= 0 || price > room || (Number.isFinite(funds) && price > funds)) continue;
         cands.push({ a, price, b });
       }
       cands.sort((x, y) => y.price - x.price);
+      // taken for this account: the others of the run look further down the list
+      if (cands[0]) this._claimed.add(`${cands[0].b.owner || this._userId(id)}:${cands[0].a.id}`);
       if (!cands[0]) this._log(id, 'info', 'noReplacement', { name, slot, room }, `${name} (${slot}): no healthy ${slot} on the Scouts within the salary cap (${room} TK free)`);
       return cands[0] || null;
     } finally { try { gs.close(); } catch {} }
@@ -475,40 +533,65 @@ class InjuryGuard {
       // the account's open connection when a service has one (nobody is signed out), else its
       // cookie without register (the game asks for it only if it must)
       t = await this._conn(id);
-      if (action === 'park') {
-        const r = await this._sell(t, pid(injured), PARK_PRICE, 'TIX');
-        if (!r?.success) throw new Error(`${name} could not be put on the market: ${r?.message || r?.error || 'refused'}`);
-        this._log(id, 'info', 'injuredParked', { name, price: PARK_PRICE }, `${name} (injured) put on the market at ${PARK_PRICE} TIX to wait · Bag → Anesthesia`);
-      } else if (action === 'list') {
-        const pr = this.priceOf?.({ id: pid(injured), value: injured.baseSalary, salary: salaryOf(injured) }, id);
-        if (!pr?.price) { this._log(id, 'warning', 'noListPrice', { name }, `${name}: no Auto Trade price to list it at · nothing changed`); return false; }
-        const r = await this._sell(t, pid(injured), pr.price, pr.currency);
-        if (!r?.success) throw new Error(`${name} could not be listed: ${r?.message || r?.error || 'refused'}`);
-        this._log(id, 'info', 'injuredListed', { name, price: pr.price, currency: pr.currency }, `${name} (injured) listed at ${pr.price} ${pr.currency}`);
-      } else {
-        const r = await this._write(t, 'firePlayer', { userId: t.userId, playerId: pid(injured) });
-        if (!r?.success) throw new Error(`${name} could not be fired: ${r?.message || r?.error || 'refused'}`);
-        this._log(id, 'info', 'injuredFired', { name }, `${name} (injured) fired`);
-      }
-      // the new one: own Scout, a friend's Scout, or our other account's Scout after a friendship
+      // The game fires / sells only bench players (2026-11-24: "Team must have more than 5
+      // players", "Player not found in team" for starters). So: the new one is signed first and
+      // takes the slot, the injured one goes to the bench and leaves from there. A full roster
+      // (11): a healthy bench player stands in first, the injured one leaves, then the signing.
       const a = pick.a;
-      let r;
-      if (!pick.b.owner) r = await this._write(t, 'signFreeAgent', { userId: t.userId, playerId: a.id });
-      else {
+      const sign = async () => {
+        if (!pick.b.owner) return this._write(t, 'signFreeAgent', { userId: t.userId, playerId: a.id });
         if (!pick.b.friend && this.friendNet) { await this.friendNet._befriend(id, pick.b.ownerId); this._log(id, 'info', 'befriended', { name: this._name(pick.b.ownerId) }, `${this._name(pick.b.ownerId)} added as a friend to reach its Scout`); }
-        r = await this.friendNet.signFrom(id, pick.b.owner, a.id);
+        return this.friendNet.signFrom(id, pick.b.owner, a.id);
+      };
+      // `inId` into `slot`; whoever stood there goes to the bench
+      const lineup = async inId => {
+        const now = await this._roster(id);
+        const starters = now.filter(p => isStarter(p) && slotOf(p) !== slot && pid(p) !== inId).map(p => ({ playerId: pid(p), slot: slotOf(p) }));
+        starters.push({ playerId: inId, slot });
+        const out = now.filter(p => isStarter(p) && slotOf(p) === slot && pid(p) !== inId).map(pid);
+        const bench = [...now.filter(p => !isStarter(p) && pid(p) !== inId).map(pid), ...out].map((playerId, i) => ({ playerId, benchSlot: i + 1 }));
+        return this._write(t, 'updatePlayerPositions', { userId: t.userId, starters: starters.sort((x, y) => slotIdx(x.slot) - slotIdx(y.slot)), bench });
+      };
+      const leave = async () => {
+        if (action === 'park') {
+          const r = await this._sell(t, pid(injured), PARK_PRICE, 'TIX');
+          if (!r?.success) return `${name} could not be put on the market: ${r?.message || r?.error || 'refused'}`;
+          this._log(id, 'info', 'injuredParked', { name, price: PARK_PRICE }, `${name} (injured) put on the market at ${PARK_PRICE} TIX to wait · Bag → Anesthesia`);
+        } else if (action === 'list') {
+          const pr = this.priceOf?.({ id: pid(injured), value: injured.baseSalary, salary: salaryOf(injured) }, id);
+          if (!pr?.price) return `${name}: no Auto Trade price to list it at · it stays on the bench`;
+          const r = await this._sell(t, pid(injured), pr.price, pr.currency);
+          if (!r?.success) return `${name} could not be listed: ${r?.message || r?.error || 'refused'}`;
+          this._log(id, 'info', 'injuredListed', { name, price: pr.price, currency: pr.currency }, `${name} (injured) listed at ${pr.price} ${pr.currency}`);
+        } else {
+          const r = await this._write(t, 'firePlayer', { userId: t.userId, playerId: pid(injured) });
+          if (!r?.success) return `${name} could not be fired: ${r?.message || r?.error || 'refused'}`;
+          this._log(id, 'info', 'injuredFired', { name }, `${name} (injured) fired`);
+        }
+        return null;
+      };
+      const rosterNow = await this._roster(id);
+      let left = false;
+      let leaveError = null;
+      if (rosterNow.length >= ROSTER_MAX) {
+        const sub = rosterNow.filter(p => !isStarter(p) && !hurt(p)).sort((x, y) => Number(plays(y, slot)) - Number(plays(x, slot)))[0];
+        if (!sub) { this._log(id, 'info', 'rosterFull', { name }, `${name}: the roster is full (11) and no healthy bench player can stand in · nothing changed`); return false; }
+        const up0 = await lineup(pid(sub));
+        if (!up0?.success) throw new Error(`Lineup could not be set: ${up0?.message || up0?.error || 'refused'}`);
+        leaveError = await leave();
+        if (leaveError) throw new Error(leaveError);
+        left = true;
       }
+      const r = await sign();
       if (!r?.success) throw new Error(`${a.name} could not be signed: ${r?.message || r?.error || 'refused'}`);
-      // into the injured one's place
-      const now = await this._roster(id);
-      const starters = now.filter(p => isStarter(p) && slotOf(p) !== slot).map(p => ({ playerId: pid(p), slot: slotOf(p) }));
-      starters.push({ playerId: a.id, slot });
-      const inSlot = now.filter(p => isStarter(p) && slotOf(p) === slot && pid(p) !== a.id).map(pid);
-      const bench = [...now.filter(p => !isStarter(p) && pid(p) !== a.id).map(pid), ...inSlot].map((playerId, i) => ({ playerId, benchSlot: i + 1 }));
-      const up = await this._write(t, 'updatePlayerPositions', { userId: t.userId, starters: starters.sort((x, y) => slotIdx(x.slot) - slotIdx(y.slot)), bench });
+      const up = await lineup(a.id);
       if (!up?.success) this._log(id, 'warning', 'lineupFailed', { error: up?.message || up?.error || '' }, `Lineup could not be set: ${up?.message || up?.error || ''}`);
+      if (!left) {
+        leaveError = await leave();
+        if (leaveError) this._log(id, 'warning', 'leaveFailed', { name, error: leaveError }, `${leaveError} · it stays on the bench`);
+      }
       this._log(id, 'success', 'replaced', { out: name, in: a.visualName || a.name, price: pick.price, slot }, `${name} (injured) → ${a.visualName || a.name} (${slot}) · ${pick.price} TK`);
-      if (action === 'park') this._saveParked([...this.parked().filter(x => !(x.accountId === id && x.playerId === pid(injured))), { accountId: id, accountName: this._name(id), playerId: pid(injured), name, rating: injured.rating || null, position: injured.position || null, salary: salaryOf(injured), value: Number(injured.baseSalary) || null, slot, replacedBy: a.visualName || a.name, at: new Date(this.now()).toISOString() }]);
+      if (action === 'park' && !leaveError) this._saveParked([...this.parked().filter(x => !(x.accountId === id && x.playerId === pid(injured))), { accountId: id, accountName: this._name(id), playerId: pid(injured), name, rating: injured.rating || null, position: injured.position || null, salary: salaryOf(injured), value: Number(injured.baseSalary) || null, slot, replacedBy: a.visualName || a.name, at: new Date(this.now()).toISOString() }]);
       return true;
     } finally {
       if (t?.own) { try { t.gs.close(); } catch {} }
@@ -518,12 +601,56 @@ class InjuryGuard {
   shutdown() { clearInterval(this.timer); }
 }
 
+// getTeamOptimized → one list, starters marked (their slot kept)
+const rosterRows = team => [...(team?.players?.starters || []).map((p, i) => ({ ...p, __starter: true, __slot: SLOTS[i] })), ...(team?.players?.bench || []).map(p => ({ ...p, __starter: false }))];
+
+// A lineup with an empty starter position (2026-11-24: new accounts with two SG, two PG and no C,
+// no bench player for C either, so the game's Auto Lineup failed): the healthy starters, plus
+// healthy bench players while fewer than five, are spread over PG SG SF PF C so that as many as
+// possible play a position they can, moving as few as possible. null: nothing to fix.
+// { short: true, empty }: not five healthy players. Otherwise { starters, bench, empty, text }.
+function lineupFix(all) {
+  const starters = all.filter(p => isStarter(p));
+  const empty = SLOTS.filter(sl => !starters.some(p => slotOf(p) === sl));
+  if (!empty.length) return null;
+  const five = starters.filter(p => !hurt(p));
+  const bench = all.filter(p => !isStarter(p) && !hurt(p));
+  // bench players that play an open position first
+  bench.sort((x, y) => Number(empty.some(sl => plays(y, sl))) - Number(empty.some(sl => plays(x, sl))));
+  while (five.length < 5 && bench.length) five.push(bench.shift());
+  if (five.length < 5) return { short: true, empty };
+  let best = null;
+  const perm = (left, used) => {
+    if (used.length === 5) {
+      let score = 0;
+      used.forEach((p, i) => { if (plays(p, SLOTS[i])) score += 10; if (slotOf(p) === SLOTS[i]) score += 1; });
+      if (!best || score > best.score) best = { score, order: [...used] };
+      return;
+    }
+    for (let i = 0; i < left.length; i++) perm([...left.slice(0, i), ...left.slice(i + 1)], [...used, left[i]]);
+  };
+  perm(five, []);
+  const inFive = new Set(best.order);
+  const rest = all.filter(p => !inFive.has(p));
+  return {
+    starters: best.order.map((p, i) => ({ playerId: pid(p), slot: SLOTS[i] })),
+    bench: rest.map((p, i) => ({ playerId: pid(p), benchSlot: i + 1 })),
+    empty,
+    text: best.order.map((p, i) => `${SLOTS[i]} ${p.visualName || p.name}`).join(' · ')
+  };
+}
+
+// "Cannot start quick play: Missing starter players in positions: C. You need all 5 starter…"
+const isMissingStarter = message => /missing starter players in positions/i.test(String(message || ''));
+
 // The guard for every service (set by main): report(accountId, message, source) / waitClear.
 let guard = null;
 function setGuard(g) { guard = g; }
 // A match start was refused with the injury message: true when the account can try again now
 // (fixed), false when it has to wait (the guard keeps it; the caller stops retrying).
 async function handleInjury(accountId, message, source) {
+  // an empty starter position (not an injury, but the same refusal of every match start)
+  if (isMissingStarter(message)) return guard ? guard.fillMissing(accountId).catch(() => false) : false;
   if (!isInjuryError(message)) return null;
   if (!guard) return false;
   return guard.report(accountId, message, source).catch(() => false);
@@ -535,4 +662,4 @@ class InjuredError extends Error {
   constructor(message) { super(message); this.name = 'InjuredError'; this.injured = true; }
 }
 
-module.exports = { InjuryGuard, setGuard, handleInjury, injuryBlocked, waitInjuryClear, isInjuryError, injuredNamesOf, planSwaps, InjuredError, ANESTHESIA_ID };
+module.exports = { InjuryGuard, setGuard, handleInjury, injuryBlocked, waitInjuryClear, isInjuryError, isMissingStarter, lineupFix, rosterRows, injuredNamesOf, planSwaps, InjuredError, ANESTHESIA_ID };

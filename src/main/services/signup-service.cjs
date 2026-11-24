@@ -1,4 +1,5 @@
 const { GameSocket } = require('./game-socket.cjs');
+const { lineupFix, rosterRows } = require('./injury-guard.cjs');
 
 // Bulk account creation (user 2026-10-31): "Hesap oluştur" asks a prefix, a count and one
 // password; each account gets a temp-mail.io address (prefix lowercased + number) and a
@@ -25,6 +26,7 @@ const GAME = 'https://www.dreamteamph.com';
 const NAME_RE = /^[a-zA-Z0-9]{4,10}$/;    // the game's team name rule
 const AVATARS = 15;                       // /avatar/avatar1.webp … avatar15.webp
 const GAP_MS = 4000;                      // between two accounts
+const REGISTER_RETRIES = 3;   // a 5xx of the register call is tried again this many times
 const ROLL_TRIES = 10;       // starting rosters asked for until one has no injured player (user 2026-11-24)
 const MAX_FAILURES = 5;      // failures in a row that stop the run
 
@@ -241,7 +243,15 @@ class SignupService {
     row.email = mail.data.email;
 
     step('register');
-    const reg = await this._json(`${GAME}/api/register`, { email: row.email, password }, signal);
+    // a 5xx is the game's server busy (116 of 1116 with 100 at a time, 2026-11-24): the same
+    // address is tried again a few times after a pause instead of giving the number up; a reply
+    // that the address exists means an earlier try got through
+    let reg = await this._json(`${GAME}/api/register`, { email: row.email, password }, signal);
+    for (let t = 1; t <= REGISTER_RETRIES && reg.status >= 500; t++) {
+      await sleep(1500 * t + Math.floor(Math.random() * 1000), signal);
+      reg = await this._json(`${GAME}/api/register`, { email: row.email, password }, signal);
+      if (!reg.ok && /already|exist|in use|taken/i.test(String(reg.data?.message || reg.data?.error || reg.text || ''))) reg = { ...reg, ok: true };
+    }
     if (!reg.ok) {
       const why = String(reg.data?.message || reg.data?.error || reg.text || '').slice(0, 120);
       // a captcha / rate limit is the game saying no: stop, do not retry around it
@@ -295,6 +305,15 @@ class SignupService {
         const made = await gs.call('createTeam', { userId, teamName, starters: roster.starters, bench: roster.bench || [] }, 'teamCreated', { signal, timeoutMs: 20000, errorEvents: ['error'] });
         if (!made?.success) throw new Error(`team not created (${made?.teamName || made?.error || 'refused'})`);
         this._log('success', 'team', { name: teamName, x: x.visualName || x.name }, `${teamName} team created · X player ${x.visualName || x.name}`, full);
+        // the game can store the X player in a slot another starter has (2026-11-24: 16 new teams
+        // with two SG / two PG and no C; no match starts): the lineup is checked and spread over
+        // the five positions
+        const team = await gs.ack('getTeamOptimized', { userId }, { signal, timeoutMs: 15000 }).catch(error => { if (error?.name === 'AbortError') throw error; return null; });
+        const plan = team ? lineupFix(rosterRows(team)) : null;
+        if (plan && !plan.short) {
+          const r = await gs.ack('updatePlayerPositions', { userId, starters: plan.starters, bench: plan.bench }, { signal, timeoutMs: 15000 }).catch(error => { if (error?.name === 'AbortError') throw error; return null; });
+          this._log(r?.success ? 'info' : 'warning', r?.success ? 'lineupFixed' : 'lineupFailed', { name: teamName, slots: plan.empty.join(', '), lineup: plan.text }, r?.success ? `${teamName}: empty position ${plan.empty.join(', ')} · lineup set (${plan.text})` : `${teamName}: empty position ${plan.empty.join(', ')} could not be filled`, full);
+        }
       }
 
       step('logo');
