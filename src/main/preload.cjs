@@ -235,6 +235,11 @@ contextBridge.exposeInMainWorld('dreamteam', {
     scan: (ids) => ipcRenderer.invoke('injury:scan', ids),
     heal: (items, quantity) => ipcRenderer.invoke('injury:heal', { items, quantity }),
     swap: (ids) => ipcRenderer.invoke('injury:swap', ids),
+    replace: (accountIds, action) => ipcRenderer.invoke('injury:replace', { accountIds, action }),
+    pageOpen: () => ipcRenderer.invoke('injury:page-open'),
+    parkedFire: (items) => ipcRenderer.invoke('injury:parked-fire', items),
+    parkedRelist: (items, price, currency) => ipcRenderer.invoke('injury:parked-relist', { items, price, currency }),
+    parkedDrop: (items) => ipcRenderer.invoke('injury:parked-drop', items),
     settings: (patch) => ipcRenderer.invoke('injury:settings', patch),
     viewStart: (accountIds, max) => ipcRenderer.invoke('injury:view-start', { accountIds, max }),
     viewStop: () => ipcRenderer.invoke('injury:view-stop')

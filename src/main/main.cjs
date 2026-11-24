@@ -41,6 +41,7 @@ const { InjuryGuard, setGuard: setInjuryGuard } = require('./services/injury-gua
 const { ScoutHunter } = require('./services/scout-hunter.cjs'); // @strip(basic)
 const { MatchControl } = require('./services/match-control.cjs'); // @strip(basic)
 const { TournamentLive } = require('./services/tournament-live.cjs'); // @strip(basic)
+const { normName: normInjuryName } = require('./services/injury-service.cjs');
 const { DraftService } = require('./services/draft-service.cjs');
 const { AutoDraftService } = require('./services/auto-draft.cjs');
 const { syncMcpConfig } = require('./services/mcp-sync.cjs');
@@ -972,7 +973,9 @@ function initServices() {
   const alertedDays = new Map(); // playerId -> day already reported // @strip(basic)
   rosters = new RostersService({ store, activity, onChanged: emitState });
   bag = new BagService({ store, activity, gameHealth, sessions: gameSessions, onChanged: emitState, onCardPlayers: (id, rows) => draft?.addRows(id, rows) });
-  injuryGuard = new InjuryGuard({ store, activity, sessions: gameSessions, onChanged: emitState });
+  // injured starters: a new player off the Scouts (user 2026-11-24); accounts Auto Trade uses are left alone
+  injuryGuard = new InjuryGuard({ store, activity, sessions: gameSessions, onChanged: emitState, friendNet, isBusy: id => Boolean(autoTrade?.usesAccount?.(id)),
+    priceOf: (row, accountId) => { const r = autoTrade?._listPrice?.({ id: row.id, baseSalary: row.value, signedSalary: row.salary ?? row.value }, accountId); return r && !r.fire ? { price: r.price, currency: r.currency } : null; } });
   setInjuryGuard(injuryGuard);
   labor = new LaborService({ store, activity, sessions: gameSessions, onChanged: emitState, onLaborPlayers: (id, rows) => draft?.addRows(id, rows) });
   players = new PlayersService({
@@ -988,6 +991,8 @@ function initServices() {
       // @strip-end
       // a new game list: compare it with the value prediction made before
       valuePredict?.refresh({ automatic: true }).catch(() => {});
+      // the game's injury flags change with the daily list: the automatic replacement (when on)
+      injuryGuard?.autoRun('daily').catch(() => {});
     }
   });
   synthesis = new SynthesisService({ store, activity, sessions: gameSessions, cards, onChanged: emitState, onDone: () => cards.refresh() });
@@ -1052,6 +1057,8 @@ function initServices() {
   signup = new SignupService({
     store, activity, sessions: gameSessions, onChanged: emitState,
     addAccount: payload => addAccountRecord(payload),
+    // the starting roster must have no injured player: the game's flag or the NBA injury list
+    injuredName: name => Boolean(name && (store.getInjuries?.()?.players || {})[normInjuryName(name)]),
     // registered by an earlier run that stopped before the team (no team name seen yet)
     // a prefix goes on after its highest number, kept per prefix
     lastNumber: prefix => Number(store.getSettings().signupNumbers?.[prefix.toLowerCase()]) || 0,
@@ -1696,6 +1703,32 @@ function registerIpc() {
   ipcMain.handle('injury:scan', async (_event, ids) => injuryGuard.scan(Array.isArray(ids) ? ids : null));
   ipcMain.handle('injury:heal', async (_event, { items, quantity } = {}) => injuryGuard.heal(Array.isArray(items) ? items : [], quantity || 1));
   ipcMain.handle('injury:swap', async (_event, ids) => injuryGuard.swap(Array.isArray(ids) ? ids : []));
+  // injured starters → a new player (by hand: the chosen action; the page opened: the automatic run)
+  ipcMain.handle('injury:replace', async (_event, { accountIds, action } = {}) => injuryGuard.replace(Array.isArray(accountIds) ? accountIds : [], ['fire', 'list', 'park'].includes(action) ? action : 'park'));
+  ipcMain.handle('injury:page-open', async () => { injuryGuard.autoRun('page').catch(() => {}); return injuryGuard.snapshot(); });
+  // the parked injured players (999999 TIX): fired or listed again, over the Market's own actions
+  const parkedTickets = async items => {
+    const ids = [...new Set((items || []).map(x => x.accountId))];
+    await market.loadRelist(ids);
+    const rows = Object.values(market.snapshot().relist?.rows || {});
+    return (items || []).map(x => ({ ...x, ticketId: rows.find(r => r.accountId === x.accountId && r.playerId === x.playerId)?.ticketId || null }));
+  };
+  ipcMain.handle('injury:parked-fire', async (_event, items) => {
+    const found = await parkedTickets(items);
+    const ok = found.filter(x => x.ticketId);
+    if (ok.length) await market.removePlayers(ok.map(x => x.ticketId), { fire: true });
+    // not on the market any more (sold / taken off by hand): it only leaves the list
+    injuryGuard.dropParked(found);
+    return { done: ok.length, missing: found.length - ok.length, ...injuryGuard.snapshot() };
+  });
+  ipcMain.handle('injury:parked-relist', async (_event, { items, price, currency } = {}) => {
+    const found = await parkedTickets(items);
+    const ok = found.filter(x => x.ticketId);
+    if (ok.length) await market.relistPlayers(ok.map(x => ({ ticketId: x.ticketId, price, currency })));
+    injuryGuard.dropParked(ok);
+    return { done: ok.length, missing: found.length - ok.length, ...injuryGuard.snapshot() };
+  });
+  ipcMain.handle('injury:parked-drop', async (_event, items) => injuryGuard.dropParked(items));
   ipcMain.handle('injury:view-start', async (_event, { accountIds, max } = {}) => injuryViewStart(Array.isArray(accountIds) ? accountIds : [], max));
   ipcMain.handle('injury:view-stop', async () => injuryViewStop());
   ipcMain.handle('injury:settings', async (_event, patch) => injuryGuard.saveSettings(patch || {}));

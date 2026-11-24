@@ -1234,12 +1234,37 @@ tr.b3-broken td{background:color-mix(in srgb, var(--bg-fff0ee) 70%, transparent)
 
 .game-down-retry{margin-left:6px;font-weight:800;text-decoration:underline;color:inherit;background:none;border:0;cursor:pointer;padding:0}
 
-/* Automatic Draft panel (2026-11-24) */
-.ad-panel{display:grid;gap:10px;margin-bottom:16px}.ad-head{display:flex;align-items:center;gap:10px}.ad-head>b{font-size:15px}
-.ad-grid{display:grid;grid-template-columns:minmax(0,2fr) minmax(260px,1fr);gap:16px}.ad-sub{display:flex;align-items:center;gap:8px;margin-bottom:6px}
-.ad-priority{margin:0 0 10px;padding-left:20px;display:grid;gap:4px}.ad-priority li{display:flex;align-items:center;gap:6px}.ad-priority .role-pill{border:1px solid;border-radius:999px;padding:1px 10px;font-weight:700;font-size:12px;min-width:110px}
-.ad-opt{display:grid;gap:4px;margin-bottom:8px}.ad-opt>span{font-weight:600;font-size:13px}.ad-table{max-height:320px;overflow:auto}.ad-table td .pill{margin:0 4px 2px 0}.ad-pending{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
-@media (max-width:1100px){.ad-grid{grid-template-columns:1fr}}
+/* Automatic Draft (2026-11-24, redesigned) */
+.ad{display:grid;gap:14px;margin-bottom:18px}
+.ad-hero{display:grid;grid-template-columns:minmax(260px,1.2fr) auto auto;gap:18px;align-items:center;padding:16px 18px;border-left:4px solid var(--d-accent)}
+.ad-hero-title{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.ad-hero-title h2{margin:0;font-size:18px}.ad-hero-text p{margin:6px 0 0;font-size:12.5px;line-height:1.45}
+.ad-kpis{display:flex;gap:8px;flex-wrap:wrap}.ad-kpi{min-width:96px;padding:8px 12px;border:1px solid var(--d-line);border-radius:10px;background:var(--d-surface);display:grid;gap:2px}
+.ad-kpi b{font-size:20px;font-family:var(--f-mono);color:var(--d-ink)}.ad-kpi span{font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--d-muted)}
+.btn.big{height:44px;padding:0 20px;font-size:14px;font-weight:800;white-space:nowrap}
+.ad-cards{display:grid;grid-template-columns:minmax(0,1.6fr) minmax(250px,.9fr) minmax(280px,1fr);gap:14px;align-items:stretch}
+.ad-card{display:grid;align-content:start;gap:10px;padding:14px}.ad-card>header{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.ad-card>header>b{font-size:14px}
+.ad-card-acc .pvp-picks{max-height:260px;overflow:auto}
+.ad-prio{list-style:none;margin:0;padding:0;display:grid;gap:6px}
+.ad-prio li{display:grid;grid-template-columns:28px 1fr auto;align-items:center;gap:8px;padding:7px 8px;border:1px solid var(--d-line);border-left:4px solid var(--rc);border-radius:9px;background:var(--d-surface)}
+.ad-prio-n{width:24px;height:24px;border-radius:50%;display:grid;place-items:center;font-weight:800;font-size:12px;color:#fff;background:var(--rc)}
+.ad-prio-body{display:grid}.ad-prio-body b{font-size:13px}.ad-prio-body small{font-size:11px;color:var(--d-muted)}
+.ad-prio-move{display:flex;gap:2px}.ad-prio-move button{width:24px;height:24px;border:1px solid var(--d-line);border-radius:6px;background:transparent;color:var(--d-ink);cursor:pointer;font-size:10px}.ad-prio-move button:disabled{opacity:.3;cursor:default}
+.ad-sublabel{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--d-muted)}
+.ad-radios{display:grid;gap:6px}.ad-radio{display:flex;gap:9px;align-items:flex-start;padding:8px 10px;border:1px solid var(--d-line);border-radius:9px;cursor:pointer}
+.ad-radio.on{border-color:var(--d-accent);box-shadow:0 0 0 1px var(--d-accent) inset}.ad-radio input{margin-top:3px}.ad-radio span,.ad-switch span{display:grid;gap:1px}.ad-radio b,.ad-switch b{font-size:12.5px}.ad-radio small,.ad-switch small{font-size:11px;color:var(--d-muted)}
+.ad-switch{display:flex;gap:10px;align-items:center;cursor:pointer;margin-top:4px}.ad-switch input{display:none}
+.ad-switch i{flex:none;width:36px;height:20px;border-radius:999px;background:var(--d-line);position:relative;transition:background .15s}.ad-switch i::after{content:'';position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#fff;transition:left .15s;box-shadow:0 1px 2px rgba(0,0,0,.3)}
+.ad-switch.on i{background:var(--d-accent)}.ad-switch.on i::after{left:18px}
+.ad-rooms{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px}
+.ad-room{display:grid;gap:8px;padding:12px 14px;border-top:3px solid var(--d-line)}.ad-room.live{border-top-color:var(--d-good)}.ad-room header{display:flex;align-items:center;gap:8px}.ad-room header small{color:var(--d-muted)}
+.ad-turn{font-size:12.5px;font-weight:600}.ad-turn.ours{color:var(--d-accent)}.ad-room-ours{display:flex;flex-wrap:wrap;gap:5px}
+.ad-empty{text-align:center;padding:18px}
+.ad-pending{display:flex;flex-wrap:wrap;gap:6px;align-items:center;padding:10px 14px}
+.ad-picks{display:flex;flex-wrap:wrap;gap:4px}
+.ad-kind{display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:999px;font-size:11.5px;font-weight:600;border:1px solid var(--d-line)}.ad-kind small{font-size:10px;opacity:.75;font-weight:700;text-transform:uppercase}
+.ad-k-card{color:#c0392b;border-color:rgba(192,57,43,.35);background:rgba(192,57,43,.08)}.ad-k-spender{color:#2f855a;border-color:rgba(47,133,90,.35);background:rgba(47,133,90,.08)}.ad-k-fire{color:#7a8396;background:rgba(122,131,150,.1)}
+.tab-count{margin-left:6px;padding:0 6px;border-radius:999px;background:var(--d-accent);color:#fff;font-size:10.5px;font-weight:800}
+@media (max-width:1300px){.ad-cards{grid-template-columns:1fr 1fr}.ad-card-acc{grid-column:1/-1}.ad-hero{grid-template-columns:1fr}}
 
 /* Market tables: many accounts / ratings at once, price and salary ranges (2026-11-24) */
 .multi-pick{position:relative}.multi-pick-btn{height:32px;border:1px solid var(--bd-d7dde6);border-radius:8px;background:var(--bg-ffffff);padding:0 10px;font-size:11.5px;color:inherit;cursor:pointer;white-space:nowrap}.multi-pick-btn.on{border-color:var(--accent,#f97316);font-weight:700}
@@ -1248,3 +1273,12 @@ tr.b3-broken td{background:color-mix(in srgb, var(--bg-fff0ee) 70%, transparent)
 .range-filter{display:inline-flex;align-items:center;gap:4px;font-size:11.5px}.range-filter b{font-weight:600;margin-right:2px}.range-filter input{width:78px}.range-filter i{font-style:normal;opacity:.6}.listing-filters .listing-name{min-width:220px}
 
 .labor-filters{margin:0;align-items:center}.labor-contracts{display:grid;gap:6px;margin-bottom:10px}.labor-contracts details summary{cursor:pointer}.labor-contract-list{display:flex;flex-wrap:wrap;gap:4px 14px;font-size:12px;padding:4px 0 2px 14px}
+/* the filter inputs' look must not reach the check boxes of the pick menus or the range boxes (2026-11-24) */
+.listing-filters{align-items:center}
+.listing-filters .multi-pick-menu input[type=checkbox]{width:auto;min-width:0;height:auto;padding:0;margin:0;border:0;background:none;flex:none}
+.listing-filters .multi-pick-menu label{justify-content:flex-start}
+.listing-filters .range-filter input{width:84px;min-width:0;padding:0 6px}
+.multi-pick-menu{width:max-content;max-width:320px}
+
+/* injured starters: a new player (2026-11-24) */
+.inj-replace{display:grid;gap:6px}.inj-replace-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.inj-replace-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}

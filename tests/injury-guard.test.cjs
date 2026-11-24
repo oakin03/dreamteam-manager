@@ -54,3 +54,66 @@ test('guard: nothing to swap → the account waits, the same refusal is not logg
   svc._clear('A');
   assert.strictEqual(await waiting, true);
 });
+
+// ---------- a new player for an injured starter (user 2026-11-24) ----------
+const { EventEmitter } = require('node:events');
+function replaceWorld() {
+  const calls = [];
+  const sal = (id, pos, slot, salary, extra = {}) => ({ id, visualName: id, position: pos, signedSalary: salary, baseSalary: salary, ...extra });
+  const starters = [sal('pg', 'PG', 'PG', 1000), sal('sg', 'SG', 'SG', 1000), sal('hurt', 'SF', 'SF', 900, { isInjured: true }), sal('pf', 'PF', 'PF', 1000), sal('c', 'C', 'C', 1000)];
+  const bench = [sal('b1', 'C', null, 300)];
+  const boards = {
+    u1: [{ id: 'own-sf', name: 'Own SF', position: 'SF/PF', baseSalary: 1200 }, { id: 'too-dear', name: 'Too Dear', position: 'SF', baseSalary: 2000 }, { id: 'wrong-pos', name: 'Wrong', position: 'PG', baseSalary: 1600 }],
+    u2: [{ id: 'other-sf', name: 'Other SF', position: 'SF', baseSalary: 1500 }, { id: 'hurt-sf', name: 'Hurt SF', position: 'SF', baseSalary: 1650, isInjured: true }]
+  };
+  const createSocket = () => {
+    const s = new EventEmitter();
+    s.off = s.removeListener; s.connected = true;
+    s.close = () => { s.closed = true; };
+    const local = EventEmitter.prototype.emit.bind(s);
+    const reply = (name, data) => setTimeout(() => !s.closed && local(name, data), 1);
+    s.emit = (event, payload) => {
+      calls.push({ event, payload });
+      if (event === 'getUserBasicInfo') reply('userBasicInfo', { salaryCap: 6000, funds: 50000 });
+      if (event === 'market:sellPlayer') reply('market:sellResult', { success: true });
+      if (event === 'getUserInventory') reply('userInventoryData', []);
+      return true;
+    };
+    s.timeout = () => ({ emit: (event, payload, cb) => {
+      calls.push({ event, payload });
+      let r = { success: true };
+      if (event === 'getTeamOptimized') r = { players: { starters, bench } };
+      if (event === 'getFreeAgent') r = { freeAgents: boards[payload.userId] || [] };
+      if (event === 'getUserActiveMatch') r = { success: true, match: null };
+      setTimeout(() => cb(null, r), 1);
+    } });
+    setTimeout(() => local('connect'), 1);
+    return s;
+  };
+  const friends = { befriended: [], signed: [] };
+  const friendNet = { friendsOf: async () => ({ ids: new Set() }), board: async () => null, _befriend: async (a, b) => friends.befriended.push([a, b]), signFrom: async (a, u, pid) => { friends.signed.push([a, u, pid]); return { success: true }; } };
+  const settings = {};
+  const logs = [];
+  const svc = new InjuryGuard({
+    store: { getAccounts: () => [{ id: 'A', name: 'Acc' }, { id: 'B', name: 'Other' }], getAccountProfile: () => ({ accounts: { A: { userId: 'u1' }, B: { userId: 'u2' } } }), getSettings: () => settings, saveSettings: v => Object.assign(settings, v) },
+    activity: { add: e => logs.push(e.code) }, sessions: { get: async () => ({ userId: 'u1', cookieHeader: 'c=1' }) }, createSocket, friendNet
+  });
+  clearInterval(svc.timer);
+  return { svc, calls, friends, settings, logs };
+}
+
+test('replace: the most expensive healthy player of that position within the cap (injured salary off); our other account becomes a friend first; the injured one waits at 999999 TIX', async () => {
+  const { svc, calls, friends, settings, logs } = replaceWorld();
+  const r = await svc.replace(['A'], 'park');
+  // room = 6000 − (5200 − 900) = 1700: Other SF (1500) beats Own SF (1200); Too Dear, the PG and the injured one are left out
+  assert.deepStrictEqual(friends.befriended, [['A', 'B']]);
+  assert.deepStrictEqual(friends.signed, [['A', 'u2', 'other-sf']]);
+  const sell = calls.find(c => c.event === 'market:sellPlayer');
+  assert.deepStrictEqual([sell.payload.playerId, sell.payload.price, sell.payload.paymentMode], ['hurt', 999999, 'TICKET']);
+  const lineup = calls.filter(c => c.event === 'updatePlayerPositions').pop();
+  assert.ok(lineup.payload.starters.some(s => s.playerId === 'other-sf' && s.slot === 'SF'), 'the new one plays SF');
+  assert.deepStrictEqual(settings.injuryParked.map(p => [p.playerId, p.replacedBy]), [['hurt', 'Other SF']]);
+  assert.ok(logs.includes('inj.replaced'));
+  assert.ok(!calls.some(c => c.event === 'register'), 'nobody is signed out: no register');
+  assert.ok(r.results.A);
+});

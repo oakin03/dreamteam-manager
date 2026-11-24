@@ -25,11 +25,17 @@ const GAME = 'https://www.dreamteamph.com';
 const NAME_RE = /^[a-zA-Z0-9]{4,10}$/;    // the game's team name rule
 const AVATARS = 15;                       // /avatar/avatar1.webp … avatar15.webp
 const GAP_MS = 4000;                      // between two accounts
-const MAX_COUNT = 50;
-const MAX_PARALLEL = 10;
+const ROLL_TRIES = 10;       // starting rosters asked for until one has no injured player (user 2026-11-24)
 const MAX_FAILURES = 5;      // failures in a row that stop the run
 
 function abortError() { const e = new Error('Aborted'); e.name = 'AbortError'; return e; }
+function sleep(ms, signal) {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(abortError());
+    const t = setTimeout(resolve, ms);
+    signal?.addEventListener('abort', () => { clearTimeout(t); reject(abortError()); }, { once: true });
+  });
+}
 function delay(ms, signal) {
   if (signal?.aborted) return Promise.reject(abortError());
   return new Promise((resolve, reject) => {
@@ -40,7 +46,8 @@ function delay(ms, signal) {
 }
 
 class SignupService {
-  constructor({ store, activity, sessions, createSocket, addAccount, startAccount, setDaily, isUnfinished = () => false, lastNumber = null, saveLastNumber = null, fetchImpl = null, gapMs = GAP_MS, onChanged }) {
+  constructor({ store, activity, sessions, createSocket, addAccount, startAccount, setDaily, injuredName = () => false, isUnfinished = () => false, lastNumber = null, saveLastNumber = null, fetchImpl = null, gapMs = GAP_MS, onChanged }) {
+    this.injuredName = injuredName;
     Object.assign(this, { store, activity, sessions, createSocket, addAccount, startAccount, setDaily, isUnfinished, lastNumber, saveLastNumber, gapMs, onChanged });
     this.fetch = fetchImpl || ((...a) => fetch(...a));
     this.run = null;
@@ -59,11 +66,14 @@ class SignupService {
     const p = String(prefix || '').trim();
     const n = Math.floor(Number(count) || 0);
     if (!/^[a-zA-Z0-9]+$/.test(p)) throw new Error('The prefix may only contain letters and digits.');
-    if (n < 1 || n > MAX_COUNT) throw new Error(`Choose 1–${MAX_COUNT} accounts.`);
+    // no upper limit (user 2026-11-24): a refusal of the mail service or the game stops the run
+    // and says how far it got
+    if (n < 1) throw new Error('Choose at least 1 account.');
     if (p.length + String(n).length > 10 || p.length + 1 > 10) throw new Error('Prefix + number must fit in 10 characters (the game\'s team name limit).');
     if (String(password || '').length < 6) throw new Error('The password needs at least 6 characters.');
     const av = Math.min(AVATARS, Math.max(1, Math.floor(Number(avatar) || 14)));
-    const par = Math.min(MAX_PARALLEL, Math.max(1, Math.floor(Number(parallel) || 5)));
+    // how many at the same time: typed by the user, no upper limit (user 2026-11-24)
+    const par = Math.max(1, Math.floor(Number(parallel) || 5));
     return { prefix: p, count: n, password: String(password), avatar: av, parallel: par };
   }
 
@@ -132,7 +142,7 @@ class SignupService {
       this.run.outcome = 'done';
     } catch (error) {
       if (error?.name === 'AbortError') { this._log('warning', 'stopped', { n: this.run.created }, `Account creation stopped · ${this.run.created} created`); this.run.outcome = 'stopped'; }
-      else { this._log('error', 'runStopped', { error: error.message, n: this.run.created }, `Account creation stopped: ${error.message}`); this.run.outcome = 'failed'; }
+      else { this._log('error', 'runStopped', { error: error.message, n: this.run.created, total: this.run.count }, `Account creation stopped half way · ${this.run.created}/${this.run.count} created · ${error.message}`); this.run.outcome = 'failed'; }
       this.run.error = error?.name === 'AbortError' ? null : error.message;
     } finally {
       this.run.running = false;
@@ -262,10 +272,26 @@ class SignupService {
         const xs = await gs.call('getXPlayers', { userId }, 'xPlayersList', { signal, timeoutMs: 20000, errorEvents: ['error'] });
         const list = Array.isArray(xs) ? xs : [];
         if (!list.length) throw new Error('the game offered no X player');
-        const x = list[Math.floor(Math.random() * list.length)];
+        // a starting roster with no injured player (user 2026-11-24): the game makes a new random
+        // roster on every request, so it is asked again (another X player too) up to ROLL_TRIES
+        // times; if every one has an injured player, the one with the fewest is taken
+        const hurtIn = r => [...(r?.starters || []), ...(r?.bench || [])].filter(p => p?.isInjured || this.injuredName(p?.visualName || p?.name)).map(p => p.visualName || p.name);
+        let best = null;
+        for (let t = 0; t < ROLL_TRIES; t++) {
+          const cx = list[Math.floor(Math.random() * list.length)];
+          gs.socket.emit('updateSelectedXPlayer', { userId, player: cx });
+          const r = await gs.call('requestPlayers', { xPlayerId: cx.id }, 'playersGenerated', { signal, timeoutMs: 20000, errorEvents: ['error'] }).catch(error => { if (error?.name === 'AbortError') throw error; return null; });
+          if (!r?.starters?.length) continue;
+          const hurt = hurtIn(r);
+          if (!best || hurt.length < best.hurt.length) best = { x: cx, roster: r, hurt };
+          if (!hurt.length) break;
+          await sleep(700, signal);
+        }
+        if (!best) throw new Error('the game offered no roster');
+        const { x, roster } = best;
+        if (best.hurt.length) this._log('warning', 'teamInjured', { name: teamName, players: best.hurt.join(', ') }, `${teamName}: every roster offered had an injured player · the one with the fewest was taken (${best.hurt.join(', ')})`, full);
+        // the X player of the roster that was chosen
         gs.socket.emit('updateSelectedXPlayer', { userId, player: x });
-        const roster = await gs.call('requestPlayers', { xPlayerId: x.id }, 'playersGenerated', { signal, timeoutMs: 20000, errorEvents: ['error'] });
-        if (!roster?.starters?.length) throw new Error('the game offered no roster');
         const made = await gs.call('createTeam', { userId, teamName, starters: roster.starters, bench: roster.bench || [] }, 'teamCreated', { signal, timeoutMs: 20000, errorEvents: ['error'] });
         if (!made?.success) throw new Error(`team not created (${made?.teamName || made?.error || 'refused'})`);
         this._log('success', 'team', { name: teamName, x: x.visualName || x.name }, `${teamName} team created · X player ${x.visualName || x.name}`, full);

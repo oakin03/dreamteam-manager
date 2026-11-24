@@ -41,8 +41,8 @@ export function SignupModal({ lang, Modal, onClose, toast, state }) {
       <p className="muted-text">{x.hint}</p>
       <div className="form-row">
         <label><span>{x.prefix}</span><input autoFocus required maxLength={9} value={form.prefix} onChange={e => setForm({ ...form, prefix: e.target.value.replace(/[^a-zA-Z0-9]/g, '') })} /></label>
-        <label><span>{x.count}</span><input type="number" min="1" max="50" required value={form.count} onChange={e => setForm({ ...form, count: e.target.value })} /></label>
-        <label><span>{x.parallel}</span><select value={form.parallel} onChange={e => setForm({ ...form, parallel: Number(e.target.value) })}>{[1, 5, 10].map(n => <option key={n} value={n}>{n}</option>)}</select></label>
+        <label><span>{x.count}</span><input type="number" min="1" required value={form.count} onChange={e => setForm({ ...form, count: e.target.value })} /></label>
+        <label><span>{x.parallel}</span><input type="number" min="1" required value={form.parallel} onChange={e => setForm({ ...form, parallel: e.target.value })} /></label>
       </div>
       {form.prefix && <small className="muted-text">{fill(x.preview, { team: `${form.prefix}${nextNo}`, mail: `${form.prefix}${nextNo}`.toLowerCase() })}</small>}
       <label><span>{x.password}</span><input type="password" required minLength={6} value={form.password} onChange={e => setForm({ ...form, password: e.target.value })} /></label>

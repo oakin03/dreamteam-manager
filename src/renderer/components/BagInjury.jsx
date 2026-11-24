@@ -11,6 +11,12 @@ const fill = (s, p = {}) => String(s).replace(/\{(\w+)\}/g, (_, k) => p[k] ?? ''
 const TEXT = {
   tr: {
     scan: 'Kadroları oku', scanning: 'Okunuyor…', readAt: 'Okundu: {time}',
+    pkYes: 'Evet, kov',
+    rpTitle: 'Sakat ilk beşi yeni oyuncuyla değiştir', rpHint: 'Hesabın kendi Scout\u2019undan, arkadaşlarının ve diğer hesaplarımızın Scout\u2019larından o mevkide oynayan, sağlam ve maaş tavanına sığan en pahalı (en iyi) oyuncu alınır; sakat oyuncunun maaşı tavandan düşülür. Sadece TK harcanır: APK / TIX, Scout yenileme ve Anestezi kullanılmaz. Uygun oyuncu yoksa yedekle değiştirilir. Auto Trade\u2019in kullandığı ve maçta olan hesaplara dokunulmaz.',
+    rpAction: 'Sakat oyuncu', rpPark: '999999 TIX\u2019ten pazarda beklet', rpFire: 'Kov', rpList: 'Auto Trade fiyatıyla pazara koy', rpRun: 'Değiştir ({n} hesap)', rpRunning: 'Değiştiriliyor…', rpDone: '{ok} hesapta değiştirildi · {bad} hesapta olmadı',
+    rpAuto: 'Otomatik', rpAutoHint: 'Oyunun oyuncu listesi her gün yenilenince ve bu sayfa açılınca sakat ilk beşler kendiliğinden değiştirilir; sakat oyuncu 999999 TIX\u2019ten pazarda bekletilir ve aşağıdaki tabloya düşer.',
+    pkTitle: 'Pazarda bekleyen sakatlar', pkHint: 'Yerine yeni oyuncu alınan sakatlar 999999 TIX\u2019ten pazarda bekler. Seçip kovabilir ya da istediğin fiyattan tekrar listeleyebilirsin.', pkEmpty: 'Bekleyen sakat oyuncu yok.',
+    pkReplaced: 'Yerine', pkWhen: 'Ne zaman', pkFire: 'Pazardan çıkar ve kov ({n})', pkFireAsk: '{n} oyuncu pazardan çıkarılıp kovulacak (geri alınamaz). Emin misin?', pkRelist: 'Tekrar listele ({n})', pkPrice: 'Fiyat', pkDrop: 'Listeden çıkar', pkDoneFire: '{n} oyuncu kovuldu', pkDoneRelist: '{n} oyuncu listelendi', pkMissing: '{n} oyuncu pazarda bulunamadı (satılmış ya da elle çıkarılmış) · listeden çıkarıldı',
     autoSwap: 'Sakat ilk beş oyuncuyu sağlam yedekle otomatik değiştir', autoSwapHint: 'Bir maç sakatlık yüzünden başlamazsa ilk beşteki sakat oyuncu yedekteki sağlam bir oyuncuyla (aynı mevkiyi oynayabilen önce) değiştirilir; iyileşince yerine geri konur.',
     autoHeal: 'Anesteziyi otomatik kullan', autoHealHint: 'Seçili hesaplarda maç sakatlık yüzünden başlamazsa ilk beşteki sakat oyuncuya Anestezi kullanılır (yedekle değiştirmeden önce).', accountsN: '{n} hesap', pick: 'Hesapları seç',
     pickTitle: 'Anestezi hangi hesaplarda otomatik kullanılsın?', search: 'Hesap ara…', selectAll: 'Tümünü seç', none: 'Hiçbiri', save: 'Kaydet', cancel: 'Vazgeç',
@@ -31,6 +37,12 @@ const TEXT = {
   },
   en: {
     scan: 'Read rosters', scanning: 'Reading…', readAt: 'Read: {time}',
+    pkYes: 'Yes, fire',
+    rpTitle: 'Replace injured starters with a new player', rpHint: 'The most expensive (best) healthy player for that position that fits the salary cap is signed from the account\u2019s own Scout, its friends\u2019 and our other accounts\u2019 Scouts; the injured player\u2019s salary is taken off the cap. Only TK is spent: no APK / TIX, no Scout refresh, no Anesthesia. With no fitting player a bench player is swapped in. Accounts Auto Trade is using or in a match are not touched.',
+    rpAction: 'Injured player', rpPark: 'Wait on the market at 999999 TIX', rpFire: 'Fire', rpList: 'List at Auto Trade\u2019s price', rpRun: 'Replace ({n} accounts)', rpRunning: 'Replacing…', rpDone: 'Replaced on {ok} account(s) · not on {bad}',
+    rpAuto: 'Automatic', rpAutoHint: 'When the game\u2019s player list is renewed each day and when this page opens, injured starters are replaced by themselves; the injured player waits on the market at 999999 TIX and shows up in the table below.',
+    pkTitle: 'Injured players waiting on the market', pkHint: 'Injured players that were replaced wait on the market at 999999 TIX. Pick them to fire them or to list them again at your price.', pkEmpty: 'No injured player is waiting.',
+    pkReplaced: 'Replaced by', pkWhen: 'When', pkFire: 'Take off and fire ({n})', pkFireAsk: '{n} player(s) will be taken off the market and fired (cannot be undone). Are you sure?', pkRelist: 'List again ({n})', pkPrice: 'Price', pkDrop: 'Remove from the list', pkDoneFire: '{n} player(s) fired', pkDoneRelist: '{n} player(s) listed', pkMissing: '{n} player(s) not found on the market (sold or taken off by hand) · removed from the list',
     autoSwap: 'Swap an injured starter for a healthy bench player automatically', autoSwapHint: 'When a match does not start because of an injury, the injured starter is swapped for a healthy bench player (one who plays that position first); it goes back once healthy.',
     autoHeal: 'Use Anesthesia automatically', autoHealHint: 'On the chosen accounts, when a match does not start because of an injury, Anesthesia is used on the injured starter (before swapping).', accountsN: '{n} account(s)', pick: 'Choose accounts',
     pickTitle: 'On which accounts is Anesthesia used automatically?', search: 'Search accounts…', selectAll: 'Select all', none: 'None', save: 'Save', cancel: 'Cancel',
@@ -64,7 +76,23 @@ export default function InjuryTab({ state, t, toast }) {
   const [ask, setAsk] = useState(null);
   const [picker, setPicker] = useState(null);
   const [pq, setPq] = useState('');
-  useEffect(() => { if (api.injury && !Object.keys(inj.teams || {}).length && !inj.reading) api.injury.scan().catch(() => {}); }, []);
+  useEffect(() => {
+    if (!api.injury) return;
+    if (!Object.keys(inj.teams || {}).length && !inj.reading) api.injury.scan().catch(() => {});
+    // the page opened: the automatic replacement runs (when it is on)
+    api.injury.pageOpen?.().catch(() => {});
+  }, []);
+  const [rpAction, setRpAction] = useState(() => (['park', 'fire', 'list'].includes(st.injuredAction) ? st.injuredAction : 'park'));
+  const [rpBusy, setRpBusy] = useState(false);
+  const parked = inj.parked || [];
+  const [pkSel, setPkSel] = useState(() => new Set());
+  const [pkPrice, setPkPrice] = useState('');
+  const [pkCur, setPkCur] = useState('TIX');
+  const [pkAsk, setPkAsk] = useState(false);
+  const pkKey = r => r.accountId + ':' + r.playerId;
+  const pkPicked = parked.filter(r => pkSel.has(pkKey(r)));
+  const pkAll = parked.length > 0 && parked.every(r => pkSel.has(pkKey(r)));
+  const pkDone = (r, okText) => { if (r?.done) toast(fill(okText, { n: r.done }), 'success'); if (r?.missing) toast(fill(x.pkMissing, { n: r.missing }), 'error'); setPkSel(new Set()); };
   const rows = useMemo(() => {
     const out = [];
     for (const [aid, team] of Object.entries(inj.teams || {})) for (const p of team.players || []) if (p.injured) out.push({ ...p, accountId: aid, anesthesia: team.anesthesia || 0, key: aid + ':' + p.id });
@@ -105,6 +133,20 @@ export default function InjuryTab({ state, t, toast }) {
     return [...new Set([...rows.filter(r => r.hurt && r.starter).map(r => r.accountId), ...Object.keys(inj.blocked || {})])];
   })();
   const viewing = viewer.open.length > 0 || viewer.queue.length > 0;
+  // accounts to replace on: the ticked rows' accounts, else every account with an injured starter
+  const rpAccs = (() => {
+    const ticked = [...new Set(rows.filter(r => sel.has(r.key) && r.hurt && r.starter).map(r => r.accountId))];
+    return ticked.length ? ticked : [...new Set(rows.filter(r => r.hurt && r.starter).map(r => r.accountId))];
+  })();
+  const replace = async () => {
+    setRpBusy(true);
+    try {
+      set({ injuredAction: rpAction });
+      const r = await api.injury.replace(rpAccs, rpAction);
+      const res = Object.values(r?.results || {});
+      toast(fill(x.rpDone, { ok: res.filter(v => v.ok).length, bad: res.filter(v => !v.ok).length }), res.some(v => !v.ok) ? 'error' : 'success');
+    } catch (e) { toast(e.message, 'error'); } finally { setRpBusy(false); }
+  };
   const blocked = Object.entries(inj.blocked || {});
   const readAt = Object.values(inj.teams || {}).map(v => v.readAt).filter(Boolean).sort().pop();
 
@@ -120,6 +162,41 @@ export default function InjuryTab({ state, t, toast }) {
       <div className="check-list" style={{ maxHeight: 320, overflow: 'auto', display: 'grid', gap: 4 }}>{accounts.filter(a => !pq || a.name.toLowerCase().includes(pq.toLowerCase())).map(a => <label key={a.id} className="check-row"><input type="checkbox" checked={picker.has(a.id)} onChange={() => setPicker(s => { const n = new Set(s); n.has(a.id) ? n.delete(a.id) : n.add(a.id); return n; })} />{a.name}{inj.teams?.[a.id] ? <small className="muted-text"> · {inj.teams[a.id].anesthesia || 0}</small> : null}</label>)}</div>
       <div className="modal-actions"><button className="btn ghost" onClick={() => setPicker(null)}>{x.cancel}</button><button className="btn primary" onClick={() => { const ids = [...picker]; set({ autoHeal: ids.length > 0, healAccounts: ids }); setPicker(null); }}>{x.save}</button></div>
     </div></div>}
+
+    {pkAsk && <div className="modal-backdrop" onClick={() => setPkAsk(false)}><div className="modal" style={{ maxWidth: 460 }} onClick={e => e.stopPropagation()}>
+      <p>{fill(x.pkFireAsk, { n: pkPicked.length })}</p>
+      <div className="modal-actions"><button className="btn ghost" onClick={() => setPkAsk(false)}>{x.cancel}</button><button className="btn danger-soft" autoFocus onClick={async () => { setPkAsk(false); try { pkDone(await api.injury.parkedFire(pkPicked), x.pkDoneFire); } catch (e) { toast(e.message, 'error'); } }}>{x.pkYes}</button></div>
+    </div></div>}
+
+    <div className="panel inj-replace">
+      <div className="inj-replace-head"><b>{x.rpTitle}</b><span className="sp" />
+        <label className={`ad-switch ${st.replaceAuto ? 'on' : ''}`} title={x.rpAutoHint}><input type="checkbox" checked={Boolean(st.replaceAuto)} onChange={e => set({ replaceAuto: e.target.checked })} /><i /><span><b>{x.rpAuto}</b></span></label></div>
+      <small className="muted-text">{x.rpHint}</small>
+      {st.replaceAuto && <small className="muted-text">{x.rpAutoHint}</small>}
+      <div className="inj-replace-row"><label className="check-row">{x.rpAction} <select value={rpAction} onChange={e => setRpAction(e.target.value)}><option value="park">{x.rpPark}</option><option value="fire">{x.rpFire}</option><option value="list">{x.rpList}</option></select></label>
+        <button className="btn primary" disabled={rpBusy || !rpAccs.length} onClick={replace}>{rpBusy ? x.rpRunning : fill(x.rpRun, { n: rpAccs.length })}</button></div>
+    </div>
+
+    <div className="panel">
+      <div className="inj-replace-head"><b>{x.pkTitle}</b> <small className="muted-text">{parked.length}</small><span className="sp" />
+        {parked.length > 0 && <>
+          <button className="chip" onClick={() => setPkSel(pkAll ? new Set() : new Set(parked.map(pkKey)))}>{pkAll ? x.clearSel : x.selAll}</button>
+          <button className="btn danger-soft small" disabled={!pkPicked.length} onClick={() => setPkAsk(true)}>{fill(x.pkFire, { n: pkPicked.length })}</button>
+          <label className="check-row">{x.pkPrice} <input className="eq-small" type="number" min="1" value={pkPrice} onChange={e => setPkPrice(e.target.value)} /></label>
+          <div className="currency-toggle">{['APK', 'TIX'].map(c => <button type="button" key={c} className={pkCur === c ? 'on' : ''} onClick={() => setPkCur(c)}>{c}</button>)}</div>
+          <button className="btn primary small" disabled={!pkPicked.length || !(Number(pkPrice) >= 1)} onClick={async () => { try { pkDone(await api.injury.parkedRelist(pkPicked, Number(pkPrice), pkCur), x.pkDoneRelist); } catch (e) { toast(e.message, 'error'); } }}>{fill(x.pkRelist, { n: pkPicked.length })}</button>
+          <button className="btn ghost small" disabled={!pkPicked.length} onClick={() => api.injury.parkedDrop(pkPicked).then(() => setPkSel(new Set())).catch(e => toast(e.message, 'error'))}>{x.pkDrop}</button>
+        </>}</div>
+      <small className="muted-text">{x.pkHint}</small>
+      {parked.length ? <div className="table-panel"><SortTable><thead><tr><th className="select-col" /><th>{x.account}</th><th>{x.player}</th><th>{x.pkReplaced}</th><th>{x.pkWhen}</th></tr></thead>
+        <tbody>{parked.map(r => <tr key={pkKey(r)} className={pkSel.has(pkKey(r)) ? 'selected-row-soft' : ''}>
+          <td className="select-col"><input type="checkbox" checked={pkSel.has(pkKey(r))} onChange={() => setPkSel(s2 => { const n = new Set(s2); n.has(pkKey(r)) ? n.delete(pkKey(r)) : n.add(pkKey(r)); return n; })} aria-label={r.name} /></td>
+          <td><b>{accName(r.accountId)}</b></td>
+          <td><b>{r.name}</b> <span className="muted-text">{r.position} · {r.slot}</span> <RatingBadge grade={r.rating} mini /></td>
+          <td>{r.replacedBy || '—'}</td>
+          <td className="muted-text">{r.at ? new Date(r.at).toLocaleString() : '—'}</td>
+        </tr>)}</tbody></SortTable></div> : <p className="muted-text">{x.pkEmpty}</p>}
+    </div>
 
     <div className="panel hunter-refresh">
       <label className="hunter-opt" title={x.autoSwapHint}><input type="checkbox" checked={st.autoSwap !== false} onChange={e => set({ autoSwap: e.target.checked })} />{x.autoSwap}</label>

@@ -4,7 +4,7 @@ import { filOf } from '../i18n-fil';
 import { roleColors } from './roleColors';
 import RatingBadge from './RatingBadge';
 import InjuryMark from './InjuryMark';
-import { GroupedPicks } from './AccountGroups';
+import { GroupedPicks, useGroupedRows, groupRowOf } from './AccountGroups';
 
 const api = window.dreamteam;
 const num = v => v == null ? '—' : Number(v).toLocaleString();
@@ -50,12 +50,28 @@ export default function DraftPage({ state, t, toast }) {
   const run = async (key, fn) => { setBusy(b => ({ ...b, [key]: true })); try { await fn(); } catch (e) { toast(e.message, 'error'); } finally { setBusy(b => { const n = { ...b }; delete n[key]; return n; }); } };
   const slotInfo = n => (d.slots || []).find(s => s.slotNumber === n);
   const now = Date.now();
+  // Automatic / by hand / picked players (user 2026-11-24: the page was one long list)
+  const [tab, setTabRaw] = useState(() => state.settings?.draftTab || 'auto');
+  const setTab = v => { setTabRaw(v); api.settings.update({ draftTab: v }).catch(() => {}); };
+  const ax = AD_TEXT[t.lang] || AD_TEXT.en;
+  const draftedN = Object.values(d.drafted || {}).reduce((n, rows) => n + rows.length, 0);
+  const hall = <><h3 className="section-title">{x.hall}</h3>
+    <div className="df-hall">{(d.slots || []).filter(s => s.range).map(s => <div key={s.slotNumber} className={`df-slot ${s.hasStarted ? 'live' : s.cooldownRemaining > 0 ? 'cool' : 'open'}`}>
+      <b>{fill(x.room, { slot: s.slotNumber })}</b><span>Lv {s.range[0]}–{s.range[1]}</span>
+      <em>{s.hasStarted ? x.live : s.cooldownRemaining > 0 ? fill(x.cooldown, { s: mmss(s.cooldownRemaining) }) : x.open} · {s.users}/10</em>
+    </div>)}</div></>;
 
   return <div className="page draft-page">
     <div className="page-title"><div><h1>{x.title}</h1><span className="subtitle">{x.subtitle}</span></div></div>
+    <div className="dp-tabs">
+      <button className={tab === 'auto' ? 'active' : ''} onClick={() => setTab('auto')}>{ax.tabAuto}{state.autoDraft?.running && <i className="dp-dot" />}</button>
+      <button className={tab === 'manual' ? 'active' : ''} onClick={() => setTab('manual')}>{ax.tabManual}{(d.rooms || []).length > 0 && <i className="dp-dot" />}</button>
+      <button className={tab === 'drafted' ? 'active' : ''} onClick={() => setTab('drafted')}>{ax.tabDrafted}{draftedN > 0 && <small className="tab-count">{draftedN}</small>}</button>
+    </div>
 
-    <AutoDraftPanel state={state} lang={t.lang} toast={toast} attemptsOf={id => (d.accounts || []).find(a => a.id === id)?.attempts} />
-
+    {tab === 'auto' && <><AutoDraftPanel state={state} lang={t.lang} toast={toast} d={d} now={now} />{hall}</>}
+    {tab === 'drafted' && <Drafted d={d} x={x} players={players} roles={roles} toast={toast} mainName={(state.accounts || []).find(a => a.id === state.accountProfile?.mainAccountId)?.name || null} />}
+    {tab === 'manual' && <>
     <h3 className="section-title">{x.accounts}</h3>
     <div className="panel table-panel"><SortTable><thead><tr><th>{x.account}</th><th>{x.level}</th><th>{x.attempts}</th><th>{x.status}</th><th>{x.rooms}</th></tr></thead>
       <tbody>{(d.accounts || []).map(a => <tr key={a.id}>
@@ -64,78 +80,141 @@ export default function DraftPage({ state, t, toast }) {
         <td><div className="df-joins">{a.joinable?.length ? a.joinable.map(n => { const s = slotInfo(n); const key = `${a.id}:${n}`; return <button key={n} className="btn primary small" disabled={busy[key]} onClick={() => run(key, () => api.draft.join(a.id, n))}>{busy[key] ? x.joining : fill(x.join, { slot: n, from: s?.range?.[0], to: s?.range?.[1], users: s?.users ?? 0 })}</button>; }) : <span className="muted-text">{x.noRoom}</span>}</div></td>
       </tr>)}</tbody></SortTable></div>
 
-    <h3 className="section-title">{x.hall}</h3>
-    <div className="df-hall">{(d.slots || []).filter(s => s.range).map(s => <div key={s.slotNumber} className={`df-slot ${s.hasStarted ? 'live' : s.cooldownRemaining > 0 ? 'cool' : 'open'}`}>
-      <b>{fill(x.room, { slot: s.slotNumber })}</b><span>Lv {s.range[0]}–{s.range[1]}</span>
-      <em>{s.hasStarted ? x.live : s.cooldownRemaining > 0 ? fill(x.cooldown, { s: mmss(s.cooldownRemaining) }) : x.open} · {s.users}/10</em>
-    </div>)}</div>
+    {hall}
 
     {(d.rooms || []).length > 0 && <><h3 className="section-title">{x.liveRooms}</h3>
       {d.rooms.map(room => <Room key={room.slot} room={room} x={x} players={players} roles={roles} busy={busy} run={run} now={now} />)}</>}
-
-    <Drafted d={d} x={x} players={players} roles={roles} toast={toast} mainName={(state.accounts || []).find(a => a.id === state.accountProfile?.mainAccountId)?.name || null} />
+    </>}
   </div>;
 }
 
 // ---------- Automatic Draft (user 2026-11-24) ----------
 const AD_TEXT = {
   tr: {
-    title: 'Otomatik Draft', start: 'Başlat ({n})', stop: 'Durdur', running: 'Çalışıyor · {n} oyuncu alındı', done: 'Bitti · {n} oyuncu alındı', stopped: 'Durduruldu', idle: 'Kapalı',
-    accounts: 'Hesaplar', selectAll: 'Hepsini seç', clear: 'Temizle', priority: 'Öncelik sırası', up: 'Yukarı', down: 'Aşağı',
-    fallback: 'Rolü olan oyuncu olmayan oda', fbCard: 'En ucuz oyuncuyu al → ana hesapta karta çevir', fbFire: 'En ucuz oyuncuyu al → kov', fbNone: 'Hiç oyuncu alma',
-    fallbackHint: 'Auto Trade\'deki ucuz fiyat sınırına uyan en ucuz oyuncu alınır.', sideOnly: 'Sadece Satılabilir / Stok al', sideOnlyHint: 'Kart rolündeki oyuncular ve ucuz oyuncular alınmaz.',
-    how: 'Seviyesine uygun yeni bir oda açılınca önce bir hesap girip oyunculara bakar; rolü olan oyuncu sayısı kadar hesap odaya girer (4 rollü oyuncu → 3 hesap daha). Sıra gelince 3–5 sn bekleyip öncelik sırasına göre seçer; Stok önce Lv30+ hesaplara kalır. Draft bitince Kart oyuncuları ana hesaba gidip karta çevrilir, Satılabilir / Stok bir Harcayıcı\'ya verilip Auto Trade fiyatıyla pazara konur. Seçilen hesapların hakkı bitene kadar sürer. Auto Trade\'in kullandığı hesaplar beklenir.',
-    account: 'Hesap', attempts: 'Hak', state: 'Durum', picks: 'Alınanlar', pending: 'Sırada bekleyen devir',
-    st: { waiting: 'Oda bekliyor', joining: 'Odaya giriyor', inRoom: 'Odada · {slot}', picking: 'Seçiyor', picked: 'Seçti', noPick: 'Seçecek oyuncu yok', rosterFull: 'Kadro dolu' },
-    kind: { cards: 'Karta', spender: 'Harcayıcı', fire: 'Kov' }
+    tabAuto: 'Otomatik', tabManual: 'Elle', tabDrafted: 'Alınanlar',
+    title: 'Otomatik Draft', sub: 'Uygun oda açılınca hesaplar kendiliğinden girer, sırası gelince öncelik sırasına göre seçer, draft bitince oyuncuları devreder.',
+    start: 'Başlat', startN: '{n} hesapla başlat', stop: 'Durdur', running: 'Çalışıyor', done: 'Bitti', stopped: 'Durduruldu', idle: 'Kapalı', since: '{t}\'den beri',
+    kAccounts: 'Seçili hesap', kAttempts: 'Kalan hak', kPicked: 'Alınan oyuncu', kRooms: 'Aktif oda', kPending: 'Devir bekleyen',
+    accounts: 'Hesaplar', selectAll: 'Hepsi', withAttempts: 'Hakkı olanlar', clear: 'Temizle', selectedInfo: '{n} hesap · {a} hak',
+    priority: 'Öncelik sırası', priorityHint: 'Yukarıdaki rol önce seçilir. Yeni eklenen roller sona eklenir.', toSpender: 'Harcayıcı → pazar', toCards: 'Ana hesap → kart', stokNote: 'önce Lv30+',
+    options: 'Seçenekler', fallback: 'Rolü olan oyuncu yoksa', fbCard: 'En ucuzu al, karta çevir', fbCardSub: 'Auto Trade ucuz fiyat sınırı içindeki en ucuz oyuncu ana hesaba gider', fbFire: 'En ucuzu al, kov', fbFireSub: 'Hak boşa gitmesin diye alınır, sonra kovulur', fbNone: 'Oyuncu alma', fbNoneSub: 'Odaya giren hesabın hakkı boşa gider',
+    sideOnly: 'Sadece Satılabilir / Stok', sideOnlyHint: 'Kart rolündeki ve ucuz oyuncular alınmaz',
+    live: 'Odalar', noRooms: 'Şu an girilmiş oda yok · uygun oda açılınca burada görünür.', room: 'Oda {slot}', lv: 'Lv {a}–{b}', rolePlayers: '{n} rollü oyuncu', waitStart: 'Başlaması bekleniyor', startsIn: 'Başlamasına {s} sn', started: 'Başladı', ended: 'Bitti', turn: 'Sıra: {name} · {s} sn', ourTurn: 'Sıra bizde: {name}',
+    table: 'Hesaplar', account: 'Hesap', level: 'Lv', attempts: 'Hak', state: 'Durum', slot: 'Oda', picks: 'Alınanlar', noRun: 'Başlatınca hesapların durumu burada görünür.',
+    pending: 'Devir bekleyenler', how: 'Nasıl çalışır?',
+    howList: ['Seviyesine uygun yeni bir oda açılınca önce bir hesap girer ve oyuncu listesine bakar.', 'Listede rolü olan oyuncu sayısı kadar hesap odaya girer (4 rollü oyuncu → 3 hesap daha), odada yer olduğu sürece.', 'Sırası gelen hesap 3–5 sn bekleyip öncelik sırasına göre seçer. Stok, sırası gelmemiş Lv30+ hesabımız varsa ona bırakılır (%5 indirim şansı).', 'Draft bitince Kart oyuncuları ana hesaba gidip karta çevrilir; Satılabilir / Stok yeri ve TK\'sı olan bir Harcayıcı\'ya verilip Auto Trade fiyatıyla pazara konur (yoksa hesap kendisi koyar).', 'Auto Trade\'in kullandığı hesaplar beklenir; maaş tavanını aşan Auto Play devri bekler.', 'Seçilen hesapların draft hakkı bitene kadar sürer. Bir oda bitince 10 dk bekleme süresi başlar.'],
+    st: { waiting: 'Oda bekliyor', joining: 'Odaya giriyor', inRoom: 'Odada', picking: 'Seçiyor', picked: 'Seçti', noPick: 'Seçecek oyuncu yok', rosterFull: 'Kadro dolu' },
+    kind: { cards: 'Kart', spender: 'Harcayıcı', fire: 'Kov' }
   },
   en: {
-    title: 'Automatic Draft', start: 'Start ({n})', stop: 'Stop', running: 'Running · {n} player(s) picked', done: 'Done · {n} player(s) picked', stopped: 'Stopped', idle: 'Off',
-    accounts: 'Accounts', selectAll: 'Select all', clear: 'Clear', priority: 'Priority', up: 'Up', down: 'Down',
-    fallback: 'Room without role players', fbCard: 'Take the cheapest → star cards on main', fbFire: 'Take the cheapest → fire', fbNone: 'Pick nobody',
-    fallbackHint: 'The cheapest player within Auto Trade\'s cheap price limit.', sideOnly: 'Only Satılabilir / Stok', sideOnlyHint: 'Card-role players and cheap players are not picked.',
-    how: 'When a new room for its level opens, one account joins first and looks at the players; as many accounts join as there are players with a role (4 role players → 3 more accounts). On each turn it waits 3–5 s and picks by the priority; Stok is left for Lv30+ accounts first. After the draft, card players go to main and become cards; Satılabilir / Stok go to a Harcayıcı and are listed at Auto Trade\'s price. It runs until the chosen accounts have no attempts left. Accounts Auto Trade is using are waited for.',
-    account: 'Account', attempts: 'Attempts', state: 'Status', picks: 'Picked', pending: 'Waiting to be handed on',
-    st: { waiting: 'Waiting for a room', joining: 'Joining', inRoom: 'In room {slot}', picking: 'Picking', picked: 'Picked', noPick: 'Nothing to pick', rosterFull: 'Roster full' },
-    kind: { cards: 'Cards', spender: 'Harcayıcı', fire: 'Fire' }
+    tabAuto: 'Automatic', tabManual: 'By hand', tabDrafted: 'Picked',
+    title: 'Automatic Draft', sub: 'When a fitting room opens the accounts join by themselves, pick by the priority on their turn and hand the players on after the draft.',
+    start: 'Start', startN: 'Start with {n} accounts', stop: 'Stop', running: 'Running', done: 'Done', stopped: 'Stopped', idle: 'Off', since: 'since {t}',
+    kAccounts: 'Chosen accounts', kAttempts: 'Attempts left', kPicked: 'Players picked', kRooms: 'Active rooms', kPending: 'Waiting to hand on',
+    accounts: 'Accounts', selectAll: 'All', withAttempts: 'With attempts', clear: 'Clear', selectedInfo: '{n} accounts · {a} attempts',
+    priority: 'Priority', priorityHint: 'The role on top is picked first. New roles are added at the end.', toSpender: 'Harcayıcı → market', toCards: 'Main → cards', stokNote: 'Lv30+ first',
+    options: 'Options', fallback: 'When no player has a role', fbCard: 'Take the cheapest, make a card', fbCardSub: 'The cheapest within Auto Trade\'s cheap price goes to main', fbFire: 'Take the cheapest, fire it', fbFireSub: 'Taken so the attempt is not lost, then fired', fbNone: 'Pick nobody', fbNoneSub: 'The attempt of the account that joined is lost',
+    sideOnly: 'Only Satılabilir / Stok', sideOnlyHint: 'Card-role and cheap players are not picked',
+    live: 'Rooms', noRooms: 'In no room now · a fitting room shows up here when it opens.', room: 'Room {slot}', lv: 'Lv {a}–{b}', rolePlayers: '{n} role players', waitStart: 'Waiting to start', startsIn: 'Starts in {s}s', started: 'Started', ended: 'Over', turn: 'Turn: {name} · {s}s', ourTurn: 'Our turn: {name}',
+    table: 'Accounts', account: 'Account', level: 'Lv', attempts: 'Attempts', state: 'Status', slot: 'Room', picks: 'Picked', noRun: 'Start it to see the accounts here.',
+    pending: 'Waiting to hand on', how: 'How does it work?',
+    howList: ['When a new room for its level opens, one account joins first and looks at the players.', 'As many accounts join as there are players with a role (4 role players → 3 more), while the room has seats.', 'On its turn an account waits 3–5 s and picks by the priority. Stok is left for a Lv30+ account of ours that still has to pick (5% cut chance).', 'After the draft, card players go to main and become cards; Satılabilir / Stok go to a Harcayıcı with room and TK and are listed at Auto Trade\'s price (or the account lists them itself).', 'Accounts Auto Trade is using are waited for; Auto Play over the salary cap waits for the handing on.', 'It runs until the chosen accounts have no draft attempts left. A room has a 10-minute cooldown after it ends.'],
+    st: { waiting: 'Waiting for a room', joining: 'Joining', inRoom: 'In a room', picking: 'Picking', picked: 'Picked', noPick: 'Nothing to pick', rosterFull: 'Roster full' },
+    kind: { cards: 'Card', spender: 'Harcayıcı', fire: 'Fire' }
   },
   get fil() { return filOf(this.en); }
 };
+const AD_TONE = { waiting: 'muted', joining: 'warn', inRoom: 'info', picking: 'warn', picked: 'ok', noPick: 'muted', rosterFull: 'bad' };
+const KIND_TONE = { cards: 'ad-k-card', spender: 'ad-k-spender', fire: 'ad-k-fire' };
 
-function AutoDraftPanel({ state, lang, toast, attemptsOf }) {
+function AutoDraftPanel({ state, lang, toast, d, now }) {
   const x = AD_TEXT[lang] || AD_TEXT.en;
   const ad = state.autoDraft || {};
   const cfg = ad.config || { accountIds: [], priority: [], fallback: 'card', sideOnly: false };
   const running = Boolean(ad.running);
   const runInfo = ad.run;
   const accounts = state.accounts || [];
+  const dAcc = id => (d.accounts || []).find(a => a.id === id) || {};
   const save = patch => api.autoDraft.config(patch).catch(e => toast(e.message, 'error'));
+  const act = fn => fn().catch(e => toast(e.message, 'error'));
   const ids = cfg.accountIds.filter(id => accounts.some(a => a.id === id));
   const toggle = id => save({ accountIds: ids.includes(id) ? ids.filter(v => v !== id) : [...ids, id] });
-  const move = (i, d) => { const p = [...cfg.priority]; const j = i + d; if (j < 0 || j >= p.length) return; [p[i], p[j]] = [p[j], p[i]]; save({ priority: p }); };
-  const roleName = id => (ad.roles || []).find(r => r.id === id);
-  const status = !runInfo ? x.idle : runInfo.status === 'running' ? fill(x.running, { n: runInfo.picked }) : runInfo.status === 'done' ? fill(x.done, { n: runInfo.picked }) : x.stopped;
-  const act = fn => fn().catch(e => toast(e.message, 'error'));
-  return <div className="panel ad-panel">
-    <div className="ad-head"><b>{x.title}</b><span className={`pill ${running ? 'ok' : 'muted'}`}><i />{status}</span><span className="sp" style={{ flex: 1 }} />
-      {running ? <button className="btn danger-soft" onClick={() => act(() => api.autoDraft.stop())}>{x.stop}</button>
-        : <button className="btn primary" disabled={!ids.length} onClick={() => act(() => api.autoDraft.start({ accountIds: ids }))}>{fill(x.start, { n: ids.length })}</button>}</div>
-    <small className="muted-text">{x.how}</small>
-    <div className="ad-grid">
-      <div><div className="ad-sub"><b>{x.accounts}</b><button className="chip" disabled={running} onClick={() => save({ accountIds: ids.length === accounts.length ? [] : accounts.map(a => a.id) })}>{ids.length === accounts.length ? x.clear : x.selectAll}</button></div>
-        <div className="pvp-picks"><GroupedPicks storeKey="autodraft" accounts={accounts} selected={ids} disabled={running} onSet={next => save({ accountIds: next })} render={a => { const n = attemptsOf(a.id); return <button key={a.id} type="button" disabled={running} className={ids.includes(a.id) ? 'selected' : ''} onClick={() => toggle(a.id)}><span>{a.name}</span><em className={n === 0 ? 'zero' : ''}>{n ?? '—'}</em></button>; }} /></div></div>
-      <div><div className="ad-sub"><b>{x.priority}</b></div>
-        <ol className="ad-priority">{cfg.priority.map((id, i) => { const r = roleName(id); return <li key={id}><span className="role-pill" style={{ borderColor: r?.color, color: r?.color }}>{r?.name || id}</span>
-          <button className="btn ghost small" disabled={running || i === 0} title={x.up} onClick={() => move(i, -1)}>▲</button><button className="btn ghost small" disabled={running || i === cfg.priority.length - 1} title={x.down} onClick={() => move(i, 1)}>▼</button></li>; })}</ol>
-        <label className="ad-opt"><span>{x.fallback}</span><select value={cfg.fallback} disabled={running} onChange={e => save({ fallback: e.target.value })}><option value="card">{x.fbCard}</option><option value="fire">{x.fbFire}</option><option value="none">{x.fbNone}</option></select><small className="muted-text">{x.fallbackHint}</small></label>
-        <label className="at2-check"><input type="checkbox" disabled={running} checked={cfg.sideOnly} onChange={e => save({ sideOnly: e.target.checked })} /><span>{x.sideOnly}</span><small>{x.sideOnlyHint}</small></label>
-      </div>
+  const move = (i, dir) => { const p = [...cfg.priority]; const j = i + dir; if (j < 0 || j >= p.length) return; [p[i], p[j]] = [p[j], p[i]]; save({ priority: p }); };
+  const roleOf = id => (ad.roles || []).find(r => r.id === id);
+  const isStok = id => /^sto(k|ck)/i.test(String(roleOf(id)?.name || '').trim());
+  const toMain = id => id === 'card';
+  const attemptsSum = list => list.reduce((n, id) => n + (Number(dAcc(id).attempts) || 0), 0);
+  const runIds = runInfo?.accountIds || ids;
+  const activeRooms = Object.values(runInfo?.rooms || {}).filter(r => !r.ended);
+  const status = !runInfo ? x.idle : runInfo.status === 'running' ? x.running : runInfo.status === 'done' ? x.done : x.stopped;
+  const tone = running ? 'ok' : runInfo?.status === 'done' ? 'info' : 'muted';
+  const grp = useGroupedRows('autodraft-table');
+  const kpis = [[x.kAccounts, runIds.length], [x.kAttempts, attemptsSum(runIds)], [x.kPicked, runInfo?.picked ?? 0], [x.kRooms, activeRooms.length], [x.kPending, (ad.pending || []).reduce((n, p) => n + p.count, 0)]];
+
+  return <div className="ad">
+    <div className="panel ad-hero">
+      <div className="ad-hero-text"><div className="ad-hero-title"><h2>{x.title}</h2><span className={`pill ${tone}`}><i />{status}</span>{running && runInfo?.startedAt && <small className="muted-text">{fill(x.since, { t: new Date(runInfo.startedAt).toLocaleTimeString() })}</small>}</div><p className="muted-text">{x.sub}</p></div>
+      <div className="ad-kpis">{kpis.map(([l, v]) => <div key={l} className="ad-kpi"><b>{num(v)}</b><span>{l}</span></div>)}</div>
+      <div className="ad-hero-act">{running ? <button className="btn danger-soft big" onClick={() => act(() => api.autoDraft.stop())}>■ {x.stop}</button>
+        : <button className="btn primary big" disabled={!ids.length} onClick={() => act(() => api.autoDraft.start({ accountIds: ids }))}>▶ {ids.length ? fill(x.startN, { n: ids.length }) : x.start}</button>}</div>
     </div>
-    {runInfo && <div className="table-panel ad-table"><SortTable><thead><tr><th>{x.account}</th><th>{x.attempts}</th><th>{x.state}</th><th>{x.picks}</th></tr></thead>
-      <tbody>{runInfo.accountIds.map(id => { const a = runInfo.accounts[id] || {}; return <tr key={id}><td><b>{accounts.find(v => v.id === id)?.name || id}</b></td><td>{attemptsOf(id) ?? '—'}</td>
-        <td>{fill(x.st[a.state] || a.state || '', { slot: a.slot })}</td>
-        <td>{(a.picks || []).map((p, k) => <span key={k} className="pill muted"><i />{p.name} · {x.kind[p.kind] || p.kind}</span>)}</td></tr>; })}</tbody></SortTable></div>}
-    {(ad.pending || []).length > 0 && <div className="ad-pending"><b>{x.pending}</b> {(ad.pending || []).map((p, k) => <span key={k} className="pill warn"><i />{p.name} · {p.count} · {x.kind[p.kind] || p.kind}</span>)}</div>}
+
+    <div className="ad-cards">
+      <section className="panel ad-card ad-card-acc">
+        <header><b>{x.accounts}</b><small className="muted-text">{fill(x.selectedInfo, { n: ids.length, a: attemptsSum(ids) })}</small><span className="sp" />
+          <button className="chip" disabled={running} onClick={() => save({ accountIds: accounts.map(a => a.id) })}>{x.selectAll}</button>
+          <button className="chip" disabled={running} onClick={() => save({ accountIds: accounts.filter(a => Number(dAcc(a.id).attempts) > 0).map(a => a.id) })}>{x.withAttempts}</button>
+          <button className="chip" disabled={running || !ids.length} onClick={() => save({ accountIds: [] })}>{x.clear}</button></header>
+        <div className="pvp-picks"><GroupedPicks storeKey="autodraft" accounts={accounts} selected={ids} disabled={running} onSet={next => save({ accountIds: next })} render={a => { const n = dAcc(a.id).attempts; return <button key={a.id} type="button" disabled={running} className={ids.includes(a.id) ? 'selected' : ''} onClick={() => toggle(a.id)}><span>{a.name}</span><em className={n === 0 ? 'zero' : ''} title={x.attempts}>{n ?? '—'}</em></button>; }} /></div>
+      </section>
+
+      <section className="panel ad-card">
+        <header><b>{x.priority}</b></header>
+        <ol className="ad-prio">{cfg.priority.map((id, i) => { const r = roleOf(id); return <li key={id} style={{ '--rc': r?.color || 'var(--fg-7b8798)' }}>
+          <span className="ad-prio-n">{i + 1}</span>
+          <div className="ad-prio-body"><b>{r?.name || id}</b><small>{toMain(id) ? x.toCards : x.toSpender}{isStok(id) ? ` · ${x.stokNote}` : ''}</small></div>
+          <div className="ad-prio-move"><button disabled={running || i === 0} onClick={() => move(i, -1)} aria-label="up">▲</button><button disabled={running || i === cfg.priority.length - 1} onClick={() => move(i, 1)} aria-label="down">▼</button></div>
+        </li>; })}</ol>
+        <small className="muted-text">{x.priorityHint}</small>
+      </section>
+
+      <section className="panel ad-card">
+        <header><b>{x.options}</b></header>
+        <div className="ad-sublabel">{x.fallback}</div>
+        <div className="ad-radios">{[['card', x.fbCard, x.fbCardSub], ['fire', x.fbFire, x.fbFireSub], ['none', x.fbNone, x.fbNoneSub]].map(([v, l, s]) => <label key={v} className={`ad-radio ${cfg.fallback === v ? 'on' : ''}`}>
+          <input type="radio" name="ad-fallback" disabled={running} checked={cfg.fallback === v} onChange={() => save({ fallback: v })} /><span><b>{l}</b><small>{s}</small></span></label>)}</div>
+        <label className={`ad-switch ${cfg.sideOnly ? 'on' : ''}`}><input type="checkbox" disabled={running} checked={cfg.sideOnly} onChange={e => save({ sideOnly: e.target.checked })} /><i /><span><b>{x.sideOnly}</b><small>{x.sideOnlyHint}</small></span></label>
+      </section>
+    </div>
+
+    <h3 className="section-title">{x.live}</h3>
+    {activeRooms.length ? <div className="ad-rooms">{activeRooms.map(r => {
+      const live = (d.rooms || []).find(v => v.slot === r.slot) || {};
+      const turnAcc = live.turn && r.ours.find(id => dAcc(id).userId === live.turn.userId);
+      const left = live.turn?.at ? Math.max(0, (live.turn.seconds || 0) - Math.floor((now - Date.parse(live.turn.at)) / 1000)) : null;
+      const cd = live.countdownAt && live.countdown != null ? Math.max(0, live.countdown - Math.floor((now - Date.parse(live.countdownAt)) / 1000)) : null;
+      return <div key={r.slot} className={`panel ad-room ${live.started ? 'live' : ''}`}>
+        <header><b>{fill(x.room, { slot: r.slot })}</b>{live.range && <small>{fill(x.lv, { a: live.range[0], b: live.range[1] })}</small>}<span className="sp" />
+          <span className={`pill ${live.started ? 'ok' : 'warn'}`}><i />{live.started ? x.started : cd != null ? fill(x.startsIn, { s: cd }) : x.waitStart}</span></header>
+        {r.rolePlayers != null && <div className="muted-text">{fill(x.rolePlayers, { n: r.rolePlayers })} · {(live.users || []).length}/10</div>}
+        {live.started && live.turn && <div className={turnAcc ? 'ad-turn ours' : 'ad-turn'}>{turnAcc ? fill(x.ourTurn, { name: accounts.find(a => a.id === turnAcc)?.name }) : fill(x.turn, { name: (live.users || []).find(u => u.userId === live.turn.userId)?.teamName || '?', s: left ?? '—' })}</div>}
+        <div className="ad-room-ours">{r.ours.map(id => { const a = runInfo.accounts[id] || {}; return <span key={id} className={`pill ${AD_TONE[a.state] || 'muted'}`}><i />{accounts.find(v => v.id === id)?.name || id} · {x.st[a.state] || a.state}</span>; })}</div>
+      </div>;
+    })}</div> : <div className="panel empty-state ad-empty">{x.noRooms}</div>}
+
+    {(ad.pending || []).length > 0 && <div className="panel ad-pending"><b>{x.pending}</b>{(ad.pending || []).map((p, k) => <span key={k} className={`ad-kind ${KIND_TONE[p.kind] || ''}`}>{p.name} · {p.count} · {x.kind[p.kind] || p.kind}</span>)}</div>}
+
+    <h3 className="section-title">{x.table}</h3>
+    {runInfo ? <div className="panel table-panel ad-table"><SortTable><thead><tr><th>{x.account}</th><th>{x.level}</th><th>{x.attempts}</th><th>{x.state}</th><th>{x.slot}</th><th>{x.picks}</th></tr></thead>
+      <tbody>{grp(runInfo.accountIds.map(id => ({ id, name: accounts.find(v => v.id === id)?.name || id })), acc => { const a = runInfo.accounts[acc.id] || {}; const da = dAcc(acc.id); return <tr key={acc.id}>
+        <td><b>{acc.name}</b></td><td>{da.level ?? '—'}</td><td className={da.attempts === 0 ? 'muted-text' : ''}>{da.attempts ?? '—'}</td>
+        <td><span className={`pill ${AD_TONE[a.state] || 'muted'}`}><i />{x.st[a.state] || a.state || '—'}</span></td>
+        <td>{a.slot ?? '—'}</td>
+        <td><div className="ad-picks">{(a.picks || []).map((p, k) => <span key={k} className={`ad-kind ${KIND_TONE[p.kind] || ''}`}>{p.name}<small>{x.kind[p.kind] || p.kind}</small></span>)}</div></td></tr>; },
+      groupRowOf(6, g => <><td /><td>{g.reduce((n, acc) => n + (Number(dAcc(acc.id).attempts) || 0), 0)}</td><td>{g.filter(acc => ['inRoom', 'picking', 'joining'].includes(runInfo.accounts[acc.id]?.state)).length || ''}</td><td /><td>{g.reduce((n, acc) => n + (runInfo.accounts[acc.id]?.picks || []).length, 0) || ''}</td></>))}</tbody></SortTable></div>
+      : <div className="panel empty-state ad-empty">{x.noRun}</div>}
+
+    <details className="panel pvp-how"><summary>{x.how}</summary><ul>{x.howList.map(l => <li key={l}>{l}</li>)}</ul></details>
   </div>;
 }
 

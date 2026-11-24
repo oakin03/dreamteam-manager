@@ -5,8 +5,9 @@ const { SignupService } = require('../src/main/services/signup-service.cjs');
 const { AppStore } = require('../src/main/services/store.cjs');
 
 // A game where "Farm1" is taken; X players, a roster and the team / avatar events answer.
-function fakeGame({ taken = ['farm1'], registerStatus = 201 } = {}) {
+function fakeGame({ taken = ['farm1'], registerStatus = 201, injuredRolls = 0 } = {}) {
   const calls = [];
+  let rolls = 0;
   const teams = new Set(taken);
   const createSocket = () => {
     const s = new EventEmitter();
@@ -19,7 +20,7 @@ function fakeGame({ taken = ['farm1'], registerStatus = 201 } = {}) {
       if (event === 'register') reply('registrationSuccess', {});
       if (event === 'getUserBasicInfo') reply('userBasicInfo', { success: true, teamName: 'team-x' });
       if (event === 'getXPlayers') reply('xPlayersList', [{ id: 'x1', name: 'Luka Doncic', visualName: 'Luka Doncic' }, { id: 'x2', name: 'Kyrie Irving' }]);
-      if (event === 'requestPlayers') reply('playersGenerated', { starters: [{ id: payload.xPlayerId, assignedSlot: 'PG' }, { id: 'p2' }], bench: [{ id: 'p3' }] });
+      if (event === 'requestPlayers') { rolls += 1; reply('playersGenerated', { starters: [{ id: payload.xPlayerId, assignedSlot: 'PG' }, rolls <= injuredRolls ? { id: 'hurt' + rolls, name: 'Hurt Guy', isInjured: true } : { id: 'p2' }], bench: [{ id: 'p3' }] }); }
       if (event === 'createTeam') { teams.add(payload.teamName.toLowerCase()); reply('teamCreated', { success: true, teamName: payload.teamName }); }
       return true;
     };
@@ -104,7 +105,9 @@ test('the form is checked: letters/digits only, prefix + number within 10 charac
   assert.throws(() => SignupService.validate({ prefix: 'FarmFarmFa', count: 2, password: 'secret1' }));
   assert.throws(() => SignupService.validate({ prefix: 'Farm', count: 2, password: '123' }));
   assert.deepEqual(SignupService.validate({ prefix: 'CCAcc', count: 20, password: '123456', avatar: 99 }), { prefix: 'CCAcc', count: 20, password: '123456', avatar: 15, parallel: 5 });
-  assert.equal(SignupService.validate({ prefix: 'Farm', count: 2, password: '123456', parallel: 99 }).parallel, 10);
+  // no upper limit for the count or for how many at the same time (user 2026-11-24)
+  assert.equal(SignupService.validate({ prefix: 'Farm', count: 2, password: '123456', parallel: 99 }).parallel, 99);
+  assert.equal(SignupService.validate({ prefix: 'F', count: 5000, password: '123456' }).count, 5000);
 });
 
 test('"2. Main" is the main account for the automations only while there is no Main', () => {
@@ -151,4 +154,20 @@ test('several accounts at the same time; half-done accounts of an earlier run ar
   assert.ok(game.calls.some(c => c.event === 'createTeam' && c.payload.teamName === 'Farm1'));
   assert.ok(peak > 1, 'accounts ran side by side (peak ' + peak + ')');
   assert.equal(game.calls.filter(c => c.event.endsWith?.('/api/register')).length, 5);
+});
+
+test('the starting roster: rosters with an injured player are asked for again; all injured → the fewest, reported', async () => {
+  const game = fakeGame({ taken: [], injuredRolls: 2 });
+  const { svc } = service(game);
+  await svc.create({ prefix: 'Farm', count: 1, password: 'secret1', avatar: 1, parallel: 1 });
+  assert.equal(game.calls.filter(c => c.event === 'requestPlayers').length, 3, 'two injured rosters, the third is clean');
+  const team = game.calls.find(c => c.event === 'createTeam').payload;
+  assert.ok(![...team.starters, ...team.bench].some(p => p.isInjured), 'no injured player in the team');
+
+  const all = fakeGame({ taken: [], injuredRolls: 99 });
+  const b = service(all);
+  await b.svc.create({ prefix: 'Farm', count: 1, password: 'secret1', avatar: 1, parallel: 1 });
+  assert.equal(all.calls.filter(c => c.event === 'requestPlayers').length, 10);
+  assert.ok(b.logs.some(l => l.code === 'su.teamInjured'));
+  assert.ok(all.calls.some(c => c.event === 'createTeam'), 'the team is still made');
 });
