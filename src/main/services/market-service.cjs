@@ -13,7 +13,7 @@ const { OwnedSwap } = require('./owned-swap.cjs');
 // Every write may answer "Please wait N seconds…" with `retryAfter`; the call
 // is repeated after that wait. Removing a listing fails with "You already own
 // this player." while the same player is already in the roster.
-const PAGE_SIZE = 8;
+const { pageCount } = require('./market-pages.cjs');
 const ACCOUNT_CONCURRENCY = WIDE; // every account at once (user 2026-11-11)
 const MAX_ATTEMPTS = 5;
 const CURRENCY = { APK_TICKET: 'APK', TICKET: 'TIX' };
@@ -240,7 +240,7 @@ class MarketService {
     this.set(account.id, { step: 'scanning', stepParams: { page: 1, pages: 1 } });
     const fetchPage = page => socket.call('market:getMyPlayerListings', { userId, page, search: '', basePlayersOnly: false }, 'market:myPlayerListingsData', { signal });
     const first = await fetchPage(1);
-    const pages = Math.max(1, Math.ceil(Number(first?.total || 0) / PAGE_SIZE));
+    const pages = pageCount(first);
     const seen = new Set();
     const rows = [];
     const add = data => { for (const ticket of data?.tickets || []) if (!seen.has(ticket.id)) { seen.add(ticket.id); rows.push(listingRow(ticket, account.id)); } };

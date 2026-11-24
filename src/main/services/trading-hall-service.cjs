@@ -13,7 +13,7 @@ const SOCKET_URL = 'https://dreamteamph.com';
 const SOCKET_PATH = '/socket/';
 const REQUEST_EVENT = 'market:getMarketPlayers';
 const REPLY_EVENT = 'market:marketPlayersData';
-const PAGE_SIZE = 8;
+const { pageSizeOf, pageCount } = require('./market-pages.cjs');
 const CONCURRENCY = 20; // pages of one market list (was 8; user 2026-11-11: more at once)
 const REQUEST_TIMEOUT_MS = 15000;
 const PAGE_ATTEMPTS = 3;
@@ -222,7 +222,8 @@ class TradingHallService {
     const startedAt = Date.now();
     const first = await fetchPage(workers[0], 1);
     const total = Number(first.total || 0);
-    const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+    const totalPages = pageCount(first);
+    const pageSize = pageSizeOf(first);
     let lastPage = totalPages;
     this.log('info', `${label}: ${fmt(total)} listings on ${fmt(totalPages)} pages · ${workers.length} connections.`, `${pass}Listed`, { total, pages: totalPages });
 
@@ -241,7 +242,7 @@ class TradingHallService {
         }
         rows.push(row);
       }
-      if (data.tickets.length < PAGE_SIZE) lastPage = Math.min(lastPage, page);
+      if (data.tickets.length < pageSize) lastPage = Math.min(lastPage, page);
       pages.set(page, rows);
       count += rows.length;
 

@@ -37,7 +37,9 @@ function fakeGame({ users, listings }) {
         const mode = p.paymentMode;
         const all = st.listings.filter(l => l.status === 'LISTED' && (!mode || l.paymentMode === mode) && l.player.name.toLowerCase().includes(p.search.toLowerCase())).sort((a, b) => a.price - b.price);
         const page = Number(p.page) || 1;
-        return reply('market:marketPlayersData', { tickets: all.slice((page - 1) * 8, page * 8), total: all.length });
+        const size = st.pageSize || 8;
+        st.inFlight = (st.inFlight || 0) + 1; st.maxInFlight = Math.max(st.maxInFlight || 0, st.inFlight);
+        return setTimeout(() => { st.inFlight--; !s.closed && emitLocal('market:marketPlayersData', { tickets: all.slice((page - 1) * size, page * size), total: all.length }); }, st.searchMs || 1);
       }
       if (!s.registered) return reply(event === 'market:buyPlayer' ? 'market:buyResult' : 'x', { success: false, message: 'Authentication required' });
       const me = s.registered;
@@ -379,3 +381,88 @@ test('Turn into card waits out the game cooldown ("Please wait N seconds") and t
   assert.ok(!logs.some(l => l.code === 'by.convertFailed'));
   assert.ok(data().bought.every(e => e.state === 'converted'));
 });
+
+// ---------- the fast scan (user 2026-11-24) ----------
+const { pageSizeOf, pageCount, isLastPage } = require('../src/main/services/market-pages.cjs');
+
+test('market pages: the size comes from page 1 (8 before, 15 now), the last page is found without empty requests', () => {
+  const page = (n, total) => ({ tickets: Array.from({ length: n }, (_, i) => ({ id: i })), total });
+  assert.equal(pageSizeOf(page(15, 180)), 15);
+  assert.equal(pageCount(page(15, 180)), 12);
+  assert.equal(pageCount(page(8, 180)), 23);
+  assert.equal(pageCount(page(12, 12)), 1, 'everything on page 1');
+  assert.equal(pageCount(page(0, 0)), 1);
+  assert.equal(isLastPage(page(15, 180), 1, 15, 15), false);
+  assert.equal(isLastPage(page(15, 180), 12, 15, 180), true, 'every listing read');
+  assert.equal(isLastPage(page(7, 22), 2, 15, 22), true, 'a short page');
+  assert.equal(isLastPage(page(12, 12), 1, 12, 12), true);
+  assert.equal(isLastPage(page(0, 30), 3, 15, 30), true, 'an empty page');
+  assert.equal(isLastPage({ tickets: page(15).tickets }, 1, 15, 15), false, 'no total: the next page tells');
+});
+
+function fastWorld({ players = 12, pageSize = 15, extra = [] } = {}) {
+  const listings = [];
+  for (let p = 0; p < players; p++) {
+    // 40 listings per player from 10 APK up: only the first page is under a 20 APK limit
+    for (let i = 0; i < 40; i++) listings.push(L(`t${p}-${i}`, `p${p}`, `Player ${String.fromCharCode(65 + p)}`, 10 + i, 40));
+  }
+  const game = fakeGame({ users: { 'u-a': { apk: 100000, tix: 0 } }, listings: [...listings, ...extra] });
+  game.st.pageSize = pageSize;
+  game.st.searchMs = 15;
+  const w = service(game, [['a', 'Trophy3']]);
+  w.svc.addWatch(Array.from({ length: players }, (_, p) => ({ id: `p${p}`, name: `Player ${String.fromCharCode(65 + p)}` })));
+  for (const row of w.data().watch) w.svc.updateWatch(row.id, { maxPrice: 11, maxSalary: 50, currency: 'APK', unlimited: false, qty: 1 });
+  return { game, ...w };
+}
+
+test('Auto Buy fast scan: players are searched on several connections at once, buys still go one at a time', async () => {
+  const { game, svc, data } = fastWorld();
+  await svc.startAuto({ accountIds: ['a'], intervalSec: 1 });
+  await svc.done; // every row has qty 1 → finishes by itself
+  assert.ok(game.st.maxInFlight >= 3, `searches ran in parallel (max ${game.st.maxInFlight})`);
+  assert.equal(data().bought.length, 12, 'one of each player');
+  assert.deepEqual(game.st.listings.filter(l => l.status === 'SOLD').map(l => l.id).sort(), Array.from({ length: 12 }, (_, p) => `t${p}-0`).sort(), 'the cheapest of each');
+  const buys = game.calls.filter(c => c.event === 'market:buyPlayer').length;
+  assert.equal(buys, 12, 'never two buys of one listing');
+  assert.equal(svc.snapshot().auto.status, 'done');
+  assert.equal(svc.snapshot().config.intervalSec, 1, 'a 1 s interval is kept');
+}, { timeout: 20000 });
+
+test('Auto Buy fast scan: reads pages only while they can hold a buyable price; every 10th scan reads them all', async () => {
+  const { game, svc, data } = fastWorld({ players: 2 });
+  // limits that are never met (salary), so the scans go on
+  for (const row of data().watch) svc.updateWatch(row.id, { maxPrice: 20, maxSalary: 1, unlimited: true });
+  const scopes = [];
+  svc.onScan = (ids, cur, tickets, scope) => scopes.push({ id: ids[0], complete: scope.complete, n: tickets.length });
+  const calls = () => game.calls.filter(c => c.event === 'market:getMarketPlayers');
+  await svc.startAuto({ accountIds: ['a'], intervalSec: 1 });
+  const until = async f => { for (let i = 0; i < 400 && !f(); i++) await new Promise(r => setTimeout(r, 10)); };
+  await until(() => svc.snapshot().auto.cycle >= 2 && svc.snapshot().auto.lastCycle);
+  // scan 1 is deep: 40 listings on 15-listing pages = 3 pages a player
+  const deep = calls().filter(c => c.payload.page === 3).length;
+  assert.equal(deep, 2, 'the deep scan read every page');
+  await until(() => svc.snapshot().auto.cycle >= 3);
+  svc.stopAuto();
+  await svc.done;
+  // scan 2: page 1 ends at 24 (> 20) → page 2 is not asked; never a page 4 (no empty page)
+  const pages = calls().map(c => c.payload.page);
+  assert.ok(!pages.includes(4), 'no empty page with 15-listing pages');
+  assert.equal(pages.filter(p => p === 2).length, 2, 'page 2 only in the deep scan');
+  assert.ok(scopes.some(s => s.complete) && scopes.some(s => !s.complete), 'the hall gets the deep and the quick scans');
+}, { timeout: 20000 });
+
+test('Auto Buy fast scan: tied prices across a page end are still read (a listing at the limit on page 2)', async () => {
+  const listings = Array.from({ length: 15 }, (_, i) => L('s' + i, 'p1', 'Jay Huff', 20, 99)); // 15 at 20, salary too high
+  listings.push(L('ok', 'p1', 'Jay Huff', 20, 40)); // page 2, same price, salary fits
+  const game = fakeGame({ users: { 'u-a': { apk: 100, tix: 0 } }, listings });
+  game.st.pageSize = 15;
+  const { svc, data } = service(game, [['a', 'Trophy3']]);
+  svc.addWatch([{ id: 'p1', name: 'Jay Huff' }]);
+  svc.updateWatch(data().watch[0].id, { maxPrice: 20, maxSalary: 50, currency: 'APK', unlimited: false, qty: 1 });
+  svc.auto.cycle = 1; // the first scan of the loop is cycle 2: a quick one
+  const orig = svc._autoLoop.bind(svc);
+  svc._autoLoop = (o, i, s) => { svc.auto.cycle = 1; return orig(o, i, s); };
+  await svc.startAuto({ accountIds: ['a'], intervalSec: 1 });
+  await svc.done;
+  assert.equal(game.st.listings.find(l => l.id === 'ok').status, 'SOLD');
+}, { timeout: 10000 });

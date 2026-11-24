@@ -23,7 +23,7 @@ const { eachWithSocket } = require('./wide.cjs');
 // Game events: market:getMyPlayerListings / market:settleTicket / market:sellPlayer /
 // market:buyPlayer, getFreeAgent / signFreeAgent, getFriendFreeAgents / signFriendFreeAgent,
 // getUserBasicInfo, Trade Center (trade-game-client).
-const PAGE_SIZE = 8;
+const { pageSizeOf, pageCount, isLastPage } = require('./market-pages.cjs');
 // every account at once (user 2026-11-17: "4 er 4 er"); sockets are cheap, see wide.cjs
 const CONCURRENCY = 200;
 const ACCEPT_WAIT_MS = 7000;
@@ -91,11 +91,14 @@ class ApkTransferService {
       const info = await gs.call('getUserBasicInfo', { userId }, 'userBasicInfo', { timeoutMs: 12000 });
       const sold = { APK: [], TIX: [] };
       const seen = new Set();
-      for (let page = 1; page <= 20; page++) {
+      let size = 1, read = 0;
+      for (let page = 1; page <= 40; page++) {
         const d = await gs.call('market:getMyPlayerListings', { userId, page, search: '', basePlayersOnly: false }, 'market:myPlayerListingsData', { timeoutMs: 12000 });
         const tickets = (d?.tickets || []).filter(t => t?.id && !seen.has(t.id) && seen.add(t.id));
         for (const t of tickets) if (t.status === 'SOLD') sold[t.paymentMode === 'TICKET' ? 'TIX' : 'APK'].push(Number(t.price) || 0);
-        if (tickets.length < PAGE_SIZE || page >= Math.ceil(Number(d?.total || 0) / PAGE_SIZE)) break;
+        if (page === 1) size = pageSizeOf(d);
+        read += (d?.tickets || []).length;
+        if (isLastPage(d, page, size, read)) break;
       }
       out[id] = { apk: Number(info?.autoPKTickets) || 0, tix: Number(info?.ticket) || 0, sold, at: new Date(this.now()).toISOString() };
     }, { onError: (id, e) => { out[id] = { error: e.message }; } });
@@ -198,7 +201,7 @@ class ApkTransferService {
   async _listings(c) {
     const page = n => c.conn.call('market:getMyPlayerListings', { userId: c.userId, page: n, search: '', basePlayersOnly: false }, 'market:myPlayerListingsData', { signal: c.signal, timeoutMs: 20000 });
     const first = await page(1);
-    const pages = Math.max(1, Math.ceil(Number(first?.total || 0) / PAGE_SIZE));
+    const pages = pageCount(first);
     const tickets = [...(first?.tickets || [])];
     for (let n = 2; n <= pages; n++) tickets.push(...((await page(n))?.tickets || []));
     const seen = new Set();

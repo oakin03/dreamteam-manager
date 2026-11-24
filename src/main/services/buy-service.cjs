@@ -2,6 +2,7 @@ const crypto = require('crypto');
 const { GameSocket } = require('./game-socket.cjs');
 const { WIDE, eachAtOnce, eachWithSocket } = require('./wide.cjs');
 const { OwnedSwap, isOwnedError } = require('./owned-swap.cjs');
+const { pageSizeOf, isLastPage } = require('./market-pages.cjs');
 
 // Buying from the Trading Hall and Auto Buy, over the game's /socket/:
 //   market:buyPlayer {userId, ticketId}            -> market:buyResult {success, message, retryAfter (ms)}
@@ -17,8 +18,14 @@ const WRITE_ATTEMPTS = 4;
 const IDLE_CLOSE_MS = 60000;
 const PARK_PRICE = 9999999;   // Auto Buy lists a bought player here until the user prices it
 const PAYMENT_MODE = { APK: 'APK_TICKET', TIX: 'TICKET' };
-const SEARCH_PAGE_SIZE = 8;
-const SEARCH_MAX_PAGES = 12;
+// Auto Buy scan (user 2026-11-24 "en hızlı, hatasız"): the watched players are searched by name
+// on SCAN_SOCKETS anonymous connections at once (one request in flight per connection: the reply
+// has no id). A search reads pages (cheapest first) only while they can still hold a listing at or
+// under the player's price limit; every DEEP_EVERY-th scan reads every page, for the Trading Hall.
+const SEARCH_MAX_PAGES = 40;
+const SCAN_SOCKETS = 8;
+const DEEP_EVERY = 10;
+const MIN_INTERVAL_SEC = 1;
 const taskOf = source => source === 'auto' ? 'Auto Buy' : source === 'trade' ? 'Auto Trade' : source === 'scout' ? 'Scout Avcısı' : 'Trading Hall';
 const maxPrice = tickets => tickets.reduce((m, t) => Math.max(m, Number(t.price) || 0), 0);
 const CURRENCY = { APK_TICKET: 'APK', TICKET: 'TIX' };
@@ -140,20 +147,22 @@ class BuyService {
   }
   // @strip-begin(basic)
 
-  // Every page of the name search (8 listings a page, cheapest first). A name search
-  // also returns players with similar names, so the first page alone could hide this
-  // player's listings. Stops at the last page or after SEARCH_MAX_PAGES; then
-  // `cutoff` is the highest price read (the Trading Hall keeps what lies above it).
-  async _searchAll(anon, row, signal) {
+  // The name search, cheapest first (a name search also returns players with similar names, so
+  // the first page alone could hide this player's listings). Pages are read up to the last one, or
+  // with `stopAbove` until a page ends above that price (nothing after it can be cheaper), or
+  // SEARCH_MAX_PAGES. `cutoff` is the highest price read when not every page was (the Trading
+  // Hall keeps what lies above it); null: page 1 could not be read.
+  async _searchAll(anon, row, signal, { stopAbove = Infinity } = {}) {
     const tickets = [];
     let complete = false;
+    let size = 1;
     for (let page = 1; page <= SEARCH_MAX_PAGES; page++) {
-      const reply = await anon.call('market:getMarketPlayers', { page, search: row.name, sort: 'asc', paymentMode: PAYMENT_MODE[row.currency], basePlayersOnly: false }, 'market:marketPlayersData', { signal, timeoutMs: 15000 }).catch(() => null);
-      if (!reply?.tickets) return page === 1 ? null : { tickets, complete: false, cutoff: maxPrice(tickets) };
+      const reply = await anon.call('market:getMarketPlayers', { page, search: row.name, sort: 'asc', paymentMode: PAYMENT_MODE[row.currency], basePlayersOnly: false }, 'market:marketPlayersData', { signal, timeoutMs: 15000 }).catch(error => { if (error?.name === 'AbortError') throw error; return null; });
+      if (!Array.isArray(reply?.tickets)) return page === 1 ? null : { tickets, complete: false, cutoff: maxPrice(tickets) };
+      if (page === 1) size = pageSizeOf(reply);
       tickets.push(...reply.tickets);
-      const total = Number(reply.total);
-      const lastPage = reply.tickets.length < SEARCH_PAGE_SIZE || (Number.isFinite(total) && total > 0 && page * SEARCH_PAGE_SIZE >= total);
-      if (lastPage) { complete = true; break; }
+      if (isLastPage(reply, page, size, tickets.length)) { complete = true; break; }
+      if (maxPrice(reply.tickets) > stopAbove) break;
     }
     return { tickets, complete, cutoff: complete ? Infinity : maxPrice(tickets) };
   }
@@ -518,12 +527,15 @@ class BuyService {
   }
 
   async _findListing(conn, entry, signal) {
-    for (let page = 1; page <= 20; page++) {
+    let size = 1, read = 0;
+    for (let page = 1; page <= 40; page++) {
       this._touch(conn.accountId);
       const d = await conn.socket.call('market:getMyPlayerListings', { userId: conn.userId, page, search: entry.name, basePlayersOnly: false }, 'market:myPlayerListingsData', { signal });
       const hit = (d?.tickets || []).find(t => t.playerId === entry.playerId && t.status === 'LISTED');
       if (hit) return hit;
-      if ((d?.tickets || []).length < 8) return null;
+      if (page === 1) size = pageSizeOf(d);
+      read += (d?.tickets || []).length;
+      if (isLastPage(d, page, size, read)) return null;
     }
     return null;
   }
@@ -669,7 +681,7 @@ class BuyService {
     if (incomplete.length) throw new Error(`Fill in Salary ≤, Price ≤ and the quantity (or tick Unlimited) for every player: ${incomplete.map(r => r.name).join(', ')}`);
     const rows = active.filter(r => !rowDone(r));
     if (!rows.length) throw new Error('Every player on the list was already bought in the asked quantity.');
-    const interval = Math.max(3, Math.min(600, Math.round(Number(intervalSec) || DEFAULT_INTERVAL_SEC)));
+    const interval = Math.max(MIN_INTERVAL_SEC, Math.min(600, Math.round(Number(intervalSec) || DEFAULT_INTERVAL_SEC)));
     this.setConfig({ accountOrder: order, intervalSec: interval });
     this.controller = new AbortController();
     this.auto = { status: 'running', startedAt: new Date(this.now()).toISOString(), cycle: 0, bought: 0, spent: { APK: 0, TIX: 0 }, balances: {}, lastScanAt: null, nextScanAt: null, message: null };
@@ -683,18 +695,25 @@ class BuyService {
         this._log('error', 'ab.failed', { error: error.message }, `Auto Buy stopped: ${error.message}`);
         this.onAttention?.('buyError', error.message);
       })
-      .finally(() => { this.controller = null; this.auto.nextScanAt = null; this._closeAll(); try { this.anon?.close(); } catch {} this.anon = null; this.onChanged(); });
+      .finally(() => { this.controller = null; this.auto.nextScanAt = null; this._closeAll(); this._closePool(); this.onChanged(); });
     return this.snapshot();
   }
 
   stopAuto() { this.controller?.abort(); return this.snapshot(); }
 
-  async _anonSocket(signal) {
-    if (this.anon?.socket?.connected) return this.anon;
-    try { this.anon?.close(); } catch {}
-    this.anon = await GameSocket.open({ createSocket: this.createSocket, signal });
-    return this.anon;
+  // The scan connections (no login). The first one must open (else the game is unreachable and
+  // the caller waits); the others are opened next to it and a refused one is simply left out.
+  async _anonPool(signal) {
+    const pool = (this.pool || []).filter(gs => gs?.socket?.connected || (gs?.close?.(), false));
+    if (!pool.length) pool.push(await GameSocket.open({ createSocket: this.createSocket, signal }));
+    const missing = Math.max(0, SCAN_SOCKETS - pool.length);
+    const extra = await Promise.all(Array.from({ length: missing }, () => GameSocket.open({ createSocket: this.createSocket, signal, retries: 0 }).catch(() => null)));
+    if (signal?.aborted) { extra.forEach(gs => { try { gs?.close(); } catch {} }); throw abortError(); }
+    pool.push(...extra.filter(Boolean));
+    this.pool = pool;
+    return pool;
   }
+  _closePool() { for (const gs of this.pool || []) { try { gs.close(); } catch {} } this.pool = null; }
 
   async _autoLoop(order, interval, signal) {
     const balances = {};
@@ -726,9 +745,9 @@ class BuyService {
       // The game can be unreachable for a few minutes (seen 04:00–04:04 TR): wait and
       // try again instead of stopping Auto Buy.
       if (this.gameHealth?.isDown()) { this.auto.offlineSince = this.auto.offlineSince || new Date(this.now()).toISOString(); this.onChanged(); await this.gameHealth.waitUp(signal); }
-      let anon;
+      let pool;
       try {
-        anon = await this._anonSocket(signal);
+        pool = await this._anonPool(signal);
         if (this.auto.offlineSince) {
           this._log('success', 'ab.online', {}, 'Connection to the game is back · Auto Buy continues');
           this.auto.offlineSince = null;
@@ -741,8 +760,7 @@ class BuyService {
           this._log('warning', 'ab.offline', { error: error.message }, `Game not reachable (${error.message}) · retrying every ${OFFLINE_RETRY_SEC} s`);
         }
         this.auto.message = error.message;
-        try { this.anon?.close(); } catch {}
-        this.anon = null;
+        this._closePool();
         // With the shared check, wait until one probe gets through (every 2 minutes).
         if (this.gameHealth) {
           this.gameHealth.reportDown('Auto Buy', error);
@@ -754,8 +772,7 @@ class BuyService {
         if (this.now() - Date.parse(this.auto.offlineSince) > OFFLINE_GIVE_UP_MS) throw new Error(`The game was not reachable for ${Math.round(OFFLINE_GIVE_UP_MS / 60000)} minutes: ${error.message}`);
         this.auto.nextScanAt = new Date(this.now() + this.timing.offlineRetryMs).toISOString();
         this.onChanged();
-        try { this.anon?.close(); } catch {}
-        this.anon = null;
+        this._closePool();
         await sleep(this.timing.offlineRetryMs, signal);
         continue;
       }
@@ -763,17 +780,23 @@ class BuyService {
       // player by player while scanning made the hall jump around (user 2026-10-30).
       const scans = [];
       const boughtTickets = new Set();
-      const searched = new Map(); // playerId:currency → reply (salary ranges of one player share one search)
+      const cycleStart = this.now();
+      const deep = this.auto.cycle % DEEP_EVERY === 1;
+      // one search per player and currency (the salary ranges of a player share it)
+      const groups = new Map();
       for (const row of rows) {
-        if (signal.aborted) throw abortError();
         if (!ok.has(row.currency)) continue;
         const key = `${row.playerId}:${row.currency}`;
-        const first = !searched.has(key);
-        const reply = first ? await this._searchAll(anon, row, signal) : searched.get(key);
-        searched.set(key, reply);
-        if (reply && first) scans.push({ playerIds: [row.playerId], currency: row.currency, tickets: reply.tickets.filter(t => (t.playerId || t.player?.id) === row.playerId), scope: { complete: reply.complete, cutoff: reply.cutoff } });
-        // the hall follows each player as soon as it is read (not only at the end of the cycle)
-        if (reply && first) { const sc = scans[scans.length - 1]; try { this.onScan?.(sc.playerIds, sc.currency, sc.tickets.filter(t => !boughtTickets.has(t.id)), sc.scope, { last: true }); } catch {} }
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(row);
+      }
+      // Buying goes one player at a time (balances, account choice and the quantities are
+      // shared); the searches go on meanwhile.
+      let buyChain = Promise.resolve();
+      const oneAtATime = fn => { const p = buyChain.then(fn); buyChain = p.catch(() => {}); return p; };
+      const buyRow = async (row, reply) => {
+        if (signal.aborted) throw abortError();
+        if (rowDone(this._data().watch.find(w => w.id === row.id) || row)) return;
         for (const ticket of matchingTickets(row, reply?.tickets)) {
           if (failedTickets.has(ticket.id) || boughtTickets.has(ticket.id)) continue;
           const price = Number(ticket.price);
@@ -788,7 +811,7 @@ class BuyService {
             const accountId = pickAccount(order, balances, row.currency, price, tried);
             if (!accountId) break;
             tried.add(accountId);
-            const r = await this.buy(accountId, ticketFromMarket(ticket), { source: 'auto', autoList: true, signal }).catch(error => ({ ok: false, message: error.message }));
+            const r = await this.buy(accountId, ticketFromMarket(ticket), { source: 'auto', autoList: true, signal }).catch(error => { if (error?.name === 'AbortError') throw error; return { ok: false, message: error.message }; });
             const fresh = await this._balance(accountId, this.conns.get(accountId), signal).catch(() => null);
             if (fresh) balances[accountId] = fresh;
             if (r.ok) {
@@ -804,7 +827,7 @@ class BuyService {
             // "already own this player", not enough funds, roster full: try the next account.
             reasons.add(/already own/i.test(r.message || '') ? 'owned' : /insufficient|not enough|balance|fund/i.test(r.message || '') ? 'funds' : 'other');
           }
-          if (bought) { if (rowDone(this._data().watch.find(w => w.id === row.id) || row)) break; continue; }
+          if (bought) { if (rowDone(this._data().watch.find(w => w.id === row.id) || row)) return; continue; }
           failedTickets.add(ticket.id);
           if (gone) continue;
           // No account could buy it (they already own the player and/or cannot pay):
@@ -818,11 +841,56 @@ class BuyService {
           this._log('error', 'ab.cannotBuy', { name: row.name, price, currency: row.currency, reason: why, reasonTr, reasonEn, tried: tried.size - triedBefore }, `No account could buy ${row.name} (${price} ${row.currency}) · ${why}`);
           this.onAttention?.('buyCannot', `${row.name} · ${price} ${row.currency}`);
           this.onChanged();
-          if (tried.size === triedBefore) break; // nobody can pay this or a pricier listing
+          if (tried.size === triedBefore) return; // nobody can pay this or a pricier listing
         }
-        this.auto.balances = { ...balances };
-        this.onChanged();
-      }
+      };
+      const searchGroup = async (gs, group) => {
+        const row = group[0];
+        // reads only what can be bought (deep scan: every page)
+        const stopAbove = deep ? Infinity : Math.max(...group.map(r => Number(r.maxPrice)));
+        const reply = await this._searchAll(gs, row, signal, { stopAbove });
+        if (!reply) return false;
+        const sc = { playerIds: [row.playerId], currency: row.currency, tickets: reply.tickets.filter(t => (t.playerId || t.player?.id) === row.playerId), scope: { complete: reply.complete, cutoff: reply.cutoff } };
+        scans.push(sc);
+        // the hall follows each player as soon as it is read (not only at the end of the cycle)
+        try { this.onScan?.(sc.playerIds, sc.currency, sc.tickets.filter(t => !boughtTickets.has(t.id)), sc.scope, { last: true }); } catch {}
+        if (group.some(r => matchingTickets(r, reply.tickets).length)) {
+          await oneAtATime(async () => {
+            for (const r of group) await buyRow(r, reply);
+            this.auto.balances = { ...balances };
+            this.onChanged();
+          });
+        }
+        return true;
+      };
+      // the workers: each takes the next player on its own connection; a connection that drops
+      // is opened again once and the player is searched again on it
+      const jobs = [...groups.values()];
+      let next = 0;
+      let missed = 0;
+      await Promise.all(pool.map(async (first, w) => {
+        let gs = first;
+        while (next < jobs.length) {
+          if (signal.aborted) throw abortError();
+          const group = jobs[next++];
+          let done = gs ? await searchGroup(gs, group) : false;
+          if (!done && !signal.aborted) {
+            try { gs?.close(); } catch {}
+            gs = await GameSocket.open({ createSocket: this.createSocket, signal, retries: 0 }).catch(error => { if (error?.name === 'AbortError') throw error; return null; });
+            pool[w] = gs;
+            if (gs) done = await searchGroup(gs, group);
+          }
+          if (!done) missed++;
+        }
+      }));
+      await buyChain;
+      this.pool = pool.filter(Boolean);
+      this.auto.lastCycleMs = this.now() - cycleStart;
+      this.auto.lastCycle = { players: jobs.length, missed, deep, sockets: this.pool.length };
+      // at most once in 10 minutes (with a 1 s interval a lasting problem would flood the log)
+      if (missed && this.now() - (this._missedLogAt || 0) > 600000 && (this._missedLogAt = this.now())) this._log('warning', 'ab.missed', { count: missed, total: jobs.length }, `${missed}/${jobs.length} player(s) could not be read in this scan · they are read again in the next one`);
+      this.auto.balances = { ...balances };
+      this.onChanged();
       scans.forEach((s, i) => { try { this.onScan?.(s.playerIds, s.currency, s.tickets.filter(t => !boughtTickets.has(t.id)), s.scope, { last: i === scans.length - 1 }); } catch {} });
       this.auto.lastScanAt = new Date(this.now()).toISOString();
       this.auto.nextScanAt = new Date(this.now() + interval * 1000).toISOString();

@@ -16,7 +16,7 @@ const R = require('./trade-rules.cjs');
 // market:sellPlayer, getTeamOptimized, getUserBasicInfo, Trade Center (trade-game-client).
 const ROUND_MAX = 5;
 const BUY_GAP_MS = 3000;          // the game wants ≥ 2 s between purchases
-const PAGE_SIZE = 8;
+const { pageCount } = require('./market-pages.cjs');
 const ACCEPT_WAIT_MS = 7000;
 const ACCEPT_TRIES = 3;
 const MAX_ROUNDS = 500;
@@ -157,7 +157,7 @@ class TkTransferService {
   async _listings(c) {
     const page = n => c.conn.call('market:getMyPlayerListings', { userId: c.userId, page: n, search: '', basePlayersOnly: false }, 'market:myPlayerListingsData', { signal: c.signal, timeoutMs: 20000 });
     const first = await page(1);
-    const pages = Math.max(1, Math.ceil(Number(first?.total || 0) / PAGE_SIZE));
+    const pages = pageCount(first);
     const rows = (first?.tickets || []).map(ticketRow);
     for (let n = 2; n <= pages; n++) rows.push(...((await page(n))?.tickets || []).map(ticketRow));
     const seen = new Set();

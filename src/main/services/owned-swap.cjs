@@ -24,7 +24,7 @@ const listingKind = (...a) => require('./market-service.cjs').listingKind(...a);
 //   updatePlayerPositions {userId, starters[{playerId, slot}], bench[{playerId, benchSlot}]} (ack)
 const PARK_PRICE = 9999999;
 const ROSTER_MIN = 5;
-const PAGE_SIZE = 8;
+const { pageSizeOf, isLastPage } = require('./market-pages.cjs');
 const TIMEOUT_MS = 20000;
 const EQUIP_SLOTS = [['HEADBAND', 'headbandInventoryId'], ['JERSEY', 'jerseyInventoryId'], ['PANTS', 'pantsInventoryId'], ['SHOES', 'shoesInventoryId'], ['SLEEVES', 'sleevesInventoryId']];
 const PAYMENT_MODE = { APK: 'APK_TICKET', TIX: 'TICKET' };
@@ -98,11 +98,14 @@ class OwnedSwap {
   async listings() {
     this.onActivity();
     const rows = [];
-    for (let page = 1; page <= 30; page++) {
+    let size = 1, read = 0;
+    for (let page = 1; page <= 40; page++) {
       const d = await this.gs.call('market:getMyPlayerListings', { userId: this.userId, page, search: '', basePlayersOnly: false }, 'market:myPlayerListingsData', { timeoutMs: TIMEOUT_MS });
       this.onActivity();
       for (const t of d?.tickets || []) rows.push(listingRow(t, null));
-      if ((d?.tickets || []).length < PAGE_SIZE || page * PAGE_SIZE >= Number(d?.total || 0)) break;
+      if (page === 1) size = pageSizeOf(d);
+      read += (d?.tickets || []).length;
+      if (isLastPage(d, page, size, read)) break;
     }
     return rows.filter(r => r.status === 'LISTED' || r.status === 'EXPIRED');
   }

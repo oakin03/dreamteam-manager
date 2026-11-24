@@ -11,7 +11,7 @@ const TEXT = {
     title: 'Auto Buy', subtitle: 'Listedeki oyuncular koşulları sağlayınca Trading Hall\'dan otomatik alınır',
     start: 'Auto Buy Başlat', stop: 'Durdur', interval: 'Tarama aralığı (sn)',
     st: { idle: 'Hazır', running: 'Çalışıyor', stopped: 'Durduruldu', error: 'Hata', noFunds: 'Durdu · bakiye yetersiz' },
-    cycle: '{n}. tarama', lastScan: 'son tarama {t}', nextScan: 'sonraki {s} sn', boughtN: '{n} oyuncu alındı', spent: 'harcanan {apk} APK · {tix} TIX', noFunds: 'Hesapların {cur} miktarı yetersiz; listedeki en düşük fiyatı karşılayan hesap kalmadı.',
+    cycle: '{n}. tarama', cycleTook: 'tur {s} sn ({n} oyuncu)', lastScan: 'son tarama {t}', nextScan: 'sonraki {s} sn', boughtN: '{n} oyuncu alındı', spent: 'harcanan {apk} APK · {tix} TIX', noFunds: 'Hesapların {cur} miktarı yetersiz; listedeki en düşük fiyatı karşılayan hesap kalmadı.',
     listSearch: 'Listede ara…', noListMatch: 'Aramaya uyan oyuncu yok.', watch: 'İzleme listesi', watchHint: 'Bir oyuncu ancak Maaş ≤, Fiyat ≤ ve para birimi koşullarının hepsini sağlarsa alınır. Oyuncular sayfasından tek tek ya da toplu eklenebilir.',
     add: 'Oyuncu ekle…', player: 'Oyuncu', value: 'Değer', base: 'Base', maxSalary: 'Maaş aralığı', maxPrice: 'Fiyat ≤', addRange: '+ Maaş aralığı', addRangeHint: 'Bu oyuncu için başka bir maaş aralığı ve fiyat ekle (ör. 0–2318 bir fiyat, 2319–2347 başka fiyat)', rangeOverlap: 'Bu aralık başka bir aralıkla çakışıyor', rangeBad: 'Alt sınır üst sınırdan büyük', minPh: '0', currency: 'Para birimi', active: 'Aktif', incomplete: 'Maaş ≤, Fiyat ≤ ve adet (ya da Sınırsız) girilmeli', qty: 'Adet', unlimited: 'Sınırsız', boughtOf: '{n}/{q} alındı', boughtAll: '{n} alındı', qtyDone: 'Tamamlandı', resetCount: 'Sayacı sıfırla', needAll: 'Listedeki her aktif oyuncu için Maaş ≤, Fiyat ≤ ve adet girilmeli:', emptyWatch: 'Liste boş. Oyuncular sayfasından ya da yukarıdaki kutudan oyuncu ekle.', clearAll: 'Listeyi temizle', confirmClear: 'İzleme listesindeki tüm oyuncular silinsin mi?',
     accounts: 'Hesap önceliği', accountsHint: 'Alım 1. hesaptan başlar; parası bitince sıradakine geçilir. Satırı basılı tutup sürükleyerek sırala, kutuyla dahil et.', dragHint: 'Basılı tutup sürükle', hiddenLow: '20 APK ve 20 TIX altında olan {n} hesap gösterilmiyor (alım yapamaz).', include: 'Dahil', apk: 'APK', tix: 'TIX',
@@ -22,7 +22,7 @@ const TEXT = {
     title: 'Auto Buy', subtitle: 'Players on the list are bought from the Trading Hall when every condition holds',
     start: 'Start Auto Buy', stop: 'Stop', interval: 'Scan every (s)',
     st: { idle: 'Ready', running: 'Running', stopped: 'Stopped', error: 'Error', noFunds: 'Stopped · not enough funds' },
-    cycle: 'scan {n}', lastScan: 'last scan {t}', nextScan: 'next in {s}s', boughtN: '{n} bought', spent: 'spent {apk} APK · {tix} TIX', noFunds: 'The accounts do not have enough {cur}; no account can pay the lowest price on the list.',
+    cycle: 'scan {n}', cycleTook: 'scan took {s}s ({n} players)', lastScan: 'last scan {t}', nextScan: 'next in {s}s', boughtN: '{n} bought', spent: 'spent {apk} APK · {tix} TIX', noFunds: 'The accounts do not have enough {cur}; no account can pay the lowest price on the list.',
     listSearch: 'Search the list…', noListMatch: 'No player on the list matches.', watch: 'Watch list', watchHint: 'A player is bought only when Salary ≤, Price ≤ and the currency all hold. Add players one by one or in bulk from the Players page.',
     add: 'Add a player…', player: 'Player', value: 'Value', base: 'Base', maxSalary: 'Salary range', maxPrice: 'Price ≤', addRange: '+ Salary range', addRangeHint: 'Add another salary range with its own price for this player (e.g. 0–2318 one price, 2319–2347 another)', rangeOverlap: 'This range overlaps another one', rangeBad: 'The lower limit is above the upper limit', minPh: '0', currency: 'Currency', active: 'Active', incomplete: 'Fill in Salary ≤, Price ≤ and the quantity (or Unlimited)', qty: 'Quantity', unlimited: 'Unlimited', boughtOf: '{n}/{q} bought', boughtAll: '{n} bought', qtyDone: 'Done', resetCount: 'Reset counter', needAll: 'Salary ≤, Price ≤ and the quantity are needed for every active player:', emptyWatch: 'The list is empty. Add players from the Players page or the box above.', clearAll: 'Clear list', confirmClear: 'Remove every player from the watch list?',
     accounts: 'Account priority', accountsHint: 'Buying starts with account 1; when it runs out of funds the next one is used. Press and drag a row to sort, include with the box.', dragHint: 'Press and drag', hiddenLow: '{n} account(s) with less than 20 APK and 20 TIX are not shown (they cannot buy).', include: 'Use', apk: 'APK', tix: 'TIX',
@@ -83,7 +83,7 @@ export default function AutoBuyPage({ state, t, toast }) {
   return <div className="page autobuy-page">
     <div className="page-title"><div><h1>{x.title}</h1><span className="subtitle">{x.subtitle}</span></div>
       <div className="toolbar">
-        <label className="ab-interval"><span>{x.interval}</span><input type="number" min="3" max="600" value={interval} disabled={running} onChange={e => setIntervalSec(e.target.value)} /></label>
+        <label className="ab-interval"><span>{x.interval}</span><input type="number" min="1" max="600" value={interval} disabled={running} onChange={e => setIntervalSec(e.target.value)} /></label>
         {running ? <button className="btn danger-soft" onClick={() => run(() => api.buy.stopAuto())}>{x.stop}</button>
           : <button className="btn primary" disabled={!chosen.length || !watch.some(w => w.enabled !== false) || watch.some(w => w.enabled !== false && !ready(w))} title={watch.some(w => w.enabled !== false && !ready(w)) ? `${x.needAll} ${watch.filter(w => w.enabled !== false && !ready(w)).map(w => w.name).join(', ')}` : undefined} onClick={() => run(() => api.buy.startAuto({ accountIds: chosen, intervalSec: Number(interval) }))}>{x.start}</button>}
       </div></div>
@@ -91,6 +91,7 @@ export default function AutoBuyPage({ state, t, toast }) {
     <div className={`panel ab-status ${tone}`}>
       <span className={`pill ${tone}`}><i />{x.st[auto.status] || auto.status}</span>
       {auto.cycle > 0 && <span>{fill(x.cycle, { n: auto.cycle })}</span>}
+      {auto.lastCycleMs != null && <span className="muted-text">{fill(x.cycleTook, { s: (auto.lastCycleMs / 1000).toFixed(1), n: auto.lastCycle?.players ?? 0 })}</span>}
       {auto.lastScanAt && <span className="muted-text">{fill(x.lastScan, { t: new Date(auto.lastScanAt).toLocaleTimeString() })}</span>}
       {running && nextIn != null && <span className="muted-text">{fill(x.nextScan, { s: nextIn })}</span>}
       {auto.bought != null && auto.startedAt && <b>{fill(x.boughtN, { n: auto.bought })}</b>}
