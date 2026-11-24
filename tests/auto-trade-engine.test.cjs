@@ -427,6 +427,29 @@ test("friend boards: main signs cards off its friends' boards, a Harcayıcı tak
   assert.ok(logs.some(l => l.code === 'at2.spenderSigned') && logs.some(l => l.code === 'at2.friendSigned'));
 });
 
+test("main in batches (user 2026-11-24): 5 Satılabilir go to a Harcayıcı in one trade, cards are made 5 at a time, not 1-2 whenever the roster fills", async () => {
+  const sell = ['s1', 's2', 's3', 's4', 's5', 's6'].map(id => player(id, 300));
+  const cards = ['c1', 'c2', 'c3', 'c4', 'c5', 'c6', 'c7'].map(id => player(id, 400));
+  const { world, engine, logs } = setup({
+    M: { funds: 90000, lists: [[]], friends: ['F', 'G'] },
+    F: { funds: 1, name: 'Friendly', lists: [sell], friends: ['M'] },
+    G: { funds: 1, name: 'Gamma', lists: [cards], friends: ['M'] },
+    A: { funds: 90000, lists: [[]], friends: [] },
+    S: { funds: 90000, friends: [] }
+  }, { accounts: ['M', 'A', 'S'], accountRoles: { S: 'spender' }, roles: Object.fromEntries([...sell.map(p => [p.id, 'sellable']), ...cards.map(p => [p.id, 'card'])]), friends: true });
+  await engine.start({ accountIds: ['M', 'A'], mainToSideRoleIds: ['sellable', 'stok'], sideToMainRoleIds: ['card'], maxPrice: 100 });
+  const run = await finish(engine);
+  assert.equal(run.status, 'done', JSON.stringify(run.error));
+  const conv = logs.filter(l => l.code === 'at2.converted').map(l => l.params.count);
+  assert.deepEqual(conv, [5, 2], 'cards made 5 at a time, the rest at the end of the turn');
+  const at = code => logs.findIndex(l => l.code === code);
+  const firstGive = logs.findIndex(l => l.code === 'at2.toSpender');
+  const sixth = logs.findIndex(l => l.code === 'at2.friendSigned' && l.params.player === 's6');
+  assert.ok(firstGive >= 0 && sixth > firstGive, 'the first 5 Satılabilir left before the 6th was signed');
+  assert.ok(sell.every(p => holds(world.users.S, p.id)), 'all of them reached the Harcayıcı');
+  assert.ok(at('at2.converted') >= 0);
+});
+
 // a Harcayıcı has the player on its bench or (after the turn) on the market
 const holds = (u, id) => u.bench.some(p => p.id === id) || (u.listed || []).some(l => l.id === id);
 

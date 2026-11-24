@@ -27,6 +27,7 @@ const DEFAULTS = {
 };
 const LIST_DEFAULTS = { sellable: { price: 20, currency: 'APK' }, stock: { price: 99999, currency: 'TIX' } };
 const MAX_TRADE_ROUNDS = 12;
+const CONVERT_BATCH = 5; // main turns its card players into cards this many at a time (user 2026-11-24)
 const SPENDER_PRICE = 999999; // a Harcayıcı lists its overflow at this price by default (TIX)
 
 // Sides scout at the same time (user 2026-11-07: 141 accounts one by one = 4+ hours a cycle);
@@ -406,6 +407,7 @@ class AutoTradeEngine {
       config, accounts, cycle: 1, stage: 'prep', sidesDone: [], sidesSkipped: [], currentSideId: null, activeSides: [],
       excluded: {}, listingRequest: null, cardCounts: {}, nextAt: null, activeMs: 0, runningSince: null, turnMs: 0, turns: 0, wrapUp: null
     };
+    this._mainBatchFloor = 0;
     // rows of a fresh Hazırlık are taken over by the prep stage
     const prep = config.prepOnly ? null : this._freshPrep();
     if (prep) { this.state.prepFrom = { at: prep.at, accounts: prep.accounts }; this.prep.usedBy = this.state.id; }
@@ -1110,6 +1112,7 @@ class AutoTradeEngine {
   // and 5 Satılabilir / Stok go to a Harcayıcı who lists them, before it signs any more.
   // Returns 'skipped' when the side cannot pay its trade, true when something left.
   async _batch(id, role, signal) {
+    if (role === 'main') return this._mainBatch(signal);
     if (role !== 'side') return false;
     const rows = () => Object.values(this._acc(id).players || {});
     let moved = false;
@@ -1121,6 +1124,33 @@ class AutoTradeEngine {
     if (this._friendsOn() && this._accountRoleId(id) !== 'spender' && rows().filter(r => r.dir === 'side' && r.status === 'keep').length >= R.TRADE_MAX) {
       await this._sideToSpender(id, signal);
       await this._flushSpenders(signal);
+      moved = true;
+    }
+    return moved;
+  }
+
+  // Main in batches too (user 2026-11-24): its first turn reads every friend's board and the
+  // Satılabilir / Stok it signed stayed on it until the end of the turn, so a full roster left
+  // room for only 1-2 card players and Make ran again and again for 1-2 cards. Now TRADE_MAX
+  // Satılabilir / Stok go to a Harcayıcı in one trade and CONVERT_BATCH card players are made
+  // into cards at once, without waiting for the roster to fill.
+  async _mainBatch(signal) {
+    const mainId = this.state.config.mainId;
+    const main = this.conns.get(mainId);
+    if (!main) return false;
+    let moved = false;
+    const forSpenders = async () => this._ours(mainId, R.rosterOf(await main.roster()), 'side').length;
+    const waiting = this._friendsOn() ? await forSpenders() : 0;
+    // when the Harcayıcılar could not take them (TK, rules) it is tried again only after
+    // TRADE_MAX more have come, not after every signing
+    if (waiting >= Math.max(R.TRADE_MAX, this._mainBatchFloor || 0)) {
+      await this._mainToSpenders(signal);
+      const left = await forSpenders();
+      this._mainBatchFloor = left >= waiting ? left + R.TRADE_MAX : 0;
+      moved = true;
+    }
+    if (this._ours(mainId, R.rosterOf(await main.roster()), 'main').length >= CONVERT_BATCH) {
+      await this._convertMain(signal);
       moved = true;
     }
     return moved;
@@ -2007,6 +2037,8 @@ this._log('info', 'at2.leftovers', { count: spenders, cheap, kept, seconds: Math
           ? await this._mainLock.run(() => this._friendSign(mainId, 'main', ownerUser, ownerName, agent, roleMap, roleNames, signal))
           : await this._friendSign(id, role, ownerUser, ownerName, agent, roleMap, roleNames, signal);
         if (ok) done.add(agent.id);
+        // signed for main (main's own turn, or a side reaching main's friend): main's batches
+        if (ok && viaMain) await this._mainLock.run(() => this._mainBatch(signal));
         if (ok && !viaMain && await this._batch(id, role, signal) === 'skipped') return;
       }
       if (!board.freeAgents.some(a => !a.isSigned && !done.has(a.id) && R.classify(a, this.state.config, roleMap))) untilRefresh();
@@ -2064,6 +2096,16 @@ this._log('info', 'at2.leftovers', { count: spenders, cheap, kept, seconds: Math
   // A full roster: main converts or unloads to sides; a side gives to main or lists.
   async _makeRoom(id, role, signal) {
     if (role === 'main') {
+      // the bigger group leaves first (like a side): 4 Satılabilir waiting and 1 card player →
+      // one trade to a Harcayıcı, the card batch keeps growing (user 2026-11-24)
+      const mainId = this.state.config.mainId;
+      const full = R.rosterOf(await this.conns.get(mainId).roster());
+      const toCards = this._ours(mainId, full, 'main').length;
+      const toSpender = this._friendsOn() ? this._ours(mainId, full, 'side').length : 0;
+      if (toSpender > toCards) {
+        await this._mainToSpenders(signal);
+        if (R.rosterOf(await this.conns.get(mainId).roster()).total < R.ROSTER_MAX) return true;
+      }
       if (await this._convertMain(signal)) return true;
       // Satılabilir / Stok fill main: a Harcayıcı takes them first, the sides only after
       await this._mainToSpenders(signal);

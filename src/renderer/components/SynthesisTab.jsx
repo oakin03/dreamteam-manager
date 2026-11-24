@@ -11,6 +11,7 @@ const TEXT = {
     levels: 'Denenecek seviyeler', team: 'Takımlı oyuncuları sentezle', teamHint: 'Aynı oyuncudan aynı seviyede en az 4 kart varsa 4\'erli birleştirir (9 kart → 2 sentez). 1★→2★ her zaman başarılı, 2★ ve üstü %75.',
     maxedInfo: 'Dahil edilen oyuncular ({n})', maxedNone: 'Son Kartlar taramasında 5★ oyuncu yok.', name: 'İsim', teamCol: 'Takım', starsCol: 'Yıldız (aktif)',
     maxed: '5★ oyuncuların kartlarını takımsız say', maxedHint: '5★ aktifleştirilmiş oyuncuların 1–4★ kartları da takımsız oyuncu gibi birleştirilir (son Kartlar taramasındaki yıldızlara göre).',
+    both: 'İkisini de yap', bothHint: 'Önce takımsızları seçili bütün seviyelerde tamamlar, bitince takımlıları aynı seviyelerle başlatır. İki ayrı düğmeye sırayla basmakla aynıdır; Durdur ikincisini de iptal eder.', thenTeam: 'Sonra: takımlı',
     noTeam: 'Takımsız oyuncuları birleştir', noTeamHint: 'Her sentezde en çok kartı olan 4 farklı No Team oyuncudan birer kart kullanır (oyunun sırası: adet, sonra isim). Başarılıysa rastgele bir üst seviye kart gelir; 4 farklı oyuncu kalmayınca biter.',
     waiting: 'Oyun bekletiyor · {s} sn', stop: 'Durdur', running: 'Çalışıyor · {lv}★→{next}★', done: 'Tamamlandı', stopped: 'Durduruldu', error: 'Hata', live: 'Şu an', lastResult: 'Son işlem', used: 'Kullanılan 4 kart', got: 'Gelen kart', fail: 'Başarısız', returned: 'geri verildi', none: '—',
     history: 'Sentez geçmişi (bu çalıştırma)', obtained: 'Elde edilen kartlar', obtainedHint: 'Bu çalıştırmada gelen ve hâlâ sende olan kartlar; sonradan başka sentezde kullanılanlar listeden düşer.', noObtained: 'Henüz kart elde edilmedi.',
@@ -21,6 +22,7 @@ const TEXT = {
     levels: 'Levels to try', team: 'Synthesize team players', teamHint: 'Combines 4 cards of the same player at the same level (9 cards → 2 syntheses). 1★→2★ always works, 2★ and up 75%.',
     maxedInfo: 'Players included ({n})', maxedNone: 'No 5★ players in the last Cards scan.', name: 'Name', teamCol: 'Team', starsCol: 'Stars (active)',
     maxed: 'Count the cards of 5★ players as No Team', maxedHint: 'The 1–4★ cards of players activated to 5★ are combined like No Team cards too (stars from the last Cards scan).',
+    both: 'Do both', bothHint: 'First finishes the No Team players on all selected levels, then starts the team players with the same levels. The same as pressing the two buttons one after the other; Stop cancels the second one too.', thenTeam: 'Then: team players',
     noTeam: 'Combine No Team players', noTeamHint: 'Each synthesis uses one card each of the 4 different No Team players with the most cards (the game\'s order: quantity, then name). Success gives a random next-level card; it ends when fewer than 4 different players are left.',
     waiting: 'The game asks to wait · {s} s', stop: 'Stop', running: 'Running · {lv}★→{next}★', done: 'Completed', stopped: 'Stopped', error: 'Error', live: 'Now', lastResult: 'Last synthesis', used: 'The 4 cards used', got: 'Card received', fail: 'Failed', returned: 'given back', none: '—',
     history: 'Synthesis history (this run)', obtained: 'Cards obtained', obtainedHint: 'Cards this run gave you that you still own; cards used again later drop off the list.', noObtained: 'No cards obtained yet.',
@@ -57,10 +59,11 @@ export default function SynthesisTab({ state, t, toast }) {
           {infoOpen && <div className="synth-info-pop panel"><b>{fill(x.maxedInfo, { n: maxedPlayers.length })}</b>
             {maxedPlayers.length ? <table><thead><tr><th>{x.name}</th><th>{x.teamCol}</th><th>{x.starsCol}</th></tr></thead><tbody>{maxedPlayers.map(p => <tr key={p.playerId || p.key}><td>{p.name}</td><td>{p.teamName || p.team || '—'}</td><td className="star-value">{stars(Number(p.stars))}</td></tr>)}</tbody></table> : <p className="muted-text">{x.maxedNone}</p>}
           </div>}</span><small>{x.maxedHint}</small></div>
+      <div className="panel synth-action"><button className="btn primary" disabled={running || !levels.size} onClick={() => start('both')}>{x.both}</button><small>{x.bothHint}</small></div>
     </div>
 
     {run && <div className={`panel synth-live ${tone}`}>
-      <div className="synth-live-head"><span className={`pill ${tone}`}><i />{statusText}</span><b>{run.mode === 'team' ? x.modeTeam : x.modeNoTeam}</b><span className="muted-text">{run.accountName}</span>
+      <div className="synth-live-head"><span className={`pill ${tone}`}><i />{statusText}</span><b>{run.mode === 'team' ? x.modeTeam : x.modeNoTeam}</b>{sy.then === 'team' && <span className="pill muted"><i />{x.thenTeam}</span>}<span className="muted-text">{run.accountName}</span>
         <span className="synth-counts">{LEVELS.map(l => <em key={l}>{stars(l)}→{stars(l + 1)} <b className="green-text">{run.counts[l].ok}</b>/<b className="bad-text">{run.counts[l].fail}</b></em>)}</span>
         {run.waitUntil && <span className="pill warn"><i />{fill(x.waiting, { s: Math.max(0, Math.ceil((Date.parse(run.waitUntil) - Date.now()) / 1000)) })}</span>}{running && <button className="btn danger-soft small" onClick={() => api.synthesis.stop()}>{x.stop}</button>}</div>
       {cur && <div className="synth-flow">

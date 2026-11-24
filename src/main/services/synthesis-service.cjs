@@ -56,7 +56,7 @@ class SynthesisService {
   }
 
   snapshot() {
-    return { running: Boolean(this.controller), run: this.run ? JSON.parse(JSON.stringify(this.run)) : null, summary: this.store.getSynthesisData?.()?.summary || {}, maxedAsNoTeam: this.store.getSettings?.()?.synthMaxedNoTeam === true };
+    return { running: Boolean(this.controller || this.chain), then: this.chain?.mode || null, run:this.run ? JSON.parse(JSON.stringify(this.run)) : null, summary: this.store.getSynthesisData?.()?.summary || {}, maxedAsNoTeam: this.store.getSettings?.()?.synthMaxedNoTeam === true };
   }
 
   _account() {
@@ -69,10 +69,14 @@ class SynthesisService {
     this.activity.add({ level, accountId: account.id, accountName: account.name, taskName: 'Synthesis', code, params, message });
   }
 
-  stop() { this.controller?.abort(); return this.snapshot(); }
+  stop() { this.chain = null; this.controller?.abort(); return this.snapshot(); }
 
+  // mode 'both' (user 2026-11-24): exactly as if "No Team" was pressed and, when it finished, "Team"
+  // was pressed with the same levels — two ordinary runs one after the other, nothing else differs.
+  // A stop or an error of the first run does not start the second.
   start({ mode, levels } = {}) {
     if (this.controller) throw new Error('Synthesis is already running.');
+    if (mode === 'both') { const snap = this.start({ mode: 'noTeam', levels }); this.chain = { mode: 'team', levels }; return { ...snap, running: true, then: 'team' }; }
     if (!['team', 'noTeam'].includes(mode)) throw new Error('Unknown synthesis mode.');
     const lv = R.LEVELS.filter(l => (levels || R.LEVELS).includes(l));
     if (!lv.length) throw new Error('Select at least one level.');
@@ -94,6 +98,11 @@ class SynthesisService {
         this.controller = null;
         this.onChanged();
         try { await this.onDone?.(); } catch {}
+        // "both": the second run starts like a press of its button once the first one is over
+        const next = this.chain; this.chain = null;
+        if (next && this.run.status === 'done') {
+          try { this.start(next); } catch (error) { this._log(account, 'error', 'sy.failed', { error: error.message }, `Synthesis stopped: ${error.message}`); this.onChanged(); }
+        } else if (next) this.onChanged();
       });
     return this.snapshot();
   }
