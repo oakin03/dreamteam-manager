@@ -1069,3 +1069,40 @@ test('roster signal: listing / trading tells which accounts got room (a trade te
   assert.equal(engine.worksWith('Z'), false);
   engine.controller = null;
 });
+
+// ---------- Hazırlık speed (user 2026-11-24) ----------
+test('Hazırlık: one Make for a full bench instead of one per trade; accounts without a decision are not opened but count as prepared', async () => {
+  const sides = ['A', 'B', 'C', 'D', 'E', 'F', 'G'];
+  const users = { M: { funds: 90000, lists: [[]] }, Z: { funds: 90000, bench: [player('z1', 40)], lists: [[]] } };
+  sides.forEach((id, i) => { users[id] = { funds: 90000, bench: [player('t' + i, 40)], lists: [[]] }; });
+  const roles = Object.fromEntries(sides.map((_, i) => ['t' + i, 'card']));
+  const { world, engine, logs } = setup(users, { roles, accounts: ['M', ...sides, 'Z'] });
+  const benchDecisions = Object.fromEntries(sides.map((id, i) => [id, { ['t' + i]: { action: 'trade' } }]));
+  benchDecisions.Z = { z1: { action: 'none' } };
+  await engine.prepare({ accountIds: ['M', ...sides, 'Z'], mainToSideRoleIds: ['sellable'], sideToMainRoleIds: ['card'], maxPrice: 70, parallelSides: 1, benchDecisions });
+  const run = await finish(engine);
+  assert.equal(run.status, 'done', JSON.stringify(run.error));
+  assert.deepEqual(world.users.M.made.slice().sort(), sides.map((_, i) => 't' + i).sort(), 'every traded player became a card');
+  assert.ok(world.makeCalls.length <= 2, `Make calls: ${JSON.stringify(world.makeCalls)}`);
+  assert.ok(!logs.some(l => l.code === 'at2.opened' && l.accountId === 'Z'), 'Z (no decision) was not opened');
+  assert.ok(!run.config.accountIds.includes('Z'), 'Z is not in the Hazırlık run');
+  assert.ok(engine.snapshot().prep.accountIds.includes('Z'), 'Z still counts as prepared for the start');
+  assert.deepEqual(engine.prepAccounts({ accountIds: ['M', ...sides, 'Z'], benchDecisions }).sort(), ['M', ...sides].sort());
+});
+
+test('Make calls stay under the game limit: at most 8 in a minute, then a wait (no 2-minute refusal)', async () => {
+  const { engine } = setup({ M: { funds: 1, lists: [[]] }, A: { funds: 1, lists: [[]] } }, { accounts: ['M', 'A'] });
+  let now = 0;
+  engine.now = () => now;
+  for (let i = 0; i < 8; i++) await engine._makeSlot(null);
+  const ctrl = new AbortController();
+  let state = 'waiting';
+  const p = engine._makeSlot(ctrl.signal).then(() => { state = 'went'; }, e => { state = e.name; });
+  await new Promise(r => setTimeout(r, 30));
+  assert.equal(state, 'waiting', 'the 9th in the same minute waits');
+  ctrl.abort();
+  await p;
+  assert.equal(state, 'AbortError');
+  now = 60000; // a minute later the old ones are out of the window
+  await engine._makeSlot(null);
+});

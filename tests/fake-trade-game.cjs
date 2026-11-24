@@ -106,6 +106,7 @@ function createWorld(users) {
         if (world.options.makeFails) return reply({ success: false, message: 'Make failed' });
         me.bench = me.bench.filter(x => !p.playerIds.includes(x.id));
         me.made.push(...p.playerIds);
+        (world.makeCalls ||= []).push(p.playerIds.length);
         return reply({ success: true, count: p.playerIds.length });
       }
       case 'market:sellPlayer': {

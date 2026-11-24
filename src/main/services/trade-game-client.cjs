@@ -60,7 +60,11 @@ class TradeGameAccount {
     for (let attempt = 0; ; attempt++) {
       const r = await this.conn.ack(event, payload, { signal: this.signal, timeoutMs: TIMEOUT_MS });
       const wait = waitOf(r);
-      if (r?.success === false && Number.isFinite(wait) && attempt < retries) { await sleep(wait * 1000 + 250, this.signal); continue; }
+      if (r?.success === false && Number.isFinite(wait) && attempt < retries) {
+        if (wait >= 10) this.onWait?.(event, wait, r?.message || r?.error || '');
+        await sleep(wait * 1000 + 250, this.signal);
+        continue;
+      }
       return r;
     }
   }

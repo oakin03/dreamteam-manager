@@ -3979,5 +3979,6 @@
  "{n} player(s) listed": "{n} player ang na-list",
  "{n} player(s) not found on the market (sold or taken off by hand) · removed from the list": "{n} player ang hindi nakita sa market (nabenta o inalis nang mano-mano) · inalis sa listahan",
  "{count}/{total} player(s) could not be read in this scan · they are read again in the next one": "{count}/{total} player ang hindi nabasa sa scan na ito · babasahin ulit sa susunod",
- "scan took {s}s ({n} players)": "inabot ng {s}s ang scan ({n} player)"
+ "scan took {s}s ({n} players)": "inabot ng {s}s ang scan ({n} player)",
+ "The game asks to wait {sec} s ({event}){error}": "Hinihiling ng laro na maghintay ng {sec} s ({event}){error}"
 }

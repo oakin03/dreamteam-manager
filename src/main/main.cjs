@@ -1382,7 +1382,8 @@ function registerIpc() {
   // Hazırlık: a run that only does the bench decisions (list, fire, trade / card to main).
   // Auto Play steps aside on main and the accounts with a decision.
   ipcMain.handle('auto-trade:prepare', async (_event, options) => {
-    if (options.stopConflicts) await stopAutoTradeConflicts(options.accountIds || []);
+    // only main and the accounts with a decision step aside (the others are not touched)
+    if (options.stopConflicts) await stopAutoTradeConflicts(autoTrade.prepAccounts(options));
     return autoTrade.prepare(options);
   });
   ipcMain.handle('auto-trade:stop-prepare', async () => autoTrade.stopPrepare());

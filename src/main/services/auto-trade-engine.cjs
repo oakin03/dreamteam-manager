@@ -64,6 +64,7 @@ const STOP_GRACE_MS = 10000;
 // what frees salary on an account: listed, traded, fired, made into cards, handed to a spender
 const ROSTER_CODES = new Set(['at2.listed', 'at2.listDone', 'at2.traded', 'at2.fired', 'at2.converted', 'at2.toSpender', 'at2.unload']);
 const STOP_DETACH_MS = 5000;
+const MAKE_PER_MIN = 8; // the game refuses Make for 2 minutes after ~10 in a minute
 const PREFLIGHT_PARALLEL = WIDE; // every account at once (user 2026-11-11)
 const ACCEPT_TRIES = 3;
 
@@ -375,7 +376,7 @@ class AutoTradeEngine {
     const realMain = this.store.getAccountProfile?.()?.mainAccountId || null;
     const mainId = accountIds.includes(realMain) ? realMain : options.actingMainId;
     if (!mainId || !accountIds.includes(mainId)) throw new Error('Choose which selected account acts as main.');
-    if (accountIds.length < 2) throw new Error('Select main and at least one side account.');
+    if (accountIds.length < 2 && !options.prepOnly) throw new Error('Select main and at least one side account.');
     const cfg = this._config(options);
     const password = options.roomPassword != null && options.roomPassword !== ''
       ? String(options.roomPassword)
@@ -403,10 +404,11 @@ class AutoTradeEngine {
       spenderMinTk: Math.max(0, Math.floor(Number(cfg.spenderMinTk) || 0)),
       parallelSides: Math.max(1, Math.min(PARALLEL_MAX, Math.floor(Number(cfg.parallelSides) || PARALLEL_DEFAULT))),
       benchDecisions: options.benchDecisions || {},
-      prepOnly: Boolean(options.prepOnly)
+      prepOnly: Boolean(options.prepOnly),
+      ...(options.prepOnly ? { prepAll: (options.prepAll || accountIds).filter(id => all.some(a => a.id === id) && !this._tradeLocked(id)) } : {})
     };
     // The form remembers these for next time (not the account selection's one-off main).
-    this.lastConfig = { ...config, benchDecisions: undefined, actingMainId: undefined, prepOnly: undefined };
+    this.lastConfig = { ...config, benchDecisions: undefined, actingMainId: undefined, prepOnly: undefined, prepAll: undefined };
     const accounts = {};
     for (const id of accountIds) {
       accounts[id] = { id, name: this._name(id), role: id === mainId ? 'main' : 'side', status: 'waiting', players: {}, bought: 0, spent: 0, converted: 0, tradesIn: 0, tradesOut: 0, tkPaid: 0, tkReceived: 0, listed: 0, openMs: 0, openedAt: null, visits: 0, funds: null, fundsStart: null, scout: null, benchApplied: false };
@@ -669,6 +671,7 @@ class AutoTradeEngine {
     try { conn = await TradeGameAccount.open({ account, sessions: this.sessions, createSocket: this.createSocket, signal }); }
     catch (error) { this._resume(id); throw error; }
     this.conns.set(id, conn);
+    conn.onWait = (event, sec, message) => this._log('warning', 'at2.gameWait', { event, sec, error: message ? ' · ' + message : '' }, `The game asks to wait ${sec} s (${event})${message ? ': ' + message : ''}`, id);
     const acc = this._acc(id) || this._ensureAcc(id);
     acc.openedAt = new Date(this.now()).toISOString();
     acc.visits += 1;
@@ -919,14 +922,23 @@ class AutoTradeEngine {
     const mainId = this.state.config.mainId;
     if (this.conns.has(mainId)) await this._restoreParked(mainId, signal).catch(() => {});
     this._closeAll();
-    const ids = this.state.config.accountIds;
+    const ids = this.state.config.prepAll || this.state.config.accountIds;
     this.prep = { status: 'done', startedAt: this.state.startedAt, at: new Date(this.now()).toISOString(), total: ids.length, done: ids.length, accounts: Object.fromEntries(ids.map(id => [id, { rows: {} }])), error: null };
   }
 
   // Hazırlık without a run: the same bench work; a start within the hour does not ask again.
   async prepare(options = {}) {
     if (this.controller) throw new Error('Auto Trade is running.');
-    return this.start({ ...options, prepOnly: true });
+    // only main and the accounts with a bench decision take part (user 2026-11-24: the others were
+    // opened / stopped for nothing); the others still count as prepared for a start within the hour
+    return this.start({ ...options, accountIds: this.prepAccounts(options), prepAll: options.accountIds || [], prepOnly: true });
+  }
+  prepAccounts(options = {}) {
+    const ids = options.accountIds || [];
+    const realMain = this.store.getAccountProfile?.()?.mainAccountId || null;
+    const mainId = ids.includes(realMain) ? realMain : options.actingMainId;
+    const acts = id => Object.values(options.benchDecisions?.[id] || {}).some(d => d?.action && d.action !== 'none');
+    return ids.filter(id => id === mainId || acts(id));
   }
   stopPrepare() { return this.stop(); }
   clearPrepare() { if (!this.controller || !this.state?.config?.prepOnly) { this.prep = null; this._save(); } return this.snapshot(); }
@@ -2182,13 +2194,18 @@ this._log('info', 'at2.leftovers', { count: spenders, cheap, kept, seconds: Math
   }
 
   // Main's bench players headed for cards → Make. Returns true when something was converted.
-  async _convertMain(signal) {
+  // `whenFull` (after a trade): only when main's roster has at most one free place left. The game
+  // allows about 10 Make calls a minute and then refuses them for 2 minutes (seen 2026-11-24:
+  // every 10 one-player Makes a 122 s stop, 25 of a 38-minute Hazırlık); one Make for a full bench
+  // instead of one per trade stays far below that.
+  async _convertMain(signal, { whenFull = false } = {}) {
     const id = this.state.config.mainId;
     const conn = this.conns.get(id) || await this._open(id, signal);
     await this._gate(signal);
     let roster = R.rosterOf(await conn.roster());
     let list = this._ours(id, roster, 'main');
     if (!list.length) return false;
+    if (whenFull && roster.total < R.ROSTER_MAX - 1) return false;
     if (this.cardBusy?.()) {
       this._step('waitingCards', {}, id);
       this._log('info', 'at2.waitCards', {}, 'Synthesis / Activate runs on main · turning into cards waits for it', id);
@@ -2201,6 +2218,7 @@ this._log('info', 'at2.leftovers', { count: spenders, cheap, kept, seconds: Math
     for (const p of list) acc.players[p.id].status = 'converting';
     this._step('converting', { count: list.length }, id);
     this._save();
+    await this._makeSlot(signal);
     const r = await conn.makeCards(list.map(p => p.id));
     if (!r?.success) {
       for (const p of list) acc.players[p.id].status = 'toConvert';
@@ -2219,6 +2237,18 @@ this._log('info', 'at2.leftovers', { count: spenders, cheap, kept, seconds: Math
     this._save();
     await sleep(this.timing.stepMs, signal);
     return true;
+  }
+
+  // At most MAKE_PER_MIN Make calls in any 60 s: a few seconds' wait here instead of the game's
+  // 2-minute refusal.
+  async _makeSlot(signal) {
+    const times = (this._makeTimes ||= []);
+    for (;;) {
+      const now = this.now();
+      while (times.length && now - times[0] >= 60000) times.shift();
+      if (times.length < MAKE_PER_MIN) { times.push(now); return; }
+      await sleep(times[0] + 60000 - now + 250, signal);
+    }
   }
 
   // Main is full of players for sides: hand them to the highest-TK sides (no scouting
@@ -2289,7 +2319,7 @@ this._log('info', 'at2.leftovers', { count: spenders, cheap, kept, seconds: Math
         const small = R.planTrade({ mainRoster, sideRoster, mainGive: plan.mainGives, sideGive: afford, mainFunds, sideFunds });
         if (small.empty || !small.mainCanPay || !small.sideCanPay) return stopOrWait();
         const res = await this._executeChecked(sideId, small, signal);
-        if (res.success) { this._afterTrade(sideId, small); this._tick('trade'); if (small.sideGives.length) await this._convertMain(signal); }
+        if (res.success) { this._afterTrade(sideId, small); this._tick('trade'); if (small.sideGives.length) await this._convertMain(signal, { whenFull: true }); }
         else this._log('warning', 'at2.tradeFailed', { side: this._name(sideId), error: res.message }, `Trade with ${this._name(sideId)} failed: ${res.message}`, sideId);
         // the stop's wrap-up fires what main cannot pay
         return stopOrWait();
@@ -2303,7 +2333,7 @@ this._log('info', 'at2.leftovers', { count: spenders, cheap, kept, seconds: Math
         this._afterTrade(sideId, plan);
         this._tick('trade');
         failRetry = 0;
-        if (plan.sideGives.length) await this._convertMain(signal);
+        if (plan.sideGives.length) await this._convertMain(signal, { whenFull: true });
         continue;
       }
       const kind = R.tradeFailure(result.message);
