@@ -1282,3 +1282,6 @@ tr.b3-broken td{background:color-mix(in srgb, var(--bg-fff0ee) 70%, transparent)
 
 /* injured starters: a new player (2026-11-24) */
 .inj-replace{display:grid;gap:6px}.inj-replace-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.inj-replace-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+
+/* Toplu Başlat: accounts per system (2026-11-24) */
+.modal.dp-batch-accs{width:min(920px,calc(100vw - 32px));max-height:calc(100vh - 64px);overflow:auto;display:grid;gap:10px}

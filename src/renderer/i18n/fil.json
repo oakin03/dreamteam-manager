@@ -3987,5 +3987,13 @@
  "The Friendly Match did not start · looking for another one": "Hindi nagsimula ang Friendly Match · naghahanap ng iba",
  "Empty starter position {slots} filled · {lineup}": "Napunan ang bakanteng starter na posisyong {slots} · {lineup}",
  "Empty starter position {slots} · no healthy player to put there": "Bakanteng starter na posisyong {slots} · walang malusog na player na mailalagay",
- "Empty starter position could not be filled: {error}": "Hindi napunan ang bakanteng starter na posisyon: {error}"
+ "Empty starter position could not be filled: {error}": "Hindi napunan ang bakanteng starter na posisyon: {error}",
+ "Shared ({n})": "Shared ({n})",
+ "Own list ({n})": "Sariling listahan ({n})",
+ "{name} · accounts": "{name} · mga account",
+ "This system runs only on the accounts chosen here. With the shared list it uses the shared choice below.": "Tatakbo lang ang system na ito sa mga account na pinili rito. Kapag shared list, ang shared na pinili sa ibaba ang gagamitin.",
+ "Use the shared list": "Gamitin ang shared list",
+ "Shared accounts": "Mga shared account",
+ "Systems without a list of their own run on these accounts.": "Ang mga system na walang sariling listahan ay tatakbo sa mga account na ito.",
+ "The ticked systems run one after another from top to bottom. The “Accounts” button on each row gives that system its own account list (e.g. Quiz and Slot on every account, some match modes on 20–30); systems showing “Shared” use the shared choice at the bottom, “Use the shared list” drops the own list.": "Sunod-sunod na tatakbo ang mga naka-tick na system mula itaas pababa. Ang button na “Accounts” sa bawat hilera ay nagbibigay sa system na iyon ng sariling listahan ng account (hal. Quiz at Slot sa lahat ng account, ilang match mode sa 20–30); ang mga system na “Shared” ay gagamit ng shared na pinili sa ibaba, at inaalis ng “Gamitin ang shared list” ang sariling listahan."
 }

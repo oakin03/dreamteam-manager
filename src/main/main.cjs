@@ -658,11 +658,18 @@ function dailyBatchConfig() {
   const saved = store.getSettings()?.dailyBatch || {};
   const order = [...(Array.isArray(saved.order) ? saved.order.filter(id => DAILY_BATCH_STEPS.includes(id)) : []), ...DAILY_BATCH_STEPS].filter((id, i, a) => a.indexOf(id) === i);
   const enabled = saved.enabled && typeof saved.enabled === 'object' ? saved.enabled : {};
-  return { order, enabled: Object.fromEntries(DAILY_BATCH_STEPS.map(id => [id, enabled[id] ?? !DAILY_BATCH_OFF.includes(id)])), accountIds: Array.isArray(saved.accountIds) ? saved.accountIds : [] };
+  // per system its own accounts (user 2026-11-24: Quiz / Slot on 1000+ accounts, some match modes on
+  // 20–30); a system without its own list uses the shared one
+  const by = saved.accountsBy && typeof saved.accountsBy === 'object' ? saved.accountsBy : {};
+  const accountsBy = Object.fromEntries(DAILY_BATCH_STEPS.filter(id => Array.isArray(by[id])).map(id => [id, by[id]]));
+  return { order, enabled: Object.fromEntries(DAILY_BATCH_STEPS.map(id => [id, enabled[id] ?? !DAILY_BATCH_OFF.includes(id)])), accountIds: Array.isArray(saved.accountIds) ? saved.accountIds : [], accountsBy };
 }
 function saveDailyBatchConfig(patch = {}) {
   const next = { ...dailyBatchConfig(), ...patch };
-  store.saveSettings({ ...store.getSettings(), dailyBatch: { order: next.order, enabled: next.enabled, accountIds: next.accountIds } });
+  // accountsBy: { [step]: ids | null } — null goes back to the shared list
+  const by = { ...dailyBatchConfig().accountsBy };
+  for (const [id, list] of Object.entries(patch.accountsBy || {})) { if (!DAILY_BATCH_STEPS.includes(id)) continue; if (Array.isArray(list)) by[id] = list; else delete by[id]; }
+  store.saveSettings({ ...store.getSettings(), dailyBatch: { order: next.order, enabled: next.enabled, accountIds: next.accountIds, accountsBy: by } });
   emitState();
   return dailyBatchConfig();
 }
@@ -697,19 +704,23 @@ const stopDailyStep = step => ({ slot: () => dailySlot.stop(), quiz: () => quiz.
 async function startDailyBatch(patch = {}) {
   if (dailyBatch?.running) throw new Error('Toplu Başlat is already running.');
   const cfg = saveDailyBatchConfig(patch);
-  const ids = cfg.accountIds.filter(id => store.getAccounts().some(a => a.id === id));
-  if (!ids.length) throw new Error('Select at least one account.');
+  const exists = id => store.getAccounts().some(a => a.id === id);
+  const shared = cfg.accountIds.filter(exists);
+  const idsFor = step => (cfg.accountsBy[step] ? cfg.accountsBy[step].filter(exists) : shared);
   const steps = cfg.order.filter(id => cfg.enabled[id]);
   if (!steps.length) throw new Error('Tick at least one system.');
+  const empty = steps.filter(step => !idsFor(step).length);
+  if (empty.length) throw new Error(`Select accounts for: ${empty.join(', ')}`);
+  const ids = [...new Set(steps.flatMap(idsFor))];
   const log = (level, code, params, message) => activity.add({ level, accountId: null, accountName: '', taskName: 'Toplu Başlat', code, params, message });
-  dailyBatch = { running: true, current: null, accountIds: ids, startedAt: new Date().toISOString(), finishedAt: null, stopped: false, steps: steps.map(id => ({ id, status: 'queued', error: null })) };
+  dailyBatch = { running: true, current: null, accountIds: ids, startedAt: new Date().toISOString(), finishedAt: null, stopped: false, steps: steps.map(id => ({ id, status: 'queued', error: null, accounts: idsFor(id).length })) };
   log('info', 'db.start', { count: ids.length, steps: steps.length }, `Toplu Başlat · ${steps.length} system(s) on ${ids.length} account(s)`);
   emitState();
   (async () => {
     for (const row of dailyBatch.steps) {
       if (dailyBatch.stopped) { row.status = 'skipped'; continue; }
       dailyBatch.current = row.id; row.status = 'running'; row.startedAt = new Date().toISOString(); emitState();
-      try { await runDailyStep(row.id, ids); row.status = dailyBatch.stopped ? 'stopped' : 'done'; }
+      try { await runDailyStep(row.id, idsFor(row.id)); row.status = dailyBatch.stopped ? 'stopped' : 'done'; }
       catch (error) { row.status = 'error'; row.error = error.message; log('warning', 'db.stepFailed', { step: row.id, error: error.message }, `${row.id}: ${error.message} · next system`); }
       row.finishedAt = new Date().toISOString(); emitState();
     }
