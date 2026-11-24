@@ -288,6 +288,13 @@ contextBridge.exposeInMainWorld('dreamteam', {
     removeListings: (ticketIds, options) => ipcRenderer.invoke('market:remove', ticketIds, options),
     stop: () => ipcRenderer.invoke('market:stop')
   },
+  cardFactory: {
+    config: (patch) => ipcRenderer.invoke('card-factory:config', patch),
+    tkCheck: (patch) => ipcRenderer.invoke('card-factory:tk-check', patch),
+    start: (config, fresh) => ipcRenderer.invoke('card-factory:start', { config, fresh }),
+    stop: () => ipcRenderer.invoke('card-factory:stop'),
+    resetCount: () => ipcRenderer.invoke('card-factory:reset-count')
+  },
   autoTrade: {
     preflight: (options) => ipcRenderer.invoke('auto-trade:preflight', options),
     prepare: (options) => ipcRenderer.invoke('auto-trade:prepare', options),

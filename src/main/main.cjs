@@ -29,6 +29,7 @@ const { SocialService } = require('./services/social-service.cjs');
 const { AccountProfileService } = require('./services/account-profile-service.cjs');
 const { CardsService } = require('./services/cards-service.cjs');
 const { AutoTradeEngine } = require('./services/auto-trade-engine.cjs');
+const { CardFactoryService } = require('./services/card-factory-service.cjs');
 const { FriendNetwork } = require('./services/friend-network.cjs');
 const { MarketService } = require('./services/market-service.cjs');
 const { GameSessions } = require('./services/game-sessions.cjs');
@@ -91,6 +92,8 @@ let social;
 let accountProfile;
 let cards;
 let autoTrade;
+let cardFactory; // Kart Fabrikası (user 2026-11-24)
+let lastCardFactoryRevision = -1;
 let market;
 let gameSessions;
 let players;
@@ -241,6 +244,7 @@ function snapshot({ incremental = false } = {}) {
   if (!incremental || tradeRowsChanged) state.trading.rows = trading.rowsSnapshot();
   if (!incremental || lastCardsKey !== cardKey) state.cards = cards.snapshot();
   if (autoTrade && (!incremental || lastAutoTradeRevision !== autoTrade.revision)) { state.autoTrade2 = autoTrade.snapshot(); lastAutoTradeRevision = autoTrade.revision; }
+  if (cardFactory && (!incremental || lastCardFactoryRevision !== cardFactory.revision)) { state.cardFactory = cardFactory.snapshot(); lastCardFactoryRevision = cardFactory.revision; }
   // 640 players: sent when the list or the roles changed.
   const playersKey = players ? `${players.revision}:${store.revision('cardMetadata')}:${store.revision('cardRoles')}:${store.revision('cards')}` : null;
   if (players && (!incremental || lastPlayersKey !== playersKey)) { state.players = players.snapshot(); lastPlayersKey = playersKey; }
@@ -397,7 +401,7 @@ async function pauseTasksFor(accountIds, taskName, prefix, { keepSocket = false 
 // paused, so the scheduler then stops that Auto Play too and restores it in order.
 // skipAutoBuy (a buy / listing of Auto Buy): Auto Buy itself goes on, and services that never
 // sign in (PVP, Go-up, Quiz: cookie only, not kicked by a sign-in) are left alone.
-async function pauseServicesFor(accountIds, taskName, { prefix = 'sc', logTask = 'Schedule', skipAutoBuy = false } = {}) {
+async function pauseServicesFor(accountIds, taskName, { prefix = 'sc', logTask = 'Schedule', skipAutoBuy = false, skipFactory = false } = {}) {
   const ids = new Set(accountIds);
   const overlap = list => (list || []).some(id => ids.has(id));
   const resume = [];
@@ -416,6 +420,13 @@ async function pauseServicesFor(accountIds, taskName, { prefix = 'sc', logTask =
       await autoTrade.stop({ hard: false });
       resume.push(['Auto Trade', () => autoTrade.resumeAfterTask({ paused: wasPaused })]);
     }
+  }
+  const cf = cardFactory?.snapshot();
+  if (!skipFactory && cf?.running && overlap([cf.run?.config?.targetId, ...(cf.run?.config?.sideIds || [])])) {
+    const cfg = cf.run.config;
+    cardFactory.stop();
+    await cardFactory.done?.catch(() => {});
+    resume.push(['Kart Fabrikası', () => cardFactory.start(cfg)]);
   }
   // @strip-begin(basic)
   const ab = buy.snapshot();
@@ -981,6 +992,10 @@ function initServices() {
   const friendNet = new FriendNetwork({ store, sessions: gameSessions, activity, perSide: () => autoTrade?.lastConfig?.spendersPerSide, onChanged: () => { if (autoTrade) autoTrade.revision++; emitState(); } });
   autoTrade = new AutoTradeEngine({ onRoster: id => capRelief(id), cardBusy: () => Boolean(synthesis?.snapshot().running || activate?.snapshot().running), friendNet, pauseAccount: pauseAccountForTrade, onSpenderListed: e => buy?.recordListed?.(e), gameHealth, store, credentials, activity, sessions: gameSessions, accountProfile, onChanged: emitState, onAttention: autoTradeAttention, onScout: (id, reply) => scout.showSocketScout?.(id, reply), onCycleEnd: () => cards.refresh() });
   market = new MarketService({ store, activity, accountProfile, sessions: gameSessions, onChanged: emitState });
+  // its own accounts never in Auto Trade at the same time (and the other way round)
+  cardFactory = new CardFactoryService({ store, activity, sessions: gameSessions, createSocket: undefined, friendNet, gameHealth, onChanged: emitState,
+    usedElsewhere: id => Boolean(autoTrade?.usesAccount?.(id) || autoTrade?.worksWith?.(id) && autoTrade?.isRunning?.()),
+    pauseAccount: async (id, task) => { const r1 = await pauseServicesFor([id], task, { prefix: 'cfp', logTask: task, skipFactory: true }); const r2 = await pauseTasksFor([id], task, 'cfp'); return async () => { await r2(); await r1(); }; } });
   const alertedDays = new Map(); // playerId -> day already reported // @strip(basic)
   rosters = new RostersService({ store, activity, onChanged: emitState });
   bag = new BagService({ store, activity, gameHealth, sessions: gameSessions, onChanged: emitState, onCardPlayers: (id, rows) => draft?.addRows(id, rows) });
@@ -1387,6 +1402,8 @@ function registerIpc() {
   ipcMain.handle('auto-trade:preflight', async (_event, options) => ({ conflicts: autoTradeConflicts(options.accountIds || [], { keepAutoPlay: Boolean(options.keepAutoPlay ?? options.config?.keepAutoPlay) }), ...(await autoTrade.preflight(options)) }));
   ipcMain.handle('auto-trade:attention', async (_event, kind) => { autoTradeAttention(kind); return true; });
   ipcMain.handle('auto-trade:start', async (_event, options) => {
+    const clash = (options.accountIds || []).filter(id => cardFactory?.usesAccount(id));
+    if (clash.length) throw new Error(`Kart Fabrikası is using: ${clash.map(id => store.getAccounts().find(a => a.id === id)?.name || id).join(', ')}`);
     if (options.stopConflicts) await stopAutoTradeConflicts(options.accountIds || [], { keepAutoPlay: Boolean(options.keepAutoPlay ?? options.config?.keepAutoPlay) });
     return autoTrade.start(options);
   });
@@ -1398,6 +1415,17 @@ function registerIpc() {
     return autoTrade.prepare(options);
   });
   ipcMain.handle('auto-trade:stop-prepare', async () => autoTrade.stopPrepare());
+  // Kart Fabrikası: the run's accounts step aside like for Auto Trade (Auto Play, equipment, market)
+  ipcMain.handle('card-factory:config', async (_event, patch) => cardFactory.saveConfig(patch || {}));
+  ipcMain.handle('card-factory:tk-check', async (_event, patch) => cardFactory.tkCheck(patch || {}));
+  ipcMain.handle('card-factory:start', async (_event, { config, fresh } = {}) => {
+    const cfg = { ...(cardFactory.snapshot().config || {}), ...(config || {}) };
+    const tk = await cardFactory.tkCheck(cfg);
+    if (!tk.ok) return { ...cardFactory.snapshot(), tkShort: tk };
+    return cardFactory.start(cfg, { fresh: Boolean(fresh) });
+  });
+  ipcMain.handle('card-factory:stop', async () => cardFactory.stop());
+  ipcMain.handle('card-factory:reset-count', async () => cardFactory.resetCount());
   ipcMain.handle('auto-trade:clear-prepare', async () => autoTrade.clearPrepare());
   ipcMain.handle('auto-trade:pause', async () => autoTrade.pause());
   ipcMain.handle('auto-trade:resume', async () => autoTrade.resume());
@@ -1838,6 +1866,7 @@ async function shutdownServices() {
     () => scheduler?.stop(), // @strip(basic)
     () => trading?.stop(),
     () => autoTrade?.shutdown?.(),
+    () => cardFactory?.shutdown?.(),
     () => market?.shutdown(),
     () => players?.stop(),
     () => autoDraft?.shutdown(),

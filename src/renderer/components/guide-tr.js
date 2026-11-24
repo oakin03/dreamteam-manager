@@ -223,6 +223,28 @@ export const GUIDE_TR = {
     },
     // @strip-end
     {
+      id: "cardfactory", icon: "🏭", name: "Kart Fabrikası",
+      what: "Bir hedef hesaba yan hesaplardan istediğin sayıda ucuz oyuncu (Scout fiyatı maksimum fiyat ve altı) verip hepsini orada karta çevirir. Rol bakılmaz; Satılabilir, Stok ya da ekstra kart rolü yoktur. Sayaç çalışmalar arasında saklanır.",
+      steps: [
+        "Hedef hesabı, maksimum fiyatı (ör. 70 TK), kaç oyuncu olacağını (ör. 50000) ve aynı anda kaç yan hesabın çalışacağını (1–20) gir.",
+        "Yan hesapları seç. Hedef hesap da kendi Scout'undan alır.",
+        "İstersen “TK’yı kontrol et” ile hedefin TK'sının kalan oyunculara yetip yetmediğine bak. Yetmiyorsa başlatılmaz.",
+        "Başlat'a bas. Durdurup sonra “Kaldığı yerden devam” dersen sayaç kaldığı yerden sürer (ör. 34567 → 50000)."
+      ],
+      buttons: [
+        ["Başlat / Kaldığı yerden devam", "Sayaç 0'sa başlatır, değilse kaldığı yerden devam eder. Önce hedefin TK'sı kontrol edilir: kalan oyuncu × maksimum fiyat kadar TK yoksa başlamaz."],
+        ["Baştan başla", "Sayacı 0'a çekip yeni hedefle başlar (önce sorar)."],
+        ["Durdur", "Çalışan turlar biter; yan hesaplarda kalan oyuncular bir sonraki çalışmada hedefe verilir."]
+      ],
+      rules: [
+        "Her hesap kendi Scout'unu, günlük ücretsiz yenilemelerini (Callback eşyası kullanılmaz) ve arkadaşlarının Scout'larını kullanır; yer kalırsa diğer hesaplarımızı arkadaş ekleyip onların Scout'larından da alır.",
+        "Kadrosu dolan yan hesap oyuncularını hedefe takasla verir; takas odaları hedefte sırayla kurulur. Hedef kadrosu dolunca toplu karta çevirir (oyun dakikada ~10 karta çevirmeye izin verdiği için en fazla 8).",
+        "Sadece bu servisin aldığı oyuncular takas edilir ve karta çevrilir; hesapların kendi oyuncularına dokunulmaz.",
+        "Auto Trade'in kullandığı hesaplar seçilemez; çalışırken bu hesaplarda Auto Play ve diğer işler durur, bitince geri başlar."
+      ],
+      tips: ["Asıl darboğaz Scout'ta çıkan ucuz oyuncu sayısıdır: ne kadar çok yan hesap, o kadar hızlı."], problems: []
+    },
+    {
       id: "autotrade", icon: "🔁", name: "Auto Trade",
       what: "Scout'tan uygun oyuncuları alır ve hesaplar arasında takasla doğru yere taşır: Kart rollü ve ucuz oyuncular Main'e gidip karta çevrilir; Satılabilir / Stok oyuncular yan hesaplarda ya da Harcayıcılarda kalıp pazara konur. Kadronun ilk 5'ine asla dokunulmaz.",
       steps: [

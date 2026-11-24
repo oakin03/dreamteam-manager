@@ -1285,3 +1285,21 @@ tr.b3-broken td{background:color-mix(in srgb, var(--bg-fff0ee) 70%, transparent)
 
 /* Toplu Başlat: accounts per system (2026-11-24) */
 .modal.dp-batch-accs{width:min(920px,calc(100vw - 32px));max-height:calc(100vh - 64px);overflow:auto;display:grid;gap:10px}
+
+/* Kart Fabrikası (2026-11-24) */
+.card-factory .panel{padding:14px 16px;margin-bottom:12px}
+.card-factory .table-panel{padding:0}
+.card-factory .cf-progress{display:grid;gap:10px}
+.card-factory .cf-progress-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.card-factory .cf-progress-head>b{font-size:16px}
+.card-factory .cf-bar{height:10px;border-radius:999px;background:var(--d-line);overflow:hidden}
+.card-factory .cf-bar i{display:block;height:100%;background:var(--d-accent);transition:width .4s}
+.card-factory .cf-form{display:grid;gap:12px}
+.card-factory .cf-fields{display:grid;grid-template-columns:minmax(220px,2fr) repeat(3,minmax(140px,1fr));gap:12px}
+@media (max-width:900px){.card-factory .cf-fields{grid-template-columns:1fr 1fr}}
+.card-factory .cf-fields label{display:grid;gap:5px}
+.card-factory .cf-fields label span{font-size:11px;color:var(--d-ink-2);font-weight:800}
+.card-factory .cf-fields select,.card-factory .cf-fields input{height:36px;border:1px solid var(--d-line);border-radius:8px;background:var(--d-surface);color:var(--d-ink);padding:0 10px;font-size:13px;width:100%;box-sizing:border-box}
+.card-factory .cf-tk{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.card-factory .cf-sides{display:grid;gap:10px}
+.card-factory .cf-sides-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap}

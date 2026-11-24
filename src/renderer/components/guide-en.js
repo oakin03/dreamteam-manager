@@ -223,6 +223,28 @@ export const GUIDE_EN = {
     },
     // @strip-end
     {
+      id: "cardfactory", icon: "🏭", name: "Card Factory",
+      what: "Gives a target account as many cheap players (Scout price at or under the max price) as you want from side accounts and turns all of them into cards there. No roles: no Satılabilir, Stok or extra card role. The count is kept between runs.",
+      steps: [
+        "Enter the target account, the max price (e.g. 70 TK), how many players (e.g. 50000) and how many side accounts work at once (1–20).",
+        "Choose the side accounts. The target signs off its own Scout too.",
+        "“Check TK” shows whether the target's TK covers the rest. If not, it does not start.",
+        "Press Start. After a stop, “Continue” goes on from the count (e.g. 34567 → 50000)."
+      ],
+      buttons: [
+        ["Start / Continue", "Starts at 0 or goes on from the count. The target's TK is checked first: without TK for the remaining players × max price it does not start."],
+        ["Start from 0", "Sets the count back to 0 and starts (asks first)."],
+        ["Stop", "Running turns end; players left on sides are given to the target in the next run."]
+      ],
+      rules: [
+        "Every account uses its own Scout, its free daily callbacks (no Callback items) and its friends' Scouts; with room left it befriends our other accounts and signs off their Scouts too.",
+        "A side with a full roster trades its players to the target; trade rooms on the target go one after another. The target makes a full bench into cards at once (at most 8 Makes a minute, the game allows ~10).",
+        "Only players this service signed are traded and made into cards; the accounts' own players are never touched.",
+        "Accounts Auto Trade uses cannot be chosen; while it runs, Auto Play and other work stop on its accounts and start again afterwards."
+      ],
+      tips: ["The real limit is how many cheap players the Scouts show: more side accounts, faster."], problems: []
+    },
+    {
       id: "autotrade", icon: "🔁", name: "Auto Trade",
       what: "Signs suitable players from Scout and moves them with trades to the right account: Card-role and cheap players go to Main and become cards; Sellable / Stock players stay on side accounts or spenders (Harcayıcı) and go on the market. The starting five are never touched.",
       steps: [

@@ -49,6 +49,7 @@ class AppStore {
       tournamentReport: path.join(baseDir, 'tournament-report.json'),
       dailyRoutine: path.join(baseDir, 'daily-routine.json'),
       autoTrade2: path.join(baseDir, 'auto-trade-v2.json'),
+      cardFactory: path.join(baseDir, 'card-factory.json'),
       playersData: path.join(baseDir, 'players-data.json'),
       draftData: path.join(baseDir, 'draft.json'),
       pvpReport: path.join(baseDir, 'pvp-report.json'),
@@ -193,6 +194,8 @@ class AppStore {
   getDailyRoutine() { return this._get('dailyRoutine', { version: 1, accounts: {} }); }
   saveDailyRoutine(v) { this._save('dailyRoutine', v); }
   getAutoTrade2() { return this._get('autoTrade2', null); }
+  getCardFactory() { return this._get('cardFactory', null); }
+  saveCardFactory(v) { this._saveDeferred('cardFactory', v); }
   getPlayersData() { return this._get('playersData', null); }
   savePlayersData(v) { this._save('playersData', v); }
   getSynthesisData() { return this._get('synthesisData', null); }

@@ -9,7 +9,7 @@ const api = window.dreamteam;
 // does not know the page yet gets it in its default list automatically.
 export const PAGE_META = {
   home: ['home', 'commandCenter'], accounts: ['accounts', 'accounts'], social: ['chat', 'socialPage'],
-  autoplay: ['play', 'autoplay'], autotrade: ['swap', 'autoTrade'], daily: ['calendar', 'dailyPage'], office: ['hall', 'officePage'], autobuy: ['cart', 'autoBuyPage'], tournament: ['trophy', 'tournament'], tktransfer: ['transfer', 'tkPage'],
+  autoplay: ['play', 'autoplay'], autotrade: ['swap', 'autoTrade'], cardfactory: ['cards', 'cardFactoryPage'], daily: ['calendar', 'dailyPage'], office: ['hall', 'officePage'], autobuy: ['cart', 'autoBuyPage'], tournament: ['trophy', 'tournament'], tktransfer: ['transfer', 'tkPage'],
   players: ['chart', 'playersPage'], draft: ['target', 'draftPage'], cards: ['cards', 'cards'], equipment: ['shirt', 'equipment'], bag: ['bag', 'bagPage'], hunter: ['scout', 'hunterPage'],
   market: ['market', 'market'], trade: ['hall', 'trade'],
   activity: ['activity', 'activity'], guide: ['book', 'guide'], settings: ['settings', 'settings'],
@@ -26,7 +26,7 @@ export const NAV_DEFAULT = [
   { id: 'top', nameKey: null, items: ['home', 'accounts', 'social'] },
   // the user's own order of 2026-11-13 (PVP and Tower are tabs of Günlük İşler, Scout a tab of Scout
   // Avcısı, Değer Tahmini a tab of Oyuncular since then)
-  { id: 'automation', nameKey: 'navAutomation', items: ['autoplay', 'autotrade', 'autobuy', 'hunter', 'daily', 'office', 'tournament', 'tktransfer'] },
+  { id: 'automation', nameKey: 'navAutomation', items: ['autoplay', 'autotrade', 'cardfactory', 'autobuy', 'hunter', 'daily', 'office', 'tournament', 'tktransfer'] },
   { id: 'players', nameKey: 'navPlayers', items: ['players', 'draft', 'cards', 'equipment', 'bag'] },
   { id: 'market', nameKey: 'navMarket', items: ['market', 'trade'] },
   { id: 'app', nameKey: 'navApp', items: ['activity', 'guide', 'licenses', 'settings'] }
