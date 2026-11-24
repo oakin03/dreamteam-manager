@@ -272,7 +272,23 @@ function sendState() {
   if (stateInFlightAt && Date.now() - stateInFlightAt < STATE_ACK_WAIT_MS) return;
   stateDirty = false;
   stateInFlightAt = lastStateSentAt = Date.now();
-  mainWindow.webContents.send('app:state', snapshot({ incremental: true }));
+  mainWindow.webContents.send('app:state', onlyChanged(snapshot({ incremental: true })));
+}
+
+// Only the parts of the state that changed since the last send (user 2026-11-24: the mouse wheel
+// stuck, moved a little or not at all). Every send carried ~1.5 MB — settings with the old reports
+// (~490 KB), the daily routine of every account, the Tower / APK / TK reports… — several times a
+// second, and the page spent ~100 ms on each, so wheel turns were lost. The page merges a state
+// into the one it has (a part that is not sent stays as it was). A bootstrap (full state, page
+// (re)load) starts the comparison again.
+const lastSentJson = new Map();
+function onlyChanged(state) {
+  for (const key of Object.keys(state)) {
+    const json = JSON.stringify(state[key] ?? null);
+    if (lastSentJson.get(key) === json) delete state[key];
+    else lastSentJson.set(key, json);
+  }
+  return state;
 }
 
 function onStateAck() {
@@ -1067,7 +1083,7 @@ function addAccountRecord(payload) {
 }
 
 function registerIpc() {
-  ipcMain.handle('app:bootstrap', async () => snapshot());
+  ipcMain.handle('app:bootstrap', async () => { lastSentJson.clear(); return snapshot(); });
   ipcMain.on('app:state-ack', onStateAck);
 
   ipcMain.handle('accounts:add', async (_event, payload) => addAccountRecord(payload));
