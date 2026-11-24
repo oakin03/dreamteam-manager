@@ -4,6 +4,7 @@ import { filOf } from '../i18n-fil';
 import { roleColors } from './roleColors';
 import RatingBadge from './RatingBadge';
 import InjuryMark from './InjuryMark';
+import { GroupedPicks } from './AccountGroups';
 
 const api = window.dreamteam;
 const num = v => v == null ? '—' : Number(v).toLocaleString();
@@ -53,6 +54,8 @@ export default function DraftPage({ state, t, toast }) {
   return <div className="page draft-page">
     <div className="page-title"><div><h1>{x.title}</h1><span className="subtitle">{x.subtitle}</span></div></div>
 
+    <AutoDraftPanel state={state} lang={t.lang} toast={toast} attemptsOf={id => (d.accounts || []).find(a => a.id === id)?.attempts} />
+
     <h3 className="section-title">{x.accounts}</h3>
     <div className="panel table-panel"><SortTable><thead><tr><th>{x.account}</th><th>{x.level}</th><th>{x.attempts}</th><th>{x.status}</th><th>{x.rooms}</th></tr></thead>
       <tbody>{(d.accounts || []).map(a => <tr key={a.id}>
@@ -71,6 +74,68 @@ export default function DraftPage({ state, t, toast }) {
       {d.rooms.map(room => <Room key={room.slot} room={room} x={x} players={players} roles={roles} busy={busy} run={run} now={now} />)}</>}
 
     <Drafted d={d} x={x} players={players} roles={roles} toast={toast} mainName={(state.accounts || []).find(a => a.id === state.accountProfile?.mainAccountId)?.name || null} />
+  </div>;
+}
+
+// ---------- Automatic Draft (user 2026-11-24) ----------
+const AD_TEXT = {
+  tr: {
+    title: 'Otomatik Draft', start: 'Başlat ({n})', stop: 'Durdur', running: 'Çalışıyor · {n} oyuncu alındı', done: 'Bitti · {n} oyuncu alındı', stopped: 'Durduruldu', idle: 'Kapalı',
+    accounts: 'Hesaplar', selectAll: 'Hepsini seç', clear: 'Temizle', priority: 'Öncelik sırası', up: 'Yukarı', down: 'Aşağı',
+    fallback: 'Rolü olan oyuncu olmayan oda', fbCard: 'En ucuz oyuncuyu al → ana hesapta karta çevir', fbFire: 'En ucuz oyuncuyu al → kov', fbNone: 'Hiç oyuncu alma',
+    fallbackHint: 'Auto Trade\'deki ucuz fiyat sınırına uyan en ucuz oyuncu alınır.', sideOnly: 'Sadece Satılabilir / Stok al', sideOnlyHint: 'Kart rolündeki oyuncular ve ucuz oyuncular alınmaz.',
+    how: 'Seviyesine uygun yeni bir oda açılınca önce bir hesap girip oyunculara bakar; rolü olan oyuncu sayısı kadar hesap odaya girer (4 rollü oyuncu → 3 hesap daha). Sıra gelince 3–5 sn bekleyip öncelik sırasına göre seçer; Stok önce Lv30+ hesaplara kalır. Draft bitince Kart oyuncuları ana hesaba gidip karta çevrilir, Satılabilir / Stok bir Harcayıcı\'ya verilip Auto Trade fiyatıyla pazara konur. Seçilen hesapların hakkı bitene kadar sürer. Auto Trade\'in kullandığı hesaplar beklenir.',
+    account: 'Hesap', attempts: 'Hak', state: 'Durum', picks: 'Alınanlar', pending: 'Sırada bekleyen devir',
+    st: { waiting: 'Oda bekliyor', joining: 'Odaya giriyor', inRoom: 'Odada · {slot}', picking: 'Seçiyor', picked: 'Seçti', noPick: 'Seçecek oyuncu yok', rosterFull: 'Kadro dolu' },
+    kind: { cards: 'Karta', spender: 'Harcayıcı', fire: 'Kov' }
+  },
+  en: {
+    title: 'Automatic Draft', start: 'Start ({n})', stop: 'Stop', running: 'Running · {n} player(s) picked', done: 'Done · {n} player(s) picked', stopped: 'Stopped', idle: 'Off',
+    accounts: 'Accounts', selectAll: 'Select all', clear: 'Clear', priority: 'Priority', up: 'Up', down: 'Down',
+    fallback: 'Room without role players', fbCard: 'Take the cheapest → star cards on main', fbFire: 'Take the cheapest → fire', fbNone: 'Pick nobody',
+    fallbackHint: 'The cheapest player within Auto Trade\'s cheap price limit.', sideOnly: 'Only Satılabilir / Stok', sideOnlyHint: 'Card-role players and cheap players are not picked.',
+    how: 'When a new room for its level opens, one account joins first and looks at the players; as many accounts join as there are players with a role (4 role players → 3 more accounts). On each turn it waits 3–5 s and picks by the priority; Stok is left for Lv30+ accounts first. After the draft, card players go to main and become cards; Satılabilir / Stok go to a Harcayıcı and are listed at Auto Trade\'s price. It runs until the chosen accounts have no attempts left. Accounts Auto Trade is using are waited for.',
+    account: 'Account', attempts: 'Attempts', state: 'Status', picks: 'Picked', pending: 'Waiting to be handed on',
+    st: { waiting: 'Waiting for a room', joining: 'Joining', inRoom: 'In room {slot}', picking: 'Picking', picked: 'Picked', noPick: 'Nothing to pick', rosterFull: 'Roster full' },
+    kind: { cards: 'Cards', spender: 'Harcayıcı', fire: 'Fire' }
+  },
+  get fil() { return filOf(this.en); }
+};
+
+function AutoDraftPanel({ state, lang, toast, attemptsOf }) {
+  const x = AD_TEXT[lang] || AD_TEXT.en;
+  const ad = state.autoDraft || {};
+  const cfg = ad.config || { accountIds: [], priority: [], fallback: 'card', sideOnly: false };
+  const running = Boolean(ad.running);
+  const runInfo = ad.run;
+  const accounts = state.accounts || [];
+  const save = patch => api.autoDraft.config(patch).catch(e => toast(e.message, 'error'));
+  const ids = cfg.accountIds.filter(id => accounts.some(a => a.id === id));
+  const toggle = id => save({ accountIds: ids.includes(id) ? ids.filter(v => v !== id) : [...ids, id] });
+  const move = (i, d) => { const p = [...cfg.priority]; const j = i + d; if (j < 0 || j >= p.length) return; [p[i], p[j]] = [p[j], p[i]]; save({ priority: p }); };
+  const roleName = id => (ad.roles || []).find(r => r.id === id);
+  const status = !runInfo ? x.idle : runInfo.status === 'running' ? fill(x.running, { n: runInfo.picked }) : runInfo.status === 'done' ? fill(x.done, { n: runInfo.picked }) : x.stopped;
+  const act = fn => fn().catch(e => toast(e.message, 'error'));
+  return <div className="panel ad-panel">
+    <div className="ad-head"><b>{x.title}</b><span className={`pill ${running ? 'ok' : 'muted'}`}><i />{status}</span><span className="sp" style={{ flex: 1 }} />
+      {running ? <button className="btn danger-soft" onClick={() => act(() => api.autoDraft.stop())}>{x.stop}</button>
+        : <button className="btn primary" disabled={!ids.length} onClick={() => act(() => api.autoDraft.start({ accountIds: ids }))}>{fill(x.start, { n: ids.length })}</button>}</div>
+    <small className="muted-text">{x.how}</small>
+    <div className="ad-grid">
+      <div><div className="ad-sub"><b>{x.accounts}</b><button className="chip" disabled={running} onClick={() => save({ accountIds: ids.length === accounts.length ? [] : accounts.map(a => a.id) })}>{ids.length === accounts.length ? x.clear : x.selectAll}</button></div>
+        <div className="pvp-picks"><GroupedPicks storeKey="autodraft" accounts={accounts} selected={ids} disabled={running} onSet={next => save({ accountIds: next })} render={a => { const n = attemptsOf(a.id); return <button key={a.id} type="button" disabled={running} className={ids.includes(a.id) ? 'selected' : ''} onClick={() => toggle(a.id)}><span>{a.name}</span><em className={n === 0 ? 'zero' : ''}>{n ?? '—'}</em></button>; }} /></div></div>
+      <div><div className="ad-sub"><b>{x.priority}</b></div>
+        <ol className="ad-priority">{cfg.priority.map((id, i) => { const r = roleName(id); return <li key={id}><span className="role-pill" style={{ borderColor: r?.color, color: r?.color }}>{r?.name || id}</span>
+          <button className="btn ghost small" disabled={running || i === 0} title={x.up} onClick={() => move(i, -1)}>▲</button><button className="btn ghost small" disabled={running || i === cfg.priority.length - 1} title={x.down} onClick={() => move(i, 1)}>▼</button></li>; })}</ol>
+        <label className="ad-opt"><span>{x.fallback}</span><select value={cfg.fallback} disabled={running} onChange={e => save({ fallback: e.target.value })}><option value="card">{x.fbCard}</option><option value="fire">{x.fbFire}</option><option value="none">{x.fbNone}</option></select><small className="muted-text">{x.fallbackHint}</small></label>
+        <label className="at2-check"><input type="checkbox" disabled={running} checked={cfg.sideOnly} onChange={e => save({ sideOnly: e.target.checked })} /><span>{x.sideOnly}</span><small>{x.sideOnlyHint}</small></label>
+      </div>
+    </div>
+    {runInfo && <div className="table-panel ad-table"><SortTable><thead><tr><th>{x.account}</th><th>{x.attempts}</th><th>{x.state}</th><th>{x.picks}</th></tr></thead>
+      <tbody>{runInfo.accountIds.map(id => { const a = runInfo.accounts[id] || {}; return <tr key={id}><td><b>{accounts.find(v => v.id === id)?.name || id}</b></td><td>{attemptsOf(id) ?? '—'}</td>
+        <td>{fill(x.st[a.state] || a.state || '', { slot: a.slot })}</td>
+        <td>{(a.picks || []).map((p, k) => <span key={k} className="pill muted"><i />{p.name} · {x.kind[p.kind] || p.kind}</span>)}</td></tr>; })}</tbody></SortTable></div>}
+    {(ad.pending || []).length > 0 && <div className="ad-pending"><b>{x.pending}</b> {(ad.pending || []).map((p, k) => <span key={k} className="pill warn"><i />{p.name} · {p.count} · {x.kind[p.kind] || p.kind}</span>)}</div>}
   </div>;
 }
 

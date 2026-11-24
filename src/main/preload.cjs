@@ -197,6 +197,16 @@ contextBridge.exposeInMainWorld('dreamteam', {
     firePlayers: (accountId, playerIds) => ipcRenderer.invoke('draft:fire-players', { accountId, playerIds }),
     toCards: (accountId, playerIds) => ipcRenderer.invoke('draft:to-cards', { accountId, playerIds })
   },
+  dailyBatch: {
+    start: (patch) => ipcRenderer.invoke('daily-batch:start', patch),
+    stop: () => ipcRenderer.invoke('daily-batch:stop'),
+    config: (patch) => ipcRenderer.invoke('daily-batch:config', patch)
+  },
+  autoDraft: {
+    start: (patch) => ipcRenderer.invoke('auto-draft:start', patch),
+    stop: () => ipcRenderer.invoke('auto-draft:stop'),
+    config: (patch) => ipcRenderer.invoke('auto-draft:config', patch)
+  },
   rosters: { refresh: () => ipcRenderer.invoke('rosters:refresh') },
   // @strip-begin(basic)
   rotation: {

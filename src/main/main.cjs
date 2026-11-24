@@ -42,6 +42,7 @@ const { ScoutHunter } = require('./services/scout-hunter.cjs'); // @strip(basic)
 const { MatchControl } = require('./services/match-control.cjs'); // @strip(basic)
 const { TournamentLive } = require('./services/tournament-live.cjs'); // @strip(basic)
 const { DraftService } = require('./services/draft-service.cjs');
+const { AutoDraftService } = require('./services/auto-draft.cjs');
 const { syncMcpConfig } = require('./services/mcp-sync.cjs');
 const { TournamentService } = require('./services/tournament-service.cjs');
 const { TournamentLevelService } = require('./services/tournament-level-service.cjs'); // @strip(basic)
@@ -104,6 +105,7 @@ const startBatches = new Set();
 const apBatchState = () => { try { emitState(); } catch {} };
 let lastRostersRevision = -1;
 let draft;
+let autoDraft;
 let pvp;
 let goup;
 let quiz;
@@ -246,6 +248,8 @@ function snapshot({ incremental = false } = {}) {
   if (valuePredict && (!incremental || lastVpRevision !== valuePredict.revision)) { state.valuePredict = valuePredict.snapshot(); lastVpRevision = valuePredict.revision; }
   if (buy && (!incremental || lastBuyRevision !== buy.revision)) { state.buy = buy.snapshot(); lastBuyRevision = buy.revision; }
   if (draft && (!incremental || lastDraftRevision !== draft.revision)) { state.draft = draft.snapshot(); lastDraftRevision = draft.revision; }
+  if (autoDraft) state.autoDraft = autoDraft.snapshot();
+  state.dailyBatch = dailyBatchSnapshot();
   if (equipment && (!incremental || lastEquipmentRevision !== equipment.revision)) { state.equipment = equipment.snapshot(); lastEquipmentRevision = equipment.revision; }
   if (!incremental || lastActivityRevision !== store.revision('activity')) state.activity = store.getActivity();
   lastCardsKey = cardKey;
@@ -643,6 +647,85 @@ async function startPvpManual(accountIds) {
   return pvp.snapshot();
 }
 
+// ---------- Daily jobs one after another (user 2026-11-24: "Toplu Başlat" tab) ----------
+// The chosen systems run in the chosen order on the chosen accounts; each starts like its own
+// Start button and the next one waits until it is over. Order and ticks are remembered.
+const DAILY_BATCH_STEPS = ['slot', 'quiz', 'goup', 'ascent', 'magic', 'boss', 'pro', 'tower'];
+const DAILY_BATCH_OFF = ['magic', 'tower'];
+let dailyBatch = null; // { running, current, accountIds, steps:[{ id, status, error }], startedAt, finishedAt }
+function dailyBatchConfig() {
+  const saved = store.getSettings()?.dailyBatch || {};
+  const order = [...(Array.isArray(saved.order) ? saved.order.filter(id => DAILY_BATCH_STEPS.includes(id)) : []), ...DAILY_BATCH_STEPS].filter((id, i, a) => a.indexOf(id) === i);
+  const enabled = saved.enabled && typeof saved.enabled === 'object' ? saved.enabled : {};
+  return { order, enabled: Object.fromEntries(DAILY_BATCH_STEPS.map(id => [id, enabled[id] ?? !DAILY_BATCH_OFF.includes(id)])), accountIds: Array.isArray(saved.accountIds) ? saved.accountIds : [] };
+}
+function saveDailyBatchConfig(patch = {}) {
+  const next = { ...dailyBatchConfig(), ...patch };
+  store.saveSettings({ ...store.getSettings(), dailyBatch: { order: next.order, enabled: next.enabled, accountIds: next.accountIds } });
+  emitState();
+  return dailyBatchConfig();
+}
+function dailyBatchSnapshot() { return { config: dailyBatchConfig(), run: dailyBatch ? JSON.parse(JSON.stringify(dailyBatch)) : null }; }
+// the best Daily Boss each account's level allows (or the one picked on the Daily Boss tab)
+async function bossPlanFor(ids) {
+  await dailyBoss.status(ids).catch(() => null);
+  const snap = dailyBoss.snapshot();
+  const saved = store.getSettings()?.bossPlan || {};
+  const plan = {};
+  for (const id of ids) {
+    const lv = snap.info?.[id]?.level ?? store.getAccountProfile()?.accounts?.[id]?.level ?? null;
+    const allowed = (snap.bosses || []).filter(b => lv == null || lv >= b.levelRequired);
+    const pick = allowed.some(b => b.id === saved[id]) ? saved[id] : allowed.slice(-1)[0]?.id;
+    if (pick) plan[id] = pick;
+  }
+  return plan;
+}
+async function runDailyStep(step, ids) {
+  const all = obj => Object.fromEntries(ids.map(id => [id, obj]));
+  const s = store.getSettings() || {};
+  if (step === 'slot') return dailySlot.spin(ids);
+  if (step === 'quiz') { await startQuizManual(ids); return quizDone; }
+  if (step === 'goup') { await startGoUpManual(ids, { mode: s.goupMode, gapSec: s.goupGapSec }); return goupDone; }
+  if (step === 'ascent') { await startProvingManual(eliteAscent, all(true), 'Elite Ascent', 'ea', p => { ascentDone = p; }); return ascentDone; }
+  if (step === 'magic') { await startProvingManual(magicTeam, all('auto'), 'Magic Team', 'mt', p => { magicDone = p; }); return magicDone; }
+  if (step === 'boss') { const plan = await bossPlanFor(ids); if (!Object.keys(plan).length) throw new Error('No boss for these accounts'); await startProvingManual(dailyBoss, plan, 'Daily Boss', 'bo', p => { bossDone = p; }); return bossDone; }
+  if (step === 'pro') { await startProvingManual(professional, all(true), 'Professional', 'pf', p => { proDone = p; }); return proDone; }
+  if (step === 'tower') { await startTower(ids); return towerDone; }
+}
+const stopDailyStep = step => ({ slot: () => dailySlot.stop(), quiz: () => quiz.stop(), goup: () => goup.stop(), ascent: () => eliteAscent.stop(), magic: () => magicTeam.stop(), boss: () => dailyBoss.stop(), pro: () => professional.stop(), tower: () => tower.stop(null) })[step]?.();
+async function startDailyBatch(patch = {}) {
+  if (dailyBatch?.running) throw new Error('Toplu Başlat is already running.');
+  const cfg = saveDailyBatchConfig(patch);
+  const ids = cfg.accountIds.filter(id => store.getAccounts().some(a => a.id === id));
+  if (!ids.length) throw new Error('Select at least one account.');
+  const steps = cfg.order.filter(id => cfg.enabled[id]);
+  if (!steps.length) throw new Error('Tick at least one system.');
+  const log = (level, code, params, message) => activity.add({ level, accountId: null, accountName: '', taskName: 'Toplu Başlat', code, params, message });
+  dailyBatch = { running: true, current: null, accountIds: ids, startedAt: new Date().toISOString(), finishedAt: null, stopped: false, steps: steps.map(id => ({ id, status: 'queued', error: null })) };
+  log('info', 'db.start', { count: ids.length, steps: steps.length }, `Toplu Başlat · ${steps.length} system(s) on ${ids.length} account(s)`);
+  emitState();
+  (async () => {
+    for (const row of dailyBatch.steps) {
+      if (dailyBatch.stopped) { row.status = 'skipped'; continue; }
+      dailyBatch.current = row.id; row.status = 'running'; row.startedAt = new Date().toISOString(); emitState();
+      try { await runDailyStep(row.id, ids); row.status = dailyBatch.stopped ? 'stopped' : 'done'; }
+      catch (error) { row.status = 'error'; row.error = error.message; log('warning', 'db.stepFailed', { step: row.id, error: error.message }, `${row.id}: ${error.message} · next system`); }
+      row.finishedAt = new Date().toISOString(); emitState();
+    }
+    dailyBatch.running = false; dailyBatch.current = null; dailyBatch.finishedAt = new Date().toISOString();
+    log(dailyBatch.stopped ? 'warning' : 'success', dailyBatch.stopped ? 'db.stopped' : 'db.done', {}, dailyBatch.stopped ? 'Toplu Başlat stopped' : 'Toplu Başlat finished');
+    emitState();
+  })();
+  return dailyBatchSnapshot();
+}
+function stopDailyBatch() {
+  if (!dailyBatch?.running) return dailyBatchSnapshot();
+  dailyBatch.stopped = true;
+  if (dailyBatch.current) stopDailyStep(dailyBatch.current);
+  emitState();
+  return dailyBatchSnapshot();
+}
+
 async function startTower(accountIds) {
   if (!accountIds.length) throw new Error('Select at least one account.');
   if (tower.snapshot().running) throw new Error('Tower is already running.');
@@ -787,7 +870,9 @@ function capRelief(accountId) {
   for (const done of set) done('relief');
 }
 function autoPlayCapWait({ accountId, attempt, signal }) {
-  if (!autoTrade?.keepsAutoPlay?.() || !autoTrade.worksWith(accountId) || attempt > CAP_WAIT_TRIES) return Promise.resolve(false);
+  // Auto Trade (with "keep Auto Play") or the automatic Draft makes room on that account
+  const helper = (autoTrade?.keepsAutoPlay?.() && autoTrade.worksWith(accountId)) || autoDraft?.worksWith?.(accountId);
+  if (!helper || attempt > CAP_WAIT_TRIES) return Promise.resolve(false);
   return new Promise(resolve => {
     let timer = null;
     const done = why => { clearTimeout(timer); signal?.removeEventListener('abort', onAbort); capWaiters.get(accountId)?.delete(done); resolve(why !== 'abort'); };
@@ -906,6 +991,16 @@ function initServices() {
     }
   });
   synthesis = new SynthesisService({ store, activity, sessions: gameSessions, cards, onChanged: emitState, onDone: () => cards.refresh() });
+  // Auto Trade over (done, Stop, TK out, an error) with "then Synthesis" on (user 2026-11-24): the
+  // Synthesis "Do both" button — No Team first, then Team — with the levels chosen on its page
+  autoTrade.onFinished = state => {
+    if (state.config?.synthAfter === false) return;
+    const add = (level, code, params, message) => activity.add({ level, accountId: state.config?.mainId || null, accountName: '', taskName: 'Auto Trade', code, params, message });
+    if (synthesis.snapshot().running) { add('info', 'at2.synthBusy', {}, 'Synthesis is already running · not started again'); return; }
+    const levels = store.getSettings()?.synthLevels;
+    try { synthesis.start({ mode: 'both', levels: Array.isArray(levels) && levels.length ? levels : undefined }); add('info', 'at2.synthAfter', {}, 'Auto Trade is over · Synthesis started (No Team, then Team)'); }
+    catch (error) { add('warning', 'at2.synthFailed', { error: error.message }, `Synthesis could not start: ${error.message}`); }
+  };
   props = new PropService({ store, activity, sessions: gameSessions, onChanged: emitState });
   activate = new ActivateService({ store, activity, sessions: gameSessions, cards, onChanged: emitState });
   tower = new TowerService({ store, activity, gameHealth, sessions: gameSessions, onChanged: emitState });
@@ -949,6 +1044,9 @@ function initServices() {
     // when it was signed at the 5% cut)
     priceOf: (row, accountId) => { const r = autoTrade?._listPrice?.({ id: row.id, baseSalary: row.value, signedSalary: row.salary ?? row.value }, accountId); return r && !r.fire ? { price: r.price, currency: r.currency } : null; }
   });
+  // Automatic Draft (user 2026-11-24): accounts Auto Trade works on are left alone; Auto Play over
+  // the cap waits for it (capRelief); role directions and the cheap price come from Auto Trade's form
+  autoDraft = new AutoDraftService({ store, activity, draft, onChanged: emitState, isBusy: id => Boolean(autoTrade?.usesAccount?.(id)), capRelief: id => capRelief(id), atConfig: () => autoTrade?.lastConfig || {} });
   equipment = new EquipmentService({ store, activity, sessions: gameSessions, onChanged: emitState });
   // @strip-begin(basic)
   signup = new SignupService({
@@ -1520,6 +1618,9 @@ function registerIpc() {
   ipcMain.handle('goup:status', async (_event, accountIds) => goup.status(Array.isArray(accountIds) ? accountIds : null));
   ipcMain.handle('quiz:start', async (_event, accountIds) => startQuizManual(Array.isArray(accountIds) ? accountIds : []));
   ipcMain.handle('quiz:stop', async () => { quiz.stop(); return quiz.snapshot(); });
+  ipcMain.handle('daily-batch:start', async (_event, patch) => startDailyBatch(patch || {}));
+  ipcMain.handle('daily-batch:stop', async () => stopDailyBatch());
+  ipcMain.handle('daily-batch:config', async (_event, patch) => saveDailyBatchConfig(patch || {}));
   ipcMain.handle('quiz:answer', async (_event, { accountId, letter } = {}) => quiz.answer(accountId, letter));
   ipcMain.handle('social:view', async (_event, accountId) => social.view(accountId));
   ipcMain.handle('social:conversation', async (_event, { accountId, friendId } = {}) => social.conversation(accountId, friendId));
@@ -1579,6 +1680,16 @@ function registerIpc() {
     return { done: rows.length };
   };
   ipcMain.handle('draft:to-cards', async (_event, { accountId, playerIds }) => draftCardsNow(accountId, playerIds || []));
+  // Automatic Draft: Satılabilir / Stok to a Harcayıcı (it lists them); accounts Auto Trade holds wait
+  const draftSpenderNow = async (accountId, spenderId, playerIds) => {
+    const ids = [...new Set([accountId, spenderId])];
+    if (ids.some(id => autoTrade?.usesAccount?.(id))) throw new Error('Auto Trade is using the account right now');
+    return draftHand(ids, () => draft.toSpender(accountId, spenderId, playerIds));
+  };
+  autoDraft.setActions({ toCards: (a, ids) => draftCardsNow(a, ids), fire: (a, ids) => draftFireNow(a, ids), toSpender: (a, sp, ids) => draftSpenderNow(a, sp, ids) });
+  ipcMain.handle('auto-draft:start', async (_event, patch) => autoDraft.start(patch || {}));
+  ipcMain.handle('auto-draft:stop', async () => autoDraft.stop());
+  ipcMain.handle('auto-draft:config', async (_event, patch) => autoDraft.saveConfig(patch || {}));
   // Laborer Contract (user 2026-11-18): the two accounts' other services step aside like for Draft's Kov.
   ipcMain.handle('labor:read', async () => labor.read());
   // Sakatlık / Anestezi (user 2026-11-18)
@@ -1684,6 +1795,7 @@ async function shutdownServices() {
     () => autoTrade?.shutdown?.(),
     () => market?.shutdown(),
     () => players?.stop(),
+    () => autoDraft?.shutdown(),
     () => draft?.shutdown(),
     () => pvp?.stop(),
     () => goup?.stop(),

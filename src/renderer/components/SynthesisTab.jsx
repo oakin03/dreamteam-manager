@@ -38,7 +38,9 @@ export default function SynthesisTab({ state, t, toast }) {
   const sy = state.synthesis || {};
   const run = sy.run;
   const running = Boolean(sy.running);
-  const [levels, setLevels] = useState(() => new Set(LEVELS));
+  // the chosen levels are kept (Auto Trade's "then Synthesis" uses them too)
+  const [levels, setLevelsRaw] = useState(() => { const saved = state.settings?.synthLevels; return new Set(Array.isArray(saved) && saved.length ? saved.filter(l => LEVELS.includes(l)) : LEVELS); });
+  const setLevels = next => { setLevelsRaw(prev => { const v = typeof next === 'function' ? next(prev) : next; api.settings.update({ synthLevels: [...v].sort() }).catch(() => {}); return v; }); };
   const [infoOpen, setInfoOpen] = useState(false);
   const maxedPlayers = (state.cards?.players || []).filter(p => !p.x && !p.noTeam && Number(p.stars) >= 5).sort((a, b) => String(a.teamName || a.team || '').localeCompare(String(b.teamName || b.team || '')) || String(a.name).localeCompare(String(b.name)));
   const toggle = l => setLevels(s => { const n = new Set(s); n.has(l) ? n.delete(l) : n.add(l); return n; });

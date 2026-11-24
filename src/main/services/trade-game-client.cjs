@@ -16,6 +16,8 @@ function sleep(ms, signal) {
 }
 const waitOf = r => r?.retryAfter ?? Number(String(r?.message || r?.error || '').match(/please wait (\d+)/i)?.[1]);
 
+const CALLBACK_ITEM_ID = 'cmhdaubrh0003okmgozsa5qdm'; // the game's Callback item (scout-hunter.cjs uses the same)
+
 class TradeGameAccount {
   constructor({ account, userId, conn, signal, createSocket = undefined }) {
     this.createSocket = createSocket;
@@ -70,6 +72,13 @@ class TradeGameAccount {
     const attempts = await this._ack('getFreeAgentAttempts', { userId: this.userId });
     if (!attempts?.hasAttempts || !(attempts.attemptsLeft > 0)) return { success: false, noAttempts: true, attempts };
     return this._ack('CallBackFreeAgent', { userId: this.userId });
+  }
+  // the Callback item of the Free Agency window (game client 2026-11-18): a new board without a
+  // daily attempt. { success, freeAgents, callbackItems } or { success:false, noItems:true }
+  async callbackItem() {
+    const q = await this._ack('getCallbackItem', { userId: this.userId }).catch(() => null);
+    if (!(Number(q?.quantity) > 0)) return { success: false, noItems: true };
+    return this._ack('useCallbackItem', { userId: this.userId, itemId: CALLBACK_ITEM_ID });
   }
   bench() { return this._ack('starcard:getUserBench', { userId: this.userId }); }
   makeCards(playerIds) { return this._ack('starcard:makeStarCards', { userId: this.userId, playerIds }); }

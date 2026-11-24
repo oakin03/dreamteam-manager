@@ -34,7 +34,8 @@ import { gradeToneClass } from './components/RatingBadge';
 import InjuryMark, { setInjuryData } from './components/InjuryMark';
 import { BulkRole, bulkRoleText, roleDefs, roleOf, RolePill, RoleSelect, RoleManager as AccountRoleManager, RoleStart } from './components/AccountRoles';
 import { SignupModal, SignupProgress, SIGNUP_TEXT } from './components/SignupPanel'; // @strip(basic)
-import { GroupedPicks, useGroupedRows, sumOf } from './components/AccountGroups';
+import { GroupedPicks, useGroupedRows, sumOf, groupAccounts } from './components/AccountGroups';
+import useDismiss from './components/useDismiss';
 
 const api = window.dreamteam;
 const clockSubscribers = new Set();
@@ -68,7 +69,7 @@ const TEXT = {
     home:'Ana Sayfa', activitySearch:'Kayıtlarda ara…', activitySearchAll:'Bütün günlerde ara', activityLive:'Canlı (son 500 kayıt)', activityShowing:'Gösterilen:', activityFolder:'Kayıt klasörü', activityExport:'Hata raporu kaydet', activityExported:'Hata raporu kaydedildi', gpStop:'Tüm otomasyonları durdur', gpResume:'Otomasyonları devam ettir', gpHint:'Auto Play, Auto Trade, Auto Buy, Kule, PVP, Pazar ve Sentez işlerini durdurur; devam ettirince aynıları yeniden başlar (ör. 15:00 turnuvasından önce).', gpAsk:'Çalışan bütün otomasyonlar durdurulsun mu?', gpYes:'Durdur', gpBanner:'Tüm otomasyonlar durduruldu', gameDown:'Oyuna şu an bağlanılamıyor · otomasyonlar bekliyor, oyun gelince kendiliğinden devam edecek (tek bağlantıyla 2 dakikada bir kontrol ediliyor)', gameDownNext:'sıradaki kontrol', gameRetry:'Şimdi tekrar dene', gameStillDown:'Oyuna hâlâ bağlanılamıyor', goAnesthesia:'Anesteziye git', apInjured:'Sakat oyuncu', injuredTitle:'Auto Play durdu: sakat oyuncu', injuredText:'Bu hesapların ilk beşinde sakat bir oyuncu var; yedekte yerine geçecek sağlıklı oyuncu yok ve iyileştirilemedi. Sakat oyuncuyla maç oynanamadığı için Auto Play bu hesaplarda durduruldu. Çanta → Anestezi’den iyileştir ya da ilk beşe sağlıklı bir oyuncu koy, sonra Auto Play’i tekrar başlat.', abMatches:'Auto Buy eşleşenleri', abMatchesShort:'Şartı karşılayanlar', abMatchHint:'Auto Buy listesindeki koşulların hepsini sağlıyor (Auto Buy açıksa bu ilanı alır)', abWatch:'İzleniyor', abNear:'İzleniyor · maaş eşleşti', abNearHint:'Auto Buy listesinde, maaş koşulu eşleşti; yalnızca fiyat (ya da para birimi) koşulu tutmuyor', watchOnly:'İzlenenler', watchOnlyHint:'Yalnızca Auto Buy izleme listesindeki oyuncuların ilanları (koşullara uysun uymasın)', abWatchHint:'Auto Buy listesinde ama koşulları sağlamıyor', abTags:'Etiketler', abTagAll:'Tüm ilanlar', thRoles:'Roller', thAllRoles:'Tüm roller', thNoRole:'Rolsüz', abNone:'İzlenmeyenler', thPlayer:'Oyuncu', thMin:'en az', thMax:'en çok', towerPage:'Kule', towerStopped:'Kule durduruldu', towerSalaryCap:'Takım maaş sınırını aştığı için kule bu hesapta durduruldu.', pvpPage:'PVP Arena', dailyPage:'Günlük İşler', officePage:'Ofis', bagPage:'Çanta', hunterPage:'Scout Avcısı', navBought:'Alınan oyuncular (tabloda)', tkPage:'TK / APK Aktarımı', valuePredictPage:'Değer Tahmini', navRunning:'Auto Play çalışan hesap', navSold:'Toplanmayı bekleyen satış', navErrors:'Aktivite sayfasına son girişten beri gelen hata', commandCenter:'Komuta Merkezi', apFilter:'Hesap filtresi', apAll:'Tümü', apRunning:'Çalışan', apStopped:'Duran', apProblem:'Sorunlu', apSearch:'Hesap ara…', apSelected:'{n} hesap seçildi', apClear:'Seçimi temizle', apVs:'rakip', apOpponent:'Son Hızlı Oyun maçının rakibi', apOwnOpponent:'Rakip kendi hesabın — olmaması gerekiyordu', apHint:'Toplu işlem için satır seç. Seçim yokken Ödülleri topla, Günlük sütununda işaretli hesaplarda çalışır.', apNone:'Bu filtrede hesap yok.', socialPage:'Sosyal', socialBadge:'{r} arkadaşlık isteği · {u} okunmamış mesaj', autoBuyPage:'Auto Buy', navAutomation:'Otomasyon', navPlayers:'Oyuncular & Takım', navMarket:'Pazar', navApp:'Uygulama', guide:'Rehber', guideHint:'Her sayfanın ve düğmenin ne işe yaradığını sade bir dille anlatır.', guideOpen:'Rehberi aç', accounts:'Hesaplar', autoplay:'Auto Play', autoTrade:'Auto Trade', scout:'Scout', trade:'Trading Hall', cards:'Kartlar', activity:'Aktivite', licensesPanel:'Lisanslar', settings:'Ayarlar',
     addAccount:'Hesap Ekle', edit:'Düzenle', delete:'Sil', start:'Başlat', stop:'Durdur', status:'Durum', account:'Hesap', login:'E-posta / kullanıcı adı', password:'Şifre', name:'Ad', save:'Kaydet', cancel:'İptal', close:'Kapat', refresh:'Yenile', reset:'Sıfırla',
     stopped:'Durduruldu', running:'Çalışıyor', preparing:'Hazırlanıyor', error:'Hata', next:'Sonraki', browser:'Tarayıcı', visible:'Görünür', hidden:'Gizli', showBrowser:'Göster', pkHint:'Bugün kalan ödüllü PK maçı / günlük sınır (oyunun 2026-11-05 kuralı, TR 19:00\'da sıfırlanır). Sınır dolunca Quick Play sıfırlamaya kadar bekler.', pkOut:'hesap doldu', dwIdleHint:'İşaretliyken Daily Reward, Auto Play çalışmayan hesaplarda da süresi dolunca toplanır. O hesabı kullanan başka bir servis varsa onun bağlantısı kullanılır, kimse oturumdan atılmaz.', dailyReward:'Daily Reward', rewardChecking:'Kontrol', rewardClaiming:'Alınıyor', rewardDeferred:'Bekliyor', rewardUnknown:'Bilinmiyor', rewardResetWait:'19.00 bekleniyor', rewardCompleted:'6/6 tamamlandı', dailyRoutine:'Günlük', equipment:'Ekipman', playersPage:'Oyuncular', draftPage:'Draft', modifiedTeam:'Değiştirilmiş', teamOriginal:'orijinal', teamNone:'Takımsız (No Team)', teamAssignHint:'Takım ata ya da takımdan çıkar. Auto Trade bu takımı kullanır; bu sayfada oyuncu Değiştirilmiş takımında görünür.', tasksColumn:'Görevler', tasksDaily:'Günlük', tasksAlliance:'İttifak', tasksNotStarted:'Başlatılmadı', tasksReadyShort:'bekliyor', tasksReadyHint:'Tamamlanmış ama henüz alınmamış görev ödülü · Auto Play çalışırken en geç 10 dakikada alınır (ya da Ödülleri topla)', tasksUpdated:'Güncellendi', tasksRefresh:'Görevleri yenile', tasksRefreshing:'Yenileniyor…', claimRewards:'Ödülleri topla', claimingRewards:'Toplanıyor…', claimRewardsHint:'Tamamlanmış günlük görevlerin ve posta kutusundaki ödülleri toplar (seçili hesaplar; seçim yoksa Günlük sütununda işaretli olanlar). Auto Play çalışırken 10 dakikada bir kendiliğinden de yapılır.', dailyRoutineHint:'Auto Play 19:10 sonrası başlayınca ya da çalışırken saat 19:12 olunca önce Daily Signin, 600-Day Sign In, günlük görevler ve 1 Friendly Match yapılır; tamamlanan görevlerin ödülleri 10 dakikada bir toplanır', dailyDone:'Bugün tamam', dailyPending:'19:12 / Auto Play başlayınca', dailyFailed:'Eksik', dailyPhase:'Günlük rutin', helperPhase:'Group Match yardımı',
-    attempts:'Yenileme', roster:'Roster', callback:'Call Back', refreshScout:'Scout Yenile', closeScout:'Scout Kapat', price:'Fiyat', team:'Takım', position:'Mevki', grade:'Grade', card:'Kart', buy:'Satın Al', signed:'Alındı', openScout:'Scout Aç', chooseAccount:'Hesap seç', scoutClosed:'Scout kapalı',
+    attempts:'Yenileme', roster:'Roster', callback:'Call Back', refreshScout:'Scout Yenile', closeScout:'Scout Kapat', price:'Fiyat', listingNameHint:'İsim (virgülle birden fazla: ad1, ad2)', team:'Takım', position:'Mevki', grade:'Grade', card:'Kart', buy:'Satın Al', signed:'Alındı', openScout:'Scout Aç', chooseAccount:'Hesap seç', scoutClosed:'Scout kapalı',
     tradeAccount:'Trade Hesabı', configure:'Ayarla', stopAtPrice:'Bu fiyatta dur', scanCurrency:'Taranacak para birimi', refreshHall:'Trading Hall\'ı tara', seller:'Satıcı', salary:'Maaş', base:'Base', value:'Değer', currency:'Para birimi', presets:'Hazır filtreler', filters:'Filtreler', addPreset:'Filtre ekle', managePresets:'Düzenle', noRows:'Sonuç yok', listings:'ilan', page:'sayfa',
     language:'Dil', general:'Genel', theme:'Görünüm', themeDark:'Koyu mod', themeLight:'Açık mod', auto:'Otomatik', turkish:'Türkçe', english:'English', dataFolder:'Veri klasörü', debugBrowser:'Auto Play tarayıcısını görünür aç',
     cardsEmpty:'Kart verisi yok.', cardScanLater:'Ana hesabı seçip Yenile ile Star Cards verisini tara.',
@@ -87,7 +88,7 @@ const TEXT = {
     home:'Home', activitySearch:'Search the logs…', activitySearchAll:'Search all days', activityLive:'Live (latest 500)', activityShowing:'Showing:', activityFolder:'Log folder', activityExport:'Save error report', activityExported:'Error report saved', gpStop:'Stop all automations', gpResume:'Resume automations', gpHint:'Stops Auto Play, Auto Trade, Auto Buy, Tower, PVP, Market and Synthesis; resuming starts the same ones again (e.g. before the 15:00 tournament).', gpAsk:'Stop every running automation?', gpYes:'Stop', gpBanner:'All automations are stopped', gameDown:'The game is not reachable right now · automations are waiting and continue by themselves when it is back (checked every 2 minutes with one connection)', gameDownNext:'next check', gameRetry:'Try again now', gameStillDown:'The game is still not reachable', goAnesthesia:'Go to Anesthesia', apInjured:'Injured player', injuredTitle:'Auto Play stopped: injured player', injuredText:'These accounts have an injured player in the starting five; no healthy bench player can take the place and it could not be healed. No match can be played with an injured player, so Auto Play stopped on these accounts. Heal on Bag → Anesthesia or put a healthy player in the starting five, then start Auto Play again.', abMatches:'Auto Buy matches', abMatchesShort:'Meets conditions', abMatchHint:'Meets every condition on the Auto Buy list (Auto Buy buys it while running)', abWatch:'Watched', abNear:'Watched · salary matched', abNearHint:'On the Auto Buy list and the salary condition matched; only the price (or currency) does not', watchOnly:'Watched', watchOnlyHint:'Only listings of players on the Auto Buy watch list (matching or not)', abWatchHint:'On the Auto Buy list but does not meet the conditions', abTags:'Tags', abTagAll:'All listings', thRoles:'Roles', thAllRoles:'All roles', thNoRole:'No role', abNone:'Not watched', thPlayer:'Player', thMin:'min', thMax:'max', towerPage:'Tower', towerStopped:'Tower stopped', towerSalaryCap:'Tower was stopped on this account because the team is over the salary cap.', pvpPage:'PVP Arena', dailyPage:'Daily', officePage:'Office', bagPage:'Bag', hunterPage:'Scout Hunter', navBought:'Players bought (in the table)', tkPage:'TK / APK Transfer', valuePredictPage:'Value Prediction', navRunning:'Accounts running Auto Play', navSold:'Sales waiting to be claimed', navErrors:'Errors since you last opened Activity', commandCenter:'Command Center', apFilter:'Account filter', apAll:'All', apRunning:'Running', apStopped:'Stopped', apProblem:'Problems', apSearch:'Search accounts…', apSelected:'{n} account(s) selected', apClear:'Clear selection', apVs:'vs', apOpponent:'Opponent of the last Quick Play match', apOwnOpponent:'The opponent is one of your accounts — should not happen', apHint:'Select rows for bulk actions. With nothing selected, Collect rewards works on the accounts ticked in the Daily column.', apNone:'No account in this filter.', socialPage:'Social', socialBadge:'{r} friend request(s) · {u} unread message(s)', autoBuyPage:'Auto Buy', navAutomation:'Automation', navPlayers:'Players & Team', navMarket:'Market', navApp:'App', guide:'Guide', guideHint:'Explains in plain words what every page and button does.', guideOpen:'Open the guide', accounts:'Accounts', autoplay:'Auto Play', autoTrade:'Auto Trade', scout:'Scout', trade:'Trading Hall', cards:'Cards', activity:'Activity', licensesPanel:'Licenses', settings:'Settings',
     addAccount:'Add Account', edit:'Edit', delete:'Delete', start:'Start', stop:'Stop', status:'Status', account:'Account', login:'Email / username', password:'Password', name:'Name', save:'Save', cancel:'Cancel', close:'Close', refresh:'Refresh', reset:'Reset',
     stopped:'Stopped', running:'Running', preparing:'Preparing', error:'Error', next:'Next', browser:'Browser', visible:'Visible', hidden:'Hidden', showBrowser:'Show', pkHint:'Rewarded PK matches left today / daily limit (the game\'s rule since 2026-11-05, resets at 19:00 TR). When it is used up Quick Play waits for the reset.', pkOut:'account(s) used up', dwIdleHint:'When ticked, the Daily Reward is collected when its timer ends on accounts without Auto Play too. If another service uses that account, its connection is used, nobody is signed out.', dailyReward:'Daily Reward', rewardChecking:'Checking', rewardClaiming:'Claiming', rewardDeferred:'Waiting', rewardUnknown:'Unknown', rewardResetWait:'Reset at 19:00 TR', rewardCompleted:'6/6 complete', dailyRoutine:'Daily', equipment:'Equipment', playersPage:'Players', draftPage:'Draft', modifiedTeam:'Modified', teamOriginal:'original', teamNone:'No team (No Team)', teamAssignHint:'Give a team or take the player out of its team. Auto Trade uses it; on this page the player is listed under Modified.', tasksColumn:'Tasks', tasksDaily:'Daily', tasksAlliance:'Alliance', tasksNotStarted:'Not started', tasksReadyShort:'waiting', tasksReadyHint:'Finished but not yet claimed task rewards · claimed within 10 minutes while Auto Play runs (or Collect rewards)', tasksUpdated:'Updated', tasksRefresh:'Refresh tasks', tasksRefreshing:'Refreshing…', claimRewards:'Collect rewards', claimingRewards:'Collecting…', claimRewardsHint:'Claims finished daily task rewards and mail rewards (selected accounts, or those ticked in the Daily column). While Auto Play runs this also happens every 10 minutes.', dailyRoutineHint:'When Auto Play starts after 19:10, or at 19:12 while it runs, it first does Daily Signin, 600-Day Sign In, the daily tasks and 1 Friendly Match', dailyDone:'Done today', dailyPending:'19:12 / when Auto Play starts', dailyFailed:'Incomplete', dailyPhase:'Daily routine', helperPhase:'Group Match help',
-    attempts:'Attempts', roster:'Roster', callback:'Call Back', refreshScout:'Refresh Scout', closeScout:'Close Scout', price:'Price', team:'Team', position:'Position', grade:'Grade', card:'Card', buy:'Sign', signed:'Signed', openScout:'Open Scout', chooseAccount:'Choose account', scoutClosed:'Scout closed',
+    attempts:'Attempts', roster:'Roster', callback:'Call Back', refreshScout:'Refresh Scout', closeScout:'Close Scout', price:'Price', listingNameHint:'Name (several with commas: a, b)', team:'Team', position:'Position', grade:'Grade', card:'Card', buy:'Sign', signed:'Signed', openScout:'Open Scout', chooseAccount:'Choose account', scoutClosed:'Scout closed',
     tradeAccount:'Trade Account', configure:'Configure', stopAtPrice:'Stop at price', scanCurrency:'Scan Currency', refreshHall:'Refresh Trading Hall', seller:'Seller', salary:'Salary', base:'Base', value:'Value', currency:'Currency', presets:'Presets', filters:'Filters', addPreset:'Add preset', managePresets:'Manage', noRows:'No results', listings:'listings', page:'page',
     language:'Language', general:'General', theme:'Appearance', themeDark:'Dark mode', themeLight:'Light mode', auto:'Auto', turkish:'Türkçe', english:'English', dataFolder:'Data folder', debugBrowser:'Open Auto Play browser visibly',
     cardsEmpty:'No card data.', cardScanLater:'Choose the Main Account and press Refresh to scan Star Cards.',
@@ -683,6 +684,30 @@ const MSG = {
     "fn.cleaned":"Harcayıcı listelerinden {count} eski arkadaş çıkarıldı",
     "fn.removeFailed":"{spender}: bir arkadaş çıkarılamadı · {error}",
     "at2.callback":"Scout yenilendi (Call back) · kalan {left}",
+    "at2.callbackItem":"Callback eşyası kullanıldı · kalan {left}",
+    "at2.noCallbackItems":"{name}: Callback eşyası kalmadı",
+    "at2.callbackItemFailed":"Callback eşyası kullanılamadı: {error}",
+    "at2.synthAfter":"Auto Trade bitti · kart sentezi başladı (önce takımsız, sonra takımlı)",
+    "at2.synthBusy":"Sentez zaten çalışıyor · yeniden başlatılmadı",
+    "at2.synthFailed":"Sentez başlatılamadı: {error}",
+    "ad.start":"Otomatik Draft başladı · {count} hesap",
+    "db.start":"Toplu Başlat · {count} hesapta {steps} sistem",
+    "db.stepFailed":"{step}: {error} · sıradaki sisteme geçildi",
+    "db.done":"Toplu Başlat bitti",
+    "db.stopped":"Toplu Başlat durduruldu",
+    "ad.done":"Otomatik Draft bitti · {picked} oyuncu alındı",
+    "ad.stopped":"Otomatik Draft durduruldu",
+    "ad.joined":"Oda {slot}'a ilk giren hesap · oyunculara bakılıyor",
+    "ad.joinFailed":"Oda {slot}'a girilemedi: {error}",
+    "ad.pool":"Oda {slot}: rolü olan {count} oyuncu · {extra} hesap daha giriyor",
+    "ad.noPick":"Oda {slot}: bu hesap için alınacak oyuncu yok",
+    "ad.pickFailed":"Seçim yapılamadı: {error}",
+    "ad.roomDone":"Oda {slot} bitti · alınan oyuncular devrediliyor",
+    "ad.handFailed":"Draft oyuncuları devredilemedi: {error} · Draft listesinde kaldılar",
+    "ad.handRetry":"Devir yapılamadı ({error}) · 30 sn sonra yeniden denenecek",
+    "ad.noSpender":"Yer ve TK'sı olan boşta Harcayıcı yok · hesap oyuncuları kendisi pazara koyuyor",
+    "ad.error":"Otomatik Draft: {error}",
+    "df.toSpender":"{names} → {name} (Harcayıcı)",
     "at2.converted":"{count} oyuncu karta çevrildi: {names}",
     "at2.makeFailed":"Karta çevirme başarısız: {error}",
     "at2.unload":"Main dolu · oyuncular {name} hesabına veriliyor",
@@ -1401,6 +1426,30 @@ const MSG = {
     "fn.cleaned":"{count} old friend(s) removed from the Harcayıcı lists",
     "fn.removeFailed":"{spender}: a friend could not be removed · {error}",
     "at2.callback":"Scout called back · {left} left",
+    "at2.callbackItem":"Callback item used · {left} left",
+    "at2.noCallbackItems":"{name}: no Callback item left",
+    "at2.callbackItemFailed":"Callback item could not be used: {error}",
+    "at2.synthAfter":"Auto Trade is over · card synthesis started (No Team, then Team)",
+    "at2.synthBusy":"Synthesis is already running · not started again",
+    "at2.synthFailed":"Synthesis could not start: {error}",
+    "ad.start":"Automatic Draft started · {count} account(s)",
+    "db.start":"Run in order · {steps} system(s) on {count} account(s)",
+    "db.stepFailed":"{step}: {error} · on to the next system",
+    "db.done":"Run in order finished",
+    "db.stopped":"Run in order stopped",
+    "ad.done":"Automatic Draft finished · {picked} player(s) picked",
+    "ad.stopped":"Automatic Draft stopped",
+    "ad.joined":"Joined room {slot} first · looking at the players",
+    "ad.joinFailed":"Could not join room {slot}: {error}",
+    "ad.pool":"Room {slot}: {count} player(s) with a role · {extra} more account(s) join",
+    "ad.noPick":"Room {slot}: nothing to pick for this account",
+    "ad.pickFailed":"Pick failed: {error}",
+    "ad.roomDone":"Room {slot} is over · the picked players are handed on",
+    "ad.handFailed":"Drafted players could not be handed on: {error} · they stay in the Draft list",
+    "ad.handRetry":"Handing on failed ({error}) · trying again in 30 s",
+    "ad.noSpender":"No free Harcayıcı with room and TK · the account lists them itself",
+    "ad.error":"Automatic Draft: {error}",
+    "df.toSpender":"{names} → {name} (Harcayıcı)",
     "at2.converted":"{count} player(s) turned into cards: {names}",
     "at2.makeFailed":"Make failed: {error}",
     "at2.unload":"Main is full · giving players to {name}",
@@ -1982,7 +2031,29 @@ function AutoPlay({ state, t, refresh, toast, go }) {
 const RELIST_TONE={ready:'muted',queued:'muted',removing:'warn',listing:'warn',listed:'ok',owned:'bad',failed:'bad',removedNotListed:'bad',stopped:'muted'};
 // 'owned' (already in the roster) can be tried again: the already-owned workaround may get it listed now.
 const RELIST_RETRYABLE=new Set(['ready','failed','stopped','owned']);
-const LISTING_FILTERS={accountId:'',name:'',grade:'',currency:'',kind:''};
+const LISTING_FILTERS={accountIds:[],name:'',grades:[],currency:'',kind:'',priceMin:'',priceMax:'',salaryMin:'',salaryMax:''};
+// Many values out of a list (user 2026-11-24: accounts and ratings picked together). Accounts with the
+// same name prefix (Pipelne1…50) also come as one row that ticks the whole group.
+function MultiPick({ label, allText, options, value, onChange, groups = null }) {
+  const [open,setOpen]=useState(false);
+  const ref=useDismiss(open,()=>setOpen(false));
+  const set=new Set(value);
+  const toggle=v=>onChange(set.has(v)?value.filter(x=>x!==v):[...value,v]);
+  const shown=!value.length?`${allText} · ${label}`:value.length===1?(options.find(o=>o.value===value[0])?.label||value[0]):`${label}: ${value.length}`;
+  return <div className="multi-pick" ref={ref}><button type="button" className={`multi-pick-btn ${value.length?'on':''}`} onClick={()=>setOpen(o=>!o)}>{shown} ▾</button>
+    {open&&<div className="multi-pick-menu panel"><div className="multi-pick-head"><button type="button" className="chip" onClick={()=>onChange(options.map(o=>o.value))}>{allText}</button><button type="button" className="chip" onClick={()=>onChange([])}>×</button></div>
+      {groups?groups.map(g=>g.accounts?<GroupPick key={g.key} g={g} set={set} value={value} onChange={onChange}/>:<label key={g.key}><input type="checkbox" checked={set.has(g.account.id)} onChange={()=>toggle(g.account.id)}/>{g.account.name}</label>)
+        :options.map(o=><label key={o.value}><input type="checkbox" checked={set.has(o.value)} onChange={()=>toggle(o.value)}/>{o.label}</label>)}</div>}</div>;
+}
+function GroupPick({ g, set, value, onChange }) {
+  const [open,setOpen]=useState(false);
+  const ids=g.accounts.map(a=>a.id); const on=ids.filter(id=>set.has(id)).length;
+  return <div className="multi-pick-group"><label><input type="checkbox" checked={on===ids.length} ref={el=>{if(el)el.indeterminate=on>0&&on<ids.length}} onChange={()=>onChange(on===ids.length?value.filter(v=>!ids.includes(v)):[...new Set([...value,...ids])])}/><b>{g.label}</b> <small className="muted-text">{on}/{ids.length}</small></label><button type="button" className="grp-arrow-btn" onClick={()=>setOpen(o=>!o)}>{open?'▾':'▸'}</button>
+    {open&&<div className="multi-pick-sub">{g.accounts.map(a=><label key={a.id}><input type="checkbox" checked={set.has(a.id)} onChange={()=>onChange(set.has(a.id)?value.filter(v=>v!==a.id):[...value,a.id])}/>{a.name}</label>)}</div>}</div>;
+}
+// "a, b, c": any of the names (user 2026-11-24)
+const nameTerms=q=>String(q||'').split(',').map(x=>x.trim().toLowerCase()).filter(Boolean);
+const inRange=(v,min,max)=>{const n=Number(v);if(min!==''&&!(Number.isFinite(n)&&n>=Number(min)))return false;if(max!==''&&!(Number.isFinite(n)&&n<=Number(max)))return false;return true;};
 const listingKindOf=r=>r.state==='owned'?'owned':(r.kind||null);
 const KIND_TONE={recent:'ok',stock:'muted',onSale:'warn',owned:'bad'};
 // One market table (Sold / Listed / Expired) with its own filters and column sorting.
@@ -2016,7 +2087,9 @@ function ListingTable({ t, title, status, rows, edits, edit, busy, actionable, p
   const [sort,setSort]=useState({key:'price',dir:'asc'});
   const accounts=[...new Map(rows.map(r=>[r.accountId,r.accountName])).entries()].sort((a,b)=>String(a[1]).localeCompare(String(b[1])));
   const grades=[...new Set(rows.map(r=>r.grade).filter(Boolean))].sort((a,b)=>gradeRank(b)-gradeRank(a));
-  const view=useMemo(()=>sortTradingRows(rows.map(r=>({...r,kind:listingKindOf(r),value:playerIndex?.get(r.playerId)?.value??null})).filter(r=>(!filters.accountId||r.accountId===filters.accountId)&&(!filters.name||String(r.name).toLowerCase().includes(filters.name.toLowerCase()))&&(!filters.grade||r.grade===filters.grade)&&(!filters.currency||r.currency===filters.currency)&&(!filters.kind||listingKindOf(r)===filters.kind)),sort),[rows,filters,sort]);
+  const terms=nameTerms(filters.name);
+  const view=useMemo(()=>sortTradingRows(rows.map(r=>({...r,kind:listingKindOf(r),value:playerIndex?.get(r.playerId)?.value??null})).filter(r=>(!filters.accountIds.length||filters.accountIds.includes(r.accountId))&&(!terms.length||terms.some(q=>String(r.name).toLowerCase().includes(q)))&&(!filters.grades.length||filters.grades.includes(r.grade))&&(!filters.currency||r.currency===filters.currency)&&(!filters.kind||listingKindOf(r)===filters.kind)&&inRange(r.price,filters.priceMin,filters.priceMax)&&inRange(r.salary,filters.salaryMin,filters.salaryMax)),sort),[rows,filters,sort]);
+  const accGroups=useMemo(()=>groupAccounts(accounts.map(([id,name])=>({id,name}))),[rows]);
   const sortBy=key=>setSort(s=>({key,dir:s.key===key&&s.dir==='asc'?'desc':'asc'}));
   const th=(key,label)=><th className="sortable" onClick={()=>sortBy(key)}>{label}{sort.key===key?(sort.dir==='asc'?' ↑':' ↓'):''}</th>;
   const pickable=actionable?view.filter(r=>RELIST_RETRYABLE.has(r.state)):[];
@@ -2024,7 +2097,9 @@ function ListingTable({ t, title, status, rows, edits, edit, busy, actionable, p
   const set=(k,v)=>setFilters(f=>({...f,[k]:v}));
   return <section className="listing-section">
     <h3 className="section-title">{title} <small>{view.length===rows.length?rows.length:`${view.length} / ${rows.length}`}</small></h3>
-    <div className="listing-filters"><select value={filters.accountId} onChange={e=>set('accountId',e.target.value)}><option value="">{t.all} · {t.account}</option>{accounts.map(([id,name])=><option key={id} value={id}>{name}</option>)}</select><input placeholder={t.name} value={filters.name} onChange={e=>set('name',e.target.value)}/><select value={filters.grade} onChange={e=>set('grade',e.target.value)}><option value="">{t.all} · {t.grade}</option>{grades.map(g=><option key={g}>{g}</option>)}</select><select value={filters.currency} onChange={e=>set('currency',e.target.value)}><option value="">{t.all} · APK/TIX</option><option>APK</option><option>TIX</option></select>{actionable&&<select value={filters.kind} onChange={e=>set('kind',e.target.value)}><option value="">{t.all} · {t.marketKind}</option>{['recent','stock','onSale','owned'].filter(k=>rows.some(r=>listingKindOf(r)===k)).map(k=><option key={k} value={k}>{t[`marketKind_${k}`]}</option>)}</select>}<button className="chip reset-chip" onClick={()=>setFilters(LISTING_FILTERS)}>{t.reset}</button></div>
+    <div className="listing-filters"><MultiPick label={t.account} allText={t.all} options={accounts.map(([id,name])=>({value:id,label:name}))} groups={accGroups} value={filters.accountIds} onChange={v=>set('accountIds',v)}/><input className="listing-name" placeholder={t.listingNameHint} title={t.listingNameHint} value={filters.name} onChange={e=>set('name',e.target.value)}/><MultiPick label={t.grade} allText={t.all} options={grades.map(g=>({value:g,label:g}))} value={filters.grades} onChange={v=>set('grades',v)}/>
+      <span className="range-filter"><b>{t.price}</b><input type="number" min="0" placeholder="min" value={filters.priceMin} onChange={e=>set('priceMin',e.target.value)}/><i>–</i><input type="number" min="0" placeholder="max" value={filters.priceMax} onChange={e=>set('priceMax',e.target.value)}/></span>
+      <span className="range-filter"><b>{t.salary}</b><input type="number" min="0" placeholder="min" value={filters.salaryMin} onChange={e=>set('salaryMin',e.target.value)}/><i>–</i><input type="number" min="0" placeholder="max" value={filters.salaryMax} onChange={e=>set('salaryMax',e.target.value)}/></span><select value={filters.currency} onChange={e=>set('currency',e.target.value)}><option value="">{t.all} · APK/TIX</option><option>APK</option><option>TIX</option></select>{actionable&&<select value={filters.kind} onChange={e=>set('kind',e.target.value)}><option value="">{t.all} · {t.marketKind}</option>{['recent','stock','onSale','owned'].filter(k=>rows.some(r=>listingKindOf(r)===k)).map(k=><option key={k} value={k}>{t[`marketKind_${k}`]}</option>)}</select>}<button className="chip reset-chip" onClick={()=>setFilters(LISTING_FILTERS)}>{t.reset}</button></div>
     <div className="panel table-panel listing-table"><SortTable><thead><tr>
       {actionable&&<th className="select-col"><input type="checkbox" checked={allPicked} disabled={busy||!pickable.length} onChange={e=>{for(const r of pickable)edit(r,{selected:e.target.checked})}} aria-label={t.selectAll}/></th>}
       {th('accountName',t.account)}{th('name',t.players)}{th('grade',t.grade)}{th('value',t.value)}{th('salary',t.salary)}{th('base',t.base)}{th('basePct','Base %')}{actionable&&th('kind',t.marketKind)}{th('price',actionable?t.marketOldPrice:t.price)}

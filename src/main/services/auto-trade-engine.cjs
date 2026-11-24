@@ -23,10 +23,13 @@ const DEFAULTS = {
   baseAsSellable: false,             // team players signed at/below Base count as Satılabilir
   sideOnly: false,                   // only Satılabilir / Stok are signed (no Kart, no cheap players)
   keepAutoPlay: false,               // Auto Play keeps running on the run's accounts (user 2026-11-13)
+  synthAfter: true,                  // when the run ends for any reason: Synthesis "Do both" (user 2026-11-24)
+  useCallbackItems: false,           // a Scout with no free attempts uses a Callback item (user 2026-11-24)
   baseProjected: true                // …compared with tomorrow's Base (Base × 0.95)
 };
 const LIST_DEFAULTS = { sellable: { price: 20, currency: 'APK' }, stock: { price: 99999, currency: 'TIX' } };
 const MAX_TRADE_ROUNDS = 12;
+const CALLBACK_ITEMS_PER_TURN = 5; // Callback items one account uses in one turn at most (user 2026-11-24)
 const CONVERT_BATCH = 5; // main turns its card players into cards this many at a time (user 2026-11-24)
 const SPENDER_PRICE = 999999; // a Harcayıcı lists its overflow at this price by default (TIX)
 
@@ -89,7 +92,8 @@ class AutoTradeEngine {
     this.onChanged = () => { this.revision++; onChanged?.(); };
     this.onAttention = onAttention;   // (kind, text) → bring the window forward / flash
     this.onScout = onScout;           // (accountId, freeAgentReply) → Scout page shows it
-    this.onCycleEnd = onCycleEnd;     // async () → the Cards page scan of the main account
+    this.onCycleEnd = onCycleEnd;
+    this.onFinished = null;           // (state) → after the run ended (main.cjs: Synthesis)     // async () → the Cards page scan of the main account
     this.createSocket = createSocket;
     this.now = now;
     this.timing = { stepMs: 350, ...timing };
@@ -347,6 +351,10 @@ class AutoTradeEngine {
     if (raw.sideOnly != null) last.sideOnly = Boolean(raw.sideOnly);
     if (raw.baseProjected != null) last.baseProjected = raw.baseProjected !== false;
     if (raw.friendBoards != null) last.friendBoards = raw.friendBoards !== false;
+    // remembered as soon as they are ticked (user 2026-11-24)
+    if (raw.synthAfter != null) last.synthAfter = raw.synthAfter !== false;
+    if (raw.useCallbackItems != null) last.useCallbackItems = Boolean(raw.useCallbackItems);
+    if (raw.keepAutoPlay != null) last.keepAutoPlay = Boolean(raw.keepAutoPlay);
     for (const k of ['spenderSellPrice', 'spenderStockPrice']) if (Number(raw[k]) >= 1) last[k] = Math.floor(Number(raw[k]));
     for (const k of ['spenderSellCurrency', 'spenderStockCurrency']) if (['TIX', 'APK'].includes(raw[k])) last[k] = raw[k];
     if (Number(raw.spendersPerSide) >= 1) last.spendersPerSide = Math.min(20, Math.floor(Number(raw.spendersPerSide)));
@@ -383,6 +391,8 @@ class AutoTradeEngine {
       baseAsSellable: Boolean(cfg.baseAsSellable),
       sideOnly: Boolean(cfg.sideOnly),
       keepAutoPlay: Boolean(cfg.keepAutoPlay),
+      synthAfter: cfg.synthAfter !== false,
+      useCallbackItems: Boolean(cfg.useCallbackItems),
       baseProjected: cfg.baseProjected !== false,
       friendBoards: cfg.friendBoards !== false,
       // what a Harcayıcı lists to make room: Satılabilir and Stok each at their own default
@@ -585,6 +595,7 @@ class AutoTradeEngine {
       this.controller = null;
       this.pauseGate = null;
       this._save();
+      this._finished();
     });
   }
 
@@ -607,8 +618,20 @@ class AutoTradeEngine {
       this._clockOff();
       this._closeAll();
       this._save();
+      this._finished();
     })().finally(() => { this._detaching = false; });
     await this.done;
+  }
+
+  // The run is over (done, stopped by the user, the TK ran out, an error): the "then Synthesis"
+  // option (user 2026-11-24). Not for a Hazırlık, not while waiting for the game, not when another
+  // task only paused it (that one continues the run).
+  _finished() {
+    const s = this.state;
+    if (!s || s.config.prepOnly || !['done', 'stopped', 'error'].includes(s.status) || s.stoppedBy === 'task') return;
+    if (s.synthStarted) return;
+    s.synthStarted = true;
+    try { this.onFinished?.(s); } catch {}
   }
 
   _totals() {
@@ -1238,6 +1261,7 @@ class AutoTradeEngine {
     // what every side already holds for main counts against it).
     // its own callbacks change its board: friends read it again
     this._boardSeen?.delete(conn.userId);
+    acc.callbackItemsTurn = 0;
     const team = this._teamPlayers();
     let budgetNoted = false;
     for (let round = 0; round < 50; round++) {
@@ -1340,14 +1364,31 @@ class AutoTradeEngine {
         if (b === 'skipped') return { skipped: true };
         if (b) { roster = R.rosterOf(await conn.roster()); acc.funds = await conn.funds().catch(() => acc.funds); }
       }
-      // No more to buy in this list: call a new one while free attempts are left.
-      if (!(fa?.attemptsLeft > 0)) return { exhausted: true };
+      // No more to buy in this list: call a new one while free attempts are left; with no free
+      // attempt, a Callback item when the option is on (user 2026-11-24)
+      const free = fa?.attemptsLeft > 0;
+      if (!free && (!this.state.config.useCallbackItems || acc.noCallbackItems || (acc.callbackItemsTurn || 0) >= CALLBACK_ITEMS_PER_TURN)) return { exhausted: true };
       if (roster.total >= R.ROSTER_MAX && !(await this._makeRoom(id, role, signal))) return { full: true };
-      this._step('callback', { name: this._name(id), attempts: fa.attemptsLeft }, id);
-      const cb = await conn.callback();
-      if (!cb?.success) return { exhausted: true };
-      this.onScout?.(id, { ...fa, freeAgents: cb.freeAgents || [], attemptsLeft: Math.max(0, (fa.attemptsLeft || 1) - 1) });
-      this._log('info', 'at2.callback', { left: (fa.attemptsLeft || 1) - 1 }, 'Scout called back', id);
+      if (free) {
+        this._step('callback', { name: this._name(id), attempts: fa.attemptsLeft }, id);
+        const cb = await conn.callback();
+        if (!cb?.success) return { exhausted: true };
+        this.onScout?.(id, { ...fa, freeAgents: cb.freeAgents || [], attemptsLeft: Math.max(0, (fa.attemptsLeft || 1) - 1) });
+        this._log('info', 'at2.callback', { left: (fa.attemptsLeft || 1) - 1 }, 'Scout called back', id);
+      } else {
+        this._step('callbackItem', { name: this._name(id) }, id);
+        const cb = await conn.callbackItem().catch(error => ({ success: false, message: error.message }));
+        if (!cb?.success) {
+          acc.noCallbackItems = true;
+          if (cb?.noItems) this._log('info', 'at2.noCallbackItems', { name: this._name(id) }, `${this._name(id)}: no Callback item left`, id);
+          else this._log('warning', 'at2.callbackItemFailed', { error: cb?.message || cb?.error || '' }, `Callback item could not be used: ${cb?.message || cb?.error || 'refused'}`, id);
+          return { exhausted: true };
+        }
+        acc.callbackItems = (acc.callbackItems || 0) + 1;
+        acc.callbackItemsTurn = (acc.callbackItemsTurn || 0) + 1;
+        this.onScout?.(id, { ...fa, freeAgents: cb.freeAgents || [], attemptsLeft: 0 });
+        this._log('info', 'at2.callbackItem', { left: cb.callbackItems ?? '—' }, `Callback item used · ${cb.callbackItems ?? '—'} left`, id);
+      }
       await sleep(this.timing.stepMs, signal);
     }
     return { exhausted: true };

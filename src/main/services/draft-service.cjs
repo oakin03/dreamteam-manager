@@ -479,6 +479,74 @@ class DraftService {
     return this.snapshot();
   }
 
+  // One trade room: `fromId` gives the players, `to` (an open TradeGameAccount of `toAccount`)
+  // gives nothing back and pays their salary. Checked on the receiver's roster.
+  async _give(fromId, toAccount, to, ids) {
+    const from = this._accounts().find(a => a.id === fromId);
+    const s = await TradeGameAccount.open({ account: from, sessions: this.sessions, createSocket: this.createSocket });
+    let roomId = null;
+    try {
+      const password = String(Math.floor(100000 + Math.random() * 900000));
+      roomId = await s.createRoom('Draft', password);
+      const sideJoined = s.expect('joinedRoomData', d => d?.roomId === roomId);
+      const room = await to.joinRoom(roomId, password);
+      await sideJoined.catch(() => null);
+      const sel = ids.map(id => (room.hostPlayers || []).find(p => p.id === id));
+      if (sel.some(p => !p)) throw new Error('A drafted player is not on this account any more.');
+      const upd = to.expect('tradeSelectionUpdate', d => d?.roomId === roomId && (d.hostSelectedPlayers || []).length === sel.length);
+      s.select(roomId, sel);
+      await upd;
+      await sleep(300);
+      for (let attempt = 1; ; attempt++) {
+        const both = to.expect('acceptTradeUpdate', d => d?.hostAccepted && d?.guestAccepted, 7000);
+        s.accept(roomId);
+        await sleep(250);
+        to.accept(roomId);
+        try { await both; break; } catch (error) { if (attempt >= 3) throw error; }
+      }
+      const resultP = to.expect('tradeResult', () => true).catch(error => ({ success: false, message: error.message }));
+      to.confirm(roomId, sel, []);
+      const result = await resultP;
+      // the game does not always answer: the receiver's roster decides
+      const mr = (await to.roster().catch(() => null))?.players || {};
+      const onTo = new Set([...(mr.starters || []), ...(mr.bench || [])].map(p => p.id));
+      if (!ids.every(id => onTo.has(id))) throw new Error(`Trade to ${toAccount.name} failed: ${result?.message || 'the players did not move'}`);
+    } finally {
+      if (roomId) s.cancelRoom(roomId);
+      s.close();
+    }
+  }
+
+  // Satılabilir / Stok of the automatic draft (user 2026-11-24): to a Harcayıcı, which puts them on
+  // the market at Auto Trade's price. `spenderId` = the drafting account itself: it only lists.
+  async toSpender(accountId, spenderId, playerIds) {
+    const ids = [...new Set(playerIds || [])];
+    const rows = (this._drafted()[accountId] || []).filter(r => ids.includes(r.id));
+    if (!rows.length) throw new Error('Player not found.');
+    const names = rows.map(r => r.name).join(', ');
+    if (spenderId !== accountId) {
+      const sp = this._accounts().find(a => a.id === spenderId);
+      if (!sp) throw new Error('Account not found.');
+      const t = await TradeGameAccount.open({ account: sp, sessions: this.sessions, createSocket: this.createSocket });
+      try { await this._give(accountId, sp, t, ids); } finally { t.leave?.(); t.close(); }
+      this._dropDrafted(accountId, ids);
+      this.addRows(spenderId, rows.map(r => ({ ...r, from: this._name(accountId) })));
+      this._log('success', 'df.toSpender', { names, name: sp.name }, `${names} → ${sp.name} (Harcayıcı)`, accountId);
+    }
+    const priced = (this._withPrices({ [spenderId]: rows })[spenderId] || []);
+    const items = priced.filter(r => r.suggest?.price).map(r => ({ id: r.id, price: r.suggest.price, currency: r.suggest.currency }));
+    if (items.length) await this.listPlayers(spenderId, items);
+    return items.length;
+  }
+
+  // what the automatic draft decided for a picked player (role, where it goes)
+  tagRows(accountId, tags) {
+    const drafted = this._drafted();
+    let n = 0;
+    for (const r of drafted[accountId] || []) if (tags[r.id]) { Object.assign(r, tags[r.id]); n++; }
+    if (n) { this._saveDrafted(drafted); this.onChanged(); }
+  }
+
   // Karta çevir (user 2026-11-11): the drafted players go to main in a trade room (main gives
   // nothing back), then main turns them into star cards (Make). On main itself only the Make.
   async toCards(accountId, playerIds) {
@@ -492,35 +560,10 @@ class DraftService {
     if (!ids.length) throw new Error('Player not found.');
     const names = ids.map(id => this._rowName(accountId, id)).join(', ');
     const m = await TradeGameAccount.open({ account: main, sessions: this.sessions, createSocket: this.createSocket });
-    let s = null, roomId = null;
+    const s = null, roomId = null;
     try {
       if (accountId !== mainId) {
-        s = await TradeGameAccount.open({ account: side, sessions: this.sessions, createSocket: this.createSocket });
-        const password = String(Math.floor(100000 + Math.random() * 900000));
-        roomId = await s.createRoom('Draft', password);
-        const sideJoined = s.expect('joinedRoomData', d => d?.roomId === roomId);
-        const room = await m.joinRoom(roomId, password);
-        await sideJoined.catch(() => null);
-        const sel = ids.map(id => (room.hostPlayers || []).find(p => p.id === id));
-        if (sel.some(p => !p)) throw new Error('A drafted player is not on this account any more.');
-        const upd = m.expect('tradeSelectionUpdate', d => d?.roomId === roomId && (d.hostSelectedPlayers || []).length === sel.length);
-        s.select(roomId, sel);
-        await upd;
-        await sleep(300);
-        for (let attempt = 1; ; attempt++) {
-          const both = m.expect('acceptTradeUpdate', d => d?.hostAccepted && d?.guestAccepted, 7000);
-          s.accept(roomId);
-          await sleep(250);
-          m.accept(roomId);
-          try { await both; break; } catch (error) { if (attempt >= 3) throw error; }
-        }
-        const resultP = m.expect('tradeResult', () => true).catch(error => ({ success: false, message: error.message }));
-        m.confirm(roomId, sel, []);
-        const result = await resultP;
-        // the game does not always answer: main's roster decides
-        const mr = (await m.roster().catch(() => null))?.players || {};
-        const onMain = new Set([...(mr.starters || []), ...(mr.bench || [])].map(p => p.id));
-        if (!ids.every(id => onMain.has(id))) throw new Error(`Trade to main failed: ${result?.message || 'the players did not move'}`);
+        await this._give(accountId, main, m, ids);
         this._log('success', 'df.toMain', { names, main: main.name }, `${names} → ${main.name}`, accountId);
       }
       const r = await m.makeCards(ids);

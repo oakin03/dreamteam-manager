@@ -36,6 +36,8 @@ const TEXT = {
     maxPrice: 'Maksimum fiyat (Scout Price)', maxPriceHint: 'Bu fiyat ve altındaki oyuncular rolüne bakılmadan Main\'e gider ve karta çevrilir. 0–2500; 50\'nin altı = sadece roller.',
     room: 'Trade odası', roomDesc: 'Oda adı', roomPass: 'Oda şifresi', roomPassSaved: 'kayıtlı', showPass: 'Şifreyi göster', hidePass: 'Şifreyi gizle',
     loop: 'Döngü', loopOff: 'Tek tur', loopCount: 'Belirli sayıda', loopInfinite: 'Sonsuz', loopTimes: 'tur', loopHint: 'Döngüde her hesaba Scout\'u yenilendiğinde (30 dk) tekrar girilir.',
+    synthAfter: 'Bitince kart sentezini başlat', synthAfterHint: 'Auto Trade hangi sebeple biterse bitsin (tur sonu, Durdur, TK bitmesi, hata) Kartlar → Sentez bölümündeki "İkisini de yap" çalışır: önce takımsız, sonra takımlı, Sentez sayfasında seçili seviyelerle.',
+    useCallbackItems: 'Callback eşyalarını kullan', useCallbackItemsHint: 'Scout’un günlük ücretsiz yenileme hakkı bitince hesap çantasındaki Callback eşyasıyla Scout yenilenir (hesap başına bir turda en çok 5 eşya). Eşyası olmayan hesap normal şekilde devam eder.',
     keepAutoPlay: "Auto Play'i durdurma", keepAutoPlayHint: "Auto Play bu hesaplarda çalışmaya devam eder (soket modunda Auto Trade ile çakışmaz; yalnızca tarayıcı moduna düşmüş hesaplar kısa süre durdurulur). Maaş sınırı aşılırsa Auto Play durmaz: Auto Trade o hesapta oyuncu listeleyince, takas edince, kovunca ya da karta çevirince hemen, olmazsa 2 dakikada bir tekrar dener; 10 denemede (yaklaşık 20 dakika) açılmazsa eskisi gibi durur ve uyarır.",
     sideOnly: 'Sadece Satılabilir ve Stok oyuncuları al', sideOnlyHint: 'Kart ve fiyat sınırının altındaki ucuz oyuncular alınmaz; yalnızca Satılabilir ve Stok alınır. Main kendi sırasında tarar, harcayıcılara verip kapanır; sonra 10 hesap main olmadan aynı anda çalışır, her biri ayrı bir harcayıcıya verir, harcayıcı hemen pazara koyar.',
     baseAsSellable: 'Base oyuncuları satılabilir olarak değerlendir', baseAsSellableHint: 'Alımda gelen gerçek maaşı (Lv30+ hesaplarda %5 indirim olabilir) Base değerinde ya da altında olan, Kartlar sisteminde bir takımdaki oyuncular Satılabilir sayılır ve karta çevrilmez. No Team ve Kartlar\'da olmayan oyuncular etkilenmez.',
@@ -94,6 +96,8 @@ const TEXT = {
     maxPrice: 'Maximum price (Scout Price)', maxPriceHint: 'Players at or below this price go to main and become cards whatever their role. 0–2500; under 50 = roles only.',
     room: 'Trade room', roomDesc: 'Room name', roomPass: 'Room password', roomPassSaved: 'saved', showPass: 'Show password', hidePass: 'Hide password',
     loop: 'Loop', loopOff: 'Single run', loopCount: 'Number of cycles', loopInfinite: 'Endless', loopTimes: 'cycles', loopHint: 'In a loop every account is entered again when its Scout refreshes (30 min).',
+    synthAfter: 'Start card synthesis when it ends', synthAfterHint: 'Whatever ends Auto Trade (the last cycle, Stop, TK running out, an error), Cards → Synthesis "Do both" runs: No Team first, then Team, with the levels chosen on the Synthesis page.',
+    useCallbackItems: 'Use Callback items', useCallbackItemsHint: 'When the free daily Scout refreshes are used up, a Callback item from the bag of the account renews the Scout (at most 5 items per account per turn). An account without items goes on as before.',
     keepAutoPlay: "Keep Auto Play running", keepAutoPlayHint: "Auto Play keeps running on these accounts (in socket mode it does not clash with Auto Trade; only accounts that fell back to browser mode are stopped for a moment). Over the salary cap Auto Play does not stop: it tries again as soon as Auto Trade lists, trades, fires or makes cards on that account, otherwise every 2 minutes; when 10 tries (about 20 minutes) do not get it under the cap it stops and alerts as before.",
     sideOnly: 'Only sign Satılabilir and Stok players', sideOnlyHint: 'No Kart players and no cheap players under the price limit are signed; only Satılabilir and Stok. Main scouts in its own turn, hands to the spenders and closes; then 10 accounts work at once without main, each hands to its own spender, which lists right away.',
     baseAsSellable: 'Treat base players as sellable', baseAsSellableHint: 'Team players (in the Cards system) whose actual signed salary (Lv30+ accounts may get a 5% discount) is at or below Base count as Satılabilir and are not turned into cards. No Team players and players not in Cards are not affected.',
@@ -200,6 +204,8 @@ export default function AutoTradePage({ state, t, toast, msgText, Modal, refresh
     baseAsSellable: Boolean(last.baseAsSellable),
     sideOnly: Boolean(last.sideOnly),
     keepAutoPlay: Boolean(last.keepAutoPlay),
+    synthAfter: last.synthAfter !== false,
+    useCallbackItems: Boolean(last.useCallbackItems),
     baseProjected: last.baseProjected !== false,
     friendBoards: last.friendBoards !== false,
     spenderSellPrice: String(last.spenderSellPrice || last.spenderPrice || 999999),
@@ -389,6 +395,8 @@ function ConfigPanel({ state, x, form, set, accounts, realMain, selected, mainSe
     </section>
     <section className="at2-options">
       <label className="at2-check"><input type="checkbox" checked={form.sideOnly} onChange={e => set({ sideOnly: e.target.checked })} /><span>{x.sideOnly}</span><small>{x.sideOnlyHint}</small></label>
+      <label className="at2-check"><input type="checkbox" checked={form.synthAfter !== false} onChange={e => set({ synthAfter: e.target.checked })} /><span>{x.synthAfter}</span><small>{x.synthAfterHint}</small></label>
+      <label className="at2-check"><input type="checkbox" checked={Boolean(form.useCallbackItems)} onChange={e => set({ useCallbackItems: e.target.checked })} /><span>{x.useCallbackItems}</span><small>{x.useCallbackItemsHint}</small></label>
       <label className="at2-check"><input type="checkbox" checked={Boolean(form.keepAutoPlay)} onChange={e => set({ keepAutoPlay: e.target.checked })} /><span>{x.keepAutoPlay}</span><small>{x.keepAutoPlayHint}</small></label>
       <label className="at2-check"><input type="checkbox" checked={form.baseAsSellable} onChange={e => set({ baseAsSellable: e.target.checked })} /><span>{x.baseAsSellable}</span><small>{x.baseAsSellableHint}</small></label>
       <label className={`at2-check at2-sub ${form.baseAsSellable ? '' : 'off'}`}><input type="checkbox" disabled={!form.baseAsSellable} checked={form.baseProjected} onChange={e => set({ baseProjected: e.target.checked })} /><span>{x.baseProjected}</span><small>{x.baseProjectedHint}</small></label>

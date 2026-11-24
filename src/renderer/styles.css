@@ -1233,3 +1233,16 @@ tr.b3-broken td{background:color-mix(in srgb, var(--bg-fff0ee) 70%, transparent)
 .apk-calc{display:grid;gap:6px;margin-top:10px;padding:10px 12px;border:1px solid var(--bd-e4e7ec);border-radius:9px}.apk-calc-head{display:flex;align-items:center;gap:8px;flex-wrap:wrap}.apk-calc-line{display:grid;gap:2px}
 
 .game-down-retry{margin-left:6px;font-weight:800;text-decoration:underline;color:inherit;background:none;border:0;cursor:pointer;padding:0}
+
+/* Automatic Draft panel (2026-11-24) */
+.ad-panel{display:grid;gap:10px;margin-bottom:16px}.ad-head{display:flex;align-items:center;gap:10px}.ad-head>b{font-size:15px}
+.ad-grid{display:grid;grid-template-columns:minmax(0,2fr) minmax(260px,1fr);gap:16px}.ad-sub{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.ad-priority{margin:0 0 10px;padding-left:20px;display:grid;gap:4px}.ad-priority li{display:flex;align-items:center;gap:6px}.ad-priority .role-pill{border:1px solid;border-radius:999px;padding:1px 10px;font-weight:700;font-size:12px;min-width:110px}
+.ad-opt{display:grid;gap:4px;margin-bottom:8px}.ad-opt>span{font-weight:600;font-size:13px}.ad-table{max-height:320px;overflow:auto}.ad-table td .pill{margin:0 4px 2px 0}.ad-pending{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+@media (max-width:1100px){.ad-grid{grid-template-columns:1fr}}
+
+/* Market tables: many accounts / ratings at once, price and salary ranges (2026-11-24) */
+.multi-pick{position:relative}.multi-pick-btn{height:32px;border:1px solid var(--bd-d7dde6);border-radius:8px;background:var(--bg-ffffff);padding:0 10px;font-size:11.5px;color:inherit;cursor:pointer;white-space:nowrap}.multi-pick-btn.on{border-color:var(--accent,#f97316);font-weight:700}
+.multi-pick-menu{position:absolute;z-index:40;top:36px;left:0;min-width:220px;max-height:360px;overflow:auto;padding:8px;display:grid;gap:3px;box-shadow:0 10px 30px rgba(0,0,0,.18)}.multi-pick-menu label{display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer;white-space:nowrap}
+.multi-pick-head{display:flex;gap:6px;margin-bottom:4px}.multi-pick-group{display:grid;grid-template-columns:1fr auto;align-items:center}.multi-pick-sub{grid-column:1/-1;padding-left:18px;display:grid;gap:2px}.grp-arrow-btn{border:0;background:none;cursor:pointer;color:inherit}
+.range-filter{display:inline-flex;align-items:center;gap:4px;font-size:11.5px}.range-filter b{font-weight:600;margin-right:2px}.range-filter input{width:78px}.range-filter i{font-style:normal;opacity:.6}.listing-filters .listing-name{min-width:220px}
