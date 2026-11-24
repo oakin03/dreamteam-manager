@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { GameSocket } = require('./game-socket.cjs');
+const { eachAtOnce } = require('./wide.cjs');
 
 // Daily Quiz (Office) on /socket/ (read from the game client 2026-10-23):
 //   quiz:canPlay {userId} (ack) -> {success, canPlay}
@@ -17,6 +18,8 @@ const { GameSocket } = require('./game-socket.cjs');
 // with the setup) + answers learned here (quiz-bank.json in the user data); a learned
 // answer overrides a bundled one, so a changed answer is relearned by itself.
 const LETTERS = ['A', 'B', 'C', 'D'];
+const QUIZ_PARALLEL = 100;  // accounts in the quiz at the same time
+const CONNECT_TRIES = 3;    // a timed-out connection is tried this many times
 const QUESTIONS = 10;
 const USER_WAIT_MS = 8500;
 const AUTO_DELAY_MS = 900;        // a known answer is sent after a short pause
@@ -101,7 +104,9 @@ class QuizService {
     this._log(null, 'info', 'qz.start', { count: ids.length, bank: this.bankSize() }, `Daily Quiz started · ${ids.length} account(s) · ${this.bankSize()} known question(s)`);
     this.onChanged();
     try {
-      await Promise.all(ids.map(id => this._account(id, controller.signal)));
+      // at most QUIZ_PARALLEL at once (2026-11-24: 1100+ accounts opened together → 555 "Game socket
+      // connection timed out"); a timed-out connection is tried again after a short pause
+      await eachAtOnce(ids, id => this._accountRetry(id, controller.signal), QUIZ_PARALLEL);
     } finally {
       signal?.removeEventListener('abort', onAbort);
       for (const resolve of this.waiters.values()) resolve(null);
@@ -151,7 +156,15 @@ class QuizService {
     });
   }
 
-  async _account(id, signal) {
+  async _accountRetry(id, signal) {
+    for (let attempt = 1; ; attempt++) {
+      const ok = await this._account(id, signal, { last: attempt >= CONNECT_TRIES });
+      if (ok !== 'retry' || signal.aborted) return;
+      await new Promise(r => setTimeout(r, 2000 * attempt + Math.floor(this.random() * 2000)));
+    }
+  }
+
+  async _account(id, signal, { last = true } = {}) {
     const account = this.store.getAccounts().find(a => a.id === id);
     let conn = null;
     try {
@@ -222,6 +235,12 @@ class QuizService {
     } catch (error) {
       if (error?.name === 'AbortError') { this._row(id, { status: 'stopped', question: null }); return; }
       if (/auth|session|login/i.test(error.message)) this.sessions.invalidate?.(id);
+      // a connection that timed out / dropped: the account is tried again (the quiz goes on where it
+      // was: getCurrent reads the running session)
+      if (!last && /timed out|timeout|could not connect|websocket|disconnect|no reply/i.test(error.message)) {
+        this._row(id, { status: 'queued', reason: null, question: null });
+        return 'retry';
+      }
       this._row(id, { status: 'error', reason: error.message, question: null });
       this._log(id, 'error', 'qz.failed', { error: error.message }, `Daily Quiz stopped: ${error.message}`);
     } finally {

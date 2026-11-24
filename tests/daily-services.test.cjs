@@ -350,3 +350,24 @@ test('Go-up: a game that never answers again stops the account after the restart
   assert.equal(logs.filter(l => l.code === 'gu.noReply').length, 3);
   assert.ok(logs.some(l => l.code === 'gu.failed'));
 });
+
+test('Daily Quiz: a connection that times out is tried again (2026-11-24: 555 timeouts with 1100 accounts at once)', async () => {
+  const questions = [Q('2+2?', '3', '4', '5', '6')];
+  const game = quizGame(questions, ['B']);
+  let refused = 1;
+  const createSocket = (...args) => {
+    if (refused-- > 0) { const { EventEmitter } = require('node:events'); const s = new EventEmitter(); s.off = s.removeListener; s.close = () => {}; return s; } // never connects
+    return game.createSocket(...args);
+  };
+  const logs = [];
+  const s = store();
+  const { GameSocket } = require('../src/main/services/game-socket.cjs');
+  const open = GameSocket._openOnce;
+  GameSocket._openOnce = opts => open.call(GameSocket, { ...opts, timeoutMs: 50 });
+  try {
+    const svc = new QuizService({ store: s, activity: activity(logs), sessions, createSocket, bundledFile: path.join(os.tmpdir(), 'none.json'), random: () => 0, timing: { userWaitMs: 20, autoDelayMs: 1, marginMs: 0 } });
+    await svc.runAndWait(['a']);
+  } finally { GameSocket._openOnce = open; }
+  assert.equal(s.saved.quiz.rows[0].status, 'done');
+  assert.ok(!logs.some(l => l.code === 'qz.failed'), 'no failure logged');
+}, { timeout: 20000 });

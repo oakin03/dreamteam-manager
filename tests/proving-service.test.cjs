@@ -29,6 +29,7 @@ function fakeGame({ level = 41, results = [true, false], floor = 2 } = {}) {
       if (event === 'dailyBoss:getBosses') return cb(null, { success: true, userLevel: level, bosses: bosses() });
       if (event === 'dailyBoss:getAttempts') return cb(null, { success: true, remaining: state.left, max: 2 });
       if (event === 'getUserActiveMatch') {
+        if (state.silent > 0) { state.silent--; return setTimeout(() => cb(new Error('operation has timed out')), 20); } // the game does not answer (busy)
         if (state.active > 0) { state.active--; if (state.active === 0) state.pending?.(); return cb(null, { success: true, match: { match_id: 'm' } }); }
         return cb(null, { success: true, match: null });
       }
@@ -91,3 +92,16 @@ test('Elite Ascent signs in, plays the current floor and climbs on a win', async
   assert.equal(settings().eliteAscentReport.rows[0].won, 2);
   assert.ok(logs.some(l => l.code === 'ea.matchWon' && l.params.next === 4));
 });
+
+test('Elite Ascent: a getUserActiveMatch the game does not answer is asked again, the second match is played (2026-11-24: 110 of 141 stopped after one)', async () => {
+  const game = fakeGame({ results: [false, false], floor: 2 });
+  const { d, logs } = deps(game);
+  const svc = new EliteAscentService(d);
+  // the next two reads after the first match get no answer
+  const orig = svc._waitMatchEnd.bind(svc);
+  let first = true;
+  svc._waitMatchEnd = async (...a) => { const r = await orig(...a); if (first) { first = false; game.state.silent = 2; } return r; };
+  await svc.runAndWait({ a1: true });
+  assert.equal(game.state.played.length, 2, 'both attempts played');
+  assert.ok(!logs.some(l => l.code === 'ea.failed'), JSON.stringify(logs.filter(l => l.code === 'ea.failed')));
+}, { timeout: 30000 });

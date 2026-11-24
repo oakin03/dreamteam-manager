@@ -23,6 +23,7 @@ const { matchStartSlot } = require('./match-start-gate.cjs');
 //
 // A match ends when getUserActiveMatch (/simulation-socket/) no longer returns it.
 const SIM_PATH = '/simulation-socket/';
+const READ_TRIES = 4; // getUserActiveMatch is asked this many times before a no-answer counts
 const POLL_MS = 3000;
 const APPEAR_GRACE_MS = 20000;
 const MATCH_MAX_MS = 15 * 60 * 1000;
@@ -67,8 +68,19 @@ class ProvingBase {
     return this.anonSim;
   }
   _closeAnon() { try { this.anonSim?.close(); } catch {} this.anonSim = null; }
+  // A read only: a game that does not answer in time is asked again (2026-11-24: 110 of 141
+  // Elite Ascent accounts stopped after one match on "No reply to getUserActiveMatch" while 1000
+  // new accounts loaded the game); a stuck shared connection is replaced first.
   async _activeMatch(userId, signal) {
-    return (await (await this._anonSim(signal)).ack('getUserActiveMatch', { userId }, { signal, timeoutMs: 10000 }))?.match || null;
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return (await (await this._anonSim(signal)).ack('getUserActiveMatch', { userId }, { signal, timeoutMs: 10000 }))?.match || null;
+      } catch (error) {
+        if (error?.name === 'AbortError' || attempt >= READ_TRIES || !/no reply|timed out|timeout|disconnect|could not connect|websocket/i.test(error?.message || '')) throw error;
+        if (!this._reopening) { this._reopening = true; this._closeAnon(); setTimeout(() => { this._reopening = false; }, 5000); }
+        await sleep(2000 * attempt + Math.floor(Math.random() * 1500), signal);
+      }
+    }
   }
 
   // An earlier match (e.g. Auto Play's last one) has to end first.
