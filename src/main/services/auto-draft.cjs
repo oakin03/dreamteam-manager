@@ -1,7 +1,9 @@
 // Automatic Draft (user 2026-11-24). Over the Draft service (rooms, joining, picking):
-//  - a new room that fits a chosen account's level: ONE account joins first and sees the pool;
-//  - the players with a role in the pool are counted, and as many more accounts join (4 role
-//    players → 3 more), as long as the room has seats and the accounts fit its level;
+//  - every open room (not started, no cooldown, seats left) that fits chosen accounts' level is
+//    filled: as many of our accounts join as the room has free seats (user 2026-11-25: "her açık
+//    odayı doldursun"), every open room at the same time;
+//  - our turns are watched by a fast loop of their own, so a pick comes 3–5 s after the turn
+//    (the slow work — attempts, roster checks, joins — never holds it up);
 //  - on each of our turns, after a random 3–5 s (no bot-like instant picks), the account picks by
 //    the role priority (default Stok, Satılabilir, Kart, then any new role). Stok goes to Lv30+
 //    accounts first (a lower account leaves it while a Lv30+ one of ours still has to pick);
@@ -17,6 +19,8 @@ const R = require('./trade-rules.cjs');
 const { levelRange } = require('./draft-service.cjs');
 
 const TICK_MS = 700;
+const TURN_MS = 250;       // how often our turns are looked at
+const ROSTER_CHECKS = 10;  // roster reads at a time when choosing accounts for a room
 const PICK_DELAY = [3000, 5000];
 const JOIN_GAP = [900, 2200];
 const ATTEMPTS_EVERY_MS = 60 * 1000;
@@ -35,6 +39,8 @@ class AutoDraftService {
     this.actions = null; // { toCards(accountId, ids), fire(accountId, ids), toSpender(accountId, spenderId, ids) } from main.cjs
     this.pending = [];   // post-draft work: { accountId, ids, kind: 'cards'|'fire'|'spender', tries }
     this.rosterCache = new Map();
+    this.turnTimer = null;
+    this.reserved = new Set(); // accounts picked for a room and still joining it
   }
 
   setActions(actions) { this.actions = actions; }
@@ -96,12 +102,16 @@ class AutoDraftService {
       if (this.run?.status === 'running') this.timer = setTimeout(loop, TICK_MS);
     };
     loop();
+    // our turns: a fast loop of its own
+    clearInterval(this.turnTimer);
+    this.turnTimer = setInterval(() => { if (this.run?.status === 'running') this._turns().catch(() => {}); }, TURN_MS);
     return this.snapshot();
   }
 
   stop(reason = 'stopped') {
     if (!this.run || this.run.status !== 'running') return this.snapshot();
     clearTimeout(this.timer); this.timer = null;
+    clearInterval(this.turnTimer); this.turnTimer = null;
     this.run.status = reason === 'done' ? 'done' : 'stopped';
     this.run.finishedAt = new Date(this.now()).toISOString();
     this.draft.unwatch();
@@ -114,10 +124,14 @@ class AutoDraftService {
 
   async _tick() {
     const run = this.run;
-    // attempts are read from the game now and then (never counted here)
-    if (this.now() - run.attemptsAt > ATTEMPTS_EVERY_MS) { run.attemptsAt = this.now(); await this.draft._refreshAttempts(run.accountIds).catch(() => {}); }
+    // attempts are read from the game now and then (never counted here), in the background: with
+    // 1141 accounts the read takes long and must not hold up the rooms
+    if (!run.attemptsBusy && this.now() - run.attemptsAt > ATTEMPTS_EVERY_MS) {
+      run.attemptsAt = this.now();
+      run.attemptsBusy = true;
+      this.draft._refreshAttempts(run.accountIds).catch(() => {}).finally(() => { run.attemptsBusy = false; });
+    }
     await this._syncRooms();
-    await this._turns();
     await this._openRooms();
     this._processPending();
     // done: nobody has attempts left and none of ours is still in a room
@@ -150,39 +164,66 @@ class AutoDraftService {
   // Trade, roster not full
   async _free(slot, n) {
     const out = [];
-    for (const id of this.run.accountIds) {
-      if (out.length >= n) break;
-      if (this._attempts(id) <= 0 || this._inSlot(id) || this.isBusy(id) || !this._fits(id, slot)) continue;
-      const total = await this._rosterTotal(id).catch(() => ROSTER_MAX);
-      if (total >= ROSTER_MAX) { this.run.accounts[id].state = 'rosterFull'; continue; }
-      out.push(id);
-    }
+    if (n <= 0) return out;
     // Lv30+ first: they take the Stok players
-    return out.sort((a, b) => (this._level(b) >= 30) - (this._level(a) >= 30));
+    const cands = this.run.accountIds
+      .filter(id => !this.reserved.has(id) && this._attempts(id) > 0 && !this._inSlot(id) && !this.isBusy(id) && this._fits(id, slot))
+      .sort((a, b) => (this._level(b) >= 30) - (this._level(a) >= 30));
+    // roster checks a few at a time (each is one short anonymous read)
+    for (let i = 0; i < cands.length && out.length < n; i += ROSTER_CHECKS) {
+      const chunk = cands.slice(i, i + ROSTER_CHECKS);
+      const totals = await Promise.all(chunk.map(id => this._rosterTotal(id).catch(() => ROSTER_MAX)));
+      chunk.forEach((id, k) => {
+        if (totals[k] >= ROSTER_MAX) { if (this.run.accounts[id]) this.run.accounts[id].state = 'rosterFull'; return; }
+        if (out.length < n && !this.reserved.has(id)) out.push(id);
+      });
+    }
+    return out;
   }
 
-  // a new room (not started, no cooldown, seats left) for a level one of ours fits: one account joins
+  // every open room (not started, no cooldown, seats left) for a level ours fit: as many of our
+  // accounts join as there are free seats; the rooms fill at the same time
   async _openRooms() {
     for (const s of this.draft.slots || []) {
       const slot = s.slotNumber;
-      if (this.run.rooms[slot] && !this.run.rooms[slot].ended) continue;
-      if (s.hasStarted || s.cooldownRemaining > 0 || (s.users?.length || 0) >= ROOM_SIZE) continue;
-      const [scout] = await this._free(slot, 1);
-      if (!scout) continue;
-      this.run.rooms[slot] = { slot, scout, ours: [scout], extrasDone: false, rolePlayers: null, ended: false, at: new Date(this.now()).toISOString() };
-      this.run.accounts[scout] = { ...this.run.accounts[scout], state: 'joining', slot };
+      if (!levelRange(slot)) continue; // rooms 1-2: Rookie draft, closed this season
+      const room = this.run.rooms[slot] && !this.run.rooms[slot].ended ? this.run.rooms[slot] : null;
+      if (room?.filling) continue;
+      if (s.hasStarted || s.cooldownRemaining > 0) continue;
+      const seats = ROOM_SIZE - Math.max(s.users?.length || 0, room ? room.ours.length : 0);
+      if (seats <= 0) continue;
+      const ids = await this._free(slot, seats);
+      if (!ids.length) continue;
+      ids.forEach(id => this.reserved.add(id));
+      const r = room || (this.run.rooms[slot] = { slot, scout: ids[0], ours: [], rolePlayers: null, ended: false, at: new Date(this.now()).toISOString() });
+      r.filling = true;
+      this._fill(r, ids).finally(() => { r.filling = false; ids.forEach(id => this.reserved.delete(id)); this.onChanged(); });
+    }
+  }
+
+  async _fill(room, ids) {
+    let first = !room.ours.length;
+    for (const id of ids) {
+      const live = this.draft.rooms.get(room.slot);
+      if (this.run?.status !== 'running' || live?.started || room.ended) break;
+      if (!first) await sleep(rand(JOIN_GAP));
+      this.run.accounts[id] = { ...this.run.accounts[id], state: 'joining', slot: room.slot };
       this.onChanged();
       try {
-        await this.draft.join(scout, slot);
-        this.run.accounts[scout].state = 'inRoom';
-        this._log('info', 'ad.joined', { slot }, `Joined draft room ${slot} first · looking at the players`, scout);
+        await this.draft.join(id, room.slot);
+        room.ours.push(id);
+        this.run.accounts[id].state = 'inRoom';
+        if (first) this._log('info', 'ad.joined', { slot: room.slot }, `Joined draft room ${room.slot} · filling its free seats`, id);
+        first = false;
       } catch (error) {
-        this.run.accounts[scout].state = 'waiting';
-        delete this.run.rooms[slot];
-        this._log('warning', 'ad.joinFailed', { slot, error: error.message }, `Could not join room ${slot}: ${error.message}`, scout);
+        this.run.accounts[id].state = 'waiting';
+        this.run.accounts[id].slot = null;
+        this._log('warning', 'ad.joinFailed', { slot: room.slot, error: error.message }, `Could not join room ${room.slot}: ${error.message}`, id);
+        // a room that is full, started or cooling down: the others do not try it now
+        if (/cool|full|start|progress/i.test(error.message)) break;
       }
-      return; // one room at a time
     }
+    if (!room.ours.length && this.run?.rooms?.[room.slot] === room) delete this.run.rooms[room.slot];
   }
 
   // the room's pool is known after the first join: as many more accounts as there are role players
@@ -214,24 +255,11 @@ class AutoDraftService {
       const live = this.draft.rooms.get(room.slot);
       if (!live) continue;
       if (live.ended) { await this._roomEnded(room); continue; }
-      if (!room.extrasDone && (live.players || []).length) {
-        room.extrasDone = true;
+      if (!room.poolLogged && (live.players || []).length) {
+        room.poolLogged = true;
         const want = this._wanted(live.players).length;
         room.rolePlayers = want;
-        const seats = ROOM_SIZE - Math.max((live.users || []).length, room.ours.length);
-        const extra = Math.max(0, Math.min(want - 1, seats));
-        this._log('info', 'ad.pool', { slot: room.slot, count: want, extra }, `Room ${room.slot}: ${want} player(s) with a role · ${extra} more account(s) join`, room.scout);
-        if (!live.started && extra > 0) {
-          const more = await this._free(room.slot, extra);
-          for (const id of more) {
-            if (live.started || this.run.status !== 'running') break;
-            await sleep(rand(JOIN_GAP));
-            this.run.accounts[id] = { ...this.run.accounts[id], state: 'joining', slot: room.slot };
-            try { await this.draft.join(id, room.slot); room.ours.push(id); this.run.accounts[id].state = 'inRoom'; }
-            catch (error) { this.run.accounts[id].state = 'waiting'; this._log('warning', 'ad.joinFailed', { slot: room.slot, error: error.message }, `Could not join room ${room.slot}: ${error.message}`, id); }
-            this.onChanged();
-          }
-        }
+        this._log('info', 'ad.pool', { slot: room.slot, count: want, ours: room.ours.length }, `Room ${room.slot}: ${want} player(s) with a role · ${room.ours.length} of our account(s) in the room`, room.scout);
       }
     }
   }
@@ -352,7 +380,7 @@ class AutoDraftService {
     return accountId;
   }
 
-  shutdown() { clearTimeout(this.timer); this.timer = null; }
+  shutdown() { clearTimeout(this.timer); this.timer = null; clearInterval(this.turnTimer); this.turnTimer = null; }
 }
 
 module.exports = { AutoDraftService };
