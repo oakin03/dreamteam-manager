@@ -4070,5 +4070,6 @@
  "Market {kind} started · {count} account(s)": "Nagsimula ang Market {kind} · {count} account",
  "Market {kind} finished · {done}/{total} done · {failed} failed · {stopped} stopped · {sec} s": "Tapos ang Market {kind} · {done}/{total} tapos · {failed} pumalya · {stopped} itinigil · {sec} s",
  "Last quiz: {done}/{total} account(s) done · {errors} error(s) · {at}": "Huling quiz: {done}/{total} account ang tapos · {errors} error · {at}",
- "{done}/{total} done · {working} working · {asking} waiting for your answer · {queued} queued · {errors} error(s)": "{done}/{total} tapos · {working} gumagana · {asking} naghihintay ng sagot mo · {queued} nakapila · {errors} error"
+ "{done}/{total} done · {working} working · {asking} waiting for your answer · {queued} queued · {errors} error(s)": "{done}/{total} tapos · {working} gumagana · {asking} naghihintay ng sagot mo · {queued} nakapila · {errors} error",
+  "Sign in got no answer from the game · {count} time(s) in the last minute · trying again ({error})": "Walang sagot ang laro sa pag-sign in · {count} beses sa huling minuto · susubukan ulit ({error})"
 }

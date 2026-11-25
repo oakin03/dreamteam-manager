@@ -1002,7 +1002,7 @@ function initServices() {
     stadiumObserver: (accountId, page) => accountProfile.captureStadium(accountId, page)
   });
   accountProfile.setBasicInfoSource(page => browserService.basicInfoFor(page));
-  gameSessions = new GameSessions({ browserService, credentials, accountProfile });
+  gameSessions = new GameSessions({ browserService, credentials, accountProfile, activity });
   cards = new CardsService({ store, activity, accountProfile, sessions: gameSessions, onChanged: emitState });
   if (cards.clearedCustomTeams) activity.add({ level: 'info', accountId: null, accountName: '', taskName: 'Cards', code: 'cd.customCleared', params: { count: cards.clearedCustomTeams }, message: `User-given teams were removed · ${cards.clearedCustomTeams} player(s) back on the game's own team · roles kept` });
   dailyRoutine = new DailyRoutineService({ store, activity, sessions: gameSessions, onChanged: emitState });

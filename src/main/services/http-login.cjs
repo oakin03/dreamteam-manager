@@ -14,7 +14,10 @@ async function httpLogin(email, password, { fetchImpl = (...a) => fetch(...a), s
   const cookie = () => Object.entries(jar).map(([k, v]) => `${k}=${v}`).join('; ');
   const timer = AbortSignal.timeout ? AbortSignal.timeout(timeoutMs) : null;
   const sig = signal && timer && AbortSignal.any ? AbortSignal.any([signal, timer]) : signal || timer;
+  // a busy game (429 / 5xx) is not a refusal: the caller tries again instead of opening Chromium
+  const busy = (r, step) => { if (r?.status === 429 || r?.status >= 500) { const e = new Error(`sign in: game busy (${step} ${r.status})`); e.transient = true; throw e; } };
   let r = await fetchImpl(`${GAME}/api/auth/csrf`, { headers: { cookie: cookie() }, signal: sig });
+  busy(r, 'csrf');
   keep(r);
   const csrfToken = (await r.json())?.csrfToken;
   if (!csrfToken) throw new Error('sign in: no csrf token');
@@ -23,8 +26,10 @@ async function httpLogin(email, password, { fetchImpl = (...a) => fetch(...a), s
     headers: { 'Content-Type': 'application/x-www-form-urlencoded', cookie: cookie() },
     body: new URLSearchParams({ email, password, redirect: 'false', callbackUrl: '/main', csrfToken, json: 'true' }).toString()
   });
+  busy(r, 'callback');
   keep(r);
   r = await fetchImpl(`${GAME}/api/auth/session`, { headers: { cookie: cookie() }, signal: sig });
+  busy(r, 'session');
   const session = await r.json().catch(() => null);
   const userId = session?.user?.id;
   if (!userId) throw new Error('sign in failed (wrong password or the game refused)');
