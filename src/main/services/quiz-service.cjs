@@ -225,7 +225,13 @@ class QuizService {
         deadline = Number(r.questionDeadline) || (q ? this.now() + 10000 : null);
       }
       this._row(id, { status: 'claiming', question: null, score });
-      const claim = await this._write(conn, state, 'quiz:claimRewards', { userId }, signal);
+      // "write conflict or a deadlock. Please retry your transaction" (the game's database, many
+      // accounts claiming at once, 2026-11-24/25): tried again after a short random pause
+      let claim = await this._write(conn, state, 'quiz:claimRewards', { userId }, signal);
+      for (let t = 1; t <= 4 && !claim?.success && /write conflict|deadlock|retry your transaction/i.test(String(claim?.error || claim?.message || '')); t++) {
+        await new Promise(r => setTimeout(r, 1000 * t + Math.floor(this.random() * 1500)));
+        claim = await this._write(conn, state, 'quiz:claimRewards', { userId }, signal);
+      }
       const claimed = Boolean(claim?.success) || /already/i.test(String(claim?.error || claim?.message || ''));
       const row = this.run.accounts[id];
       this._row(id, { status: 'done', score: score ?? row.correct, claimed });

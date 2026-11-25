@@ -25,6 +25,10 @@ const KICK_LOG_MS = 60 * 60 * 1000;     // one log line per account per hour for
 function isKickError(error) {
   return error?.code === 'KICK_LOOP' || /disconnected|signed in elsewhere|duplicate|logged out/i.test(String(error?.message || ''));
 }
+// Accounts come back after a wait spread over this, by account (the same account always the same)
+const RESET_SPREAD_MS = 10 * 60 * 1000;
+const OUTAGE_LOG_MS = 10 * 60 * 1000;
+function spreadOf(id) { let h = 0; for (const ch of String(id)) h = (h * 31 + ch.charCodeAt(0)) >>> 0; return h % RESET_SPREAD_MS; }
 // A real connection failure (the game is unreachable).
 function isOutageError(error) {
   return /could not connect|websocket error|ECONN|ENOTFOUND|EAI_AGAIN|connection timed out/i.test(String(error?.message || ''));
@@ -259,7 +263,9 @@ class DailyRewardService {
       const hold = this.dailyHold(accountId);
       if (hold) {
         this.showDailyHold(accountId, hold);
-        await sleep(Math.max(1000, Date.parse(hold.nextAt) - this.now()), signal);
+        // at the day turn the accounts come back spread over RESET_SPREAD_MS (2026-11-25: 1141 at the
+        // same second at 00:00 Manila → 433 "connection timed out", the game itself was busy)
+        await sleep(Math.max(1000, Date.parse(hold.nextAt) - this.now()) + spreadOf(accountId), signal);
         continue;
       }
       this.clearExpiredDailyHold(accountId);
@@ -283,8 +289,13 @@ class DailyRewardService {
           if (/auth|session|login|unauthor/i.test(error.message)) this.sessions.invalidate?.(account.id);
           else if (isOutageError(error)) this.gameHealth?.reportDown?.('Daily Reward', error);
           this.setState(accountId, { status: 'error', error: error.message, nextAt: new Date(this.now() + ERROR_RETRY_MS).toISOString() });
-          this.log(account, 'error', 'dw.failed', { error: error.message }, `Daily Reward: ${error.message}`);
-          result = { delayMs: ERROR_RETRY_MS };
+          // the game unreachable: one line for all accounts (the shared check reports it too), not one each
+          const outage = isOutageError(error);
+          if (!outage || this.now() - (this.outageLogAt || 0) > OUTAGE_LOG_MS) {
+            if (outage) this.outageLogAt = this.now();
+            this.log(account, outage ? 'warning' : 'error', 'dw.failed', { error: error.message }, `Daily Reward: ${error.message}`);
+          }
+          result = { delayMs: ERROR_RETRY_MS + (outage ? spreadOf(accountId) : 0) };
         }
       }
       await sleep(Math.max(1000, Number(result?.delayMs) || 30000), signal);

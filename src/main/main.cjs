@@ -30,6 +30,23 @@ const { AccountProfileService } = require('./services/account-profile-service.cj
 const { CardsService } = require('./services/cards-service.cjs');
 const { AutoTradeEngine } = require('./services/auto-trade-engine.cjs');
 const { CardFactoryService } = require('./services/card-factory-service.cjs');
+const { eachAtOnce } = require('./services/wide.cjs');
+// Auto Play is started on accounts with the "Dummy" account role AUTOPLAY_START_PARALLEL at a time
+// (user 2026-11-25: 1000+ dummies one by one took most of an hour); the other accounts one by one, as
+// before. Both groups run at the same time. The Chromium fallback has its own limit.
+const AUTOPLAY_START_PARALLEL = 25;
+function isDummyAccount(id) {
+  const role = store.getAccounts().find(a => a.id === id)?.role;
+  if (!role) return false;
+  const def = (store.getSettings()?.accountRoleDefs || []).find(d => d.id === role);
+  return /^dummy$/i.test(String(def?.name || '').trim());
+}
+// fn(item) for every item: dummies AUTOPLAY_START_PARALLEL at once, the others one after another
+async function startInGroups(items, idOf, fn) {
+  const dummies = items.filter(x => isDummyAccount(idOf(x)));
+  const others = items.filter(x => !isDummyAccount(idOf(x)));
+  await Promise.all([eachAtOnce(dummies, fn, AUTOPLAY_START_PARALLEL), eachAtOnce(others, fn, 1)]);
+}
 const { FriendNetwork } = require('./services/friend-network.cjs');
 const { MarketService } = require('./services/market-service.cjs');
 const { GameSessions } = require('./services/game-sessions.cjs');
@@ -383,15 +400,17 @@ async function pauseTasksFor(accountIds, taskName, prefix, { keepSocket = false 
   for (const r of resume) activity.add({ level: 'info', accountId: r.accountId, accountName: name(r.accountId), taskName, code: `${prefix}.pausedTask`, params: { task: r.taskName || '' }, message: `${r.taskName} stopped for ${taskName}` });
   return async () => {
     const since = pausedAt;
-    for (const r of resume) {
+    // AUTOPLAY_START_PARALLEL at once (2026-11-25: one by one, 1141 accounts after the Daily Quiz took
+    // 40 minutes and "Daily Quiz" looked never finished in Toplu Başlat)
+    await startInGroups(resume, r => r.accountId, async r => {
       try {
-        if (engine.stoppedByUserSince(r.accountId, since)) continue;
+        if (engine.stoppedByUserSince(r.accountId, since)) return;
         await engine.startAccount(r.accountId, r.taskId, { visibleBrowser: r.visibleBrowser, forceFresh: false, config: r.config, since });
         activity.add({ level: 'success', accountId: r.accountId, accountName: name(r.accountId), taskName, code: `${prefix}.resumedTask`, params: { task: r.taskName || '' }, message: `${r.taskName} started again` });
       } catch (error) {
         activity.add({ level: 'error', accountId: r.accountId, accountName: name(r.accountId), taskName, code: `${prefix}.resumeFailed`, params: { task: r.taskName || '', error: error.message }, message: `${r.taskName} could not start again: ${error.message}` });
       }
-    }
+    });
   };
 }
 
@@ -572,9 +591,9 @@ async function resumeAll() {
   saveGlobalPause();
   let started = 0;
   const since = Date.parse(p.at) || Date.now();
-  for (const item of p.autoPlay) {
+  await startInGroups(p.autoPlay, item => item.accountId, async item => {
     try { const r = await engine.startAccount(item.accountId, item.taskId, { visibleBrowser: item.visibleBrowser, forceFresh: false, config: item.config, since }); if (!r?.skipped) started++; } catch {}
-  }
+  });
   try { await p.resumeServices?.(); } catch {}
   if (p.hunter) { try { hunter?.resumeIfRunning(); } catch {} } // @strip(basic)
   activity.add({ level: 'success', accountId: null, accountName: '', taskName: 'Automations', code: 'gp.resumed', params: { autoPlay: started }, message: `Automations started again · Auto Play on ${started} account(s)` });
@@ -1290,21 +1309,22 @@ function registerIpc() {
     apBatchState();
     const failed = [];
     try {
-      for (const id of list) {
-        if (run.cancelled) break;
+      // Dummy accounts AUTOPLAY_START_PARALLEL at once, the others one by one
+      await startInGroups(list, id => id, async id => {
+        if (run.cancelled) return;
         run.done++;
         const r = engine.states()?.[id];
-        if (r && ['running', 'preparing', 'starting', 'stopping'].includes(r.status)) continue;
-        if (engine.stoppedByUserSince(id, run.since)) continue;
+        if (r && ['running', 'preparing', 'starting', 'stopping'].includes(r.status)) return;
+        if (engine.stoppedByUserSince(id, run.since)) return;
         const account = store.getAccounts().find(a => a.id === id);
         const taskId = account?.selectedTaskId || defaultTaskId();
-        if (!account || !taskId) continue;
+        if (!account || !taskId) return;
         try {
           const res = await engine.startAccount(id, taskId, { visibleBrowser: Boolean(account.visibleBrowser), forceFresh: false, since: run.since });
           if (!res?.skipped) run.started++;
         } catch (error) { failed.push(`${account.name}: ${error.message}`); }
         apBatchState();
-      }
+      });
     } finally {
       startBatches.delete(run);
       apBatchState();

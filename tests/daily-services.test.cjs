@@ -123,7 +123,7 @@ function quizGame(questions, correct) {
       const completed = st.i >= questions.length;
       return { success: true, isCorrect: payload.answer === right, correctAnswer: right, completed, score: completed ? st.answers.filter((a, k) => a === correct[k]).length : undefined, nextQuestion: completed ? null : q(st.i), questionDeadline: Date.now() + 10000 };
     }
-    if (event === 'quiz:claimRewards') { st.claimed = true; return { success: true }; }
+    if (event === 'quiz:claimRewards') { if (st.conflicts > 0) { st.conflicts--; return { success: false, error: 'Transaction failed due to a write conflict or a deadlock. Please retry your transaction' }; } st.claimed = true; return { success: true }; }
   } }) };
 }
 const Q = (question, a, b, c, d) => ({ question, optionA: a, optionB: b, optionC: c, optionD: d });
@@ -370,4 +370,15 @@ test('Daily Quiz: a connection that times out is tried again (2026-11-24: 555 ti
   } finally { GameSocket._openOnce = open; }
   assert.equal(s.saved.quiz.rows[0].status, 'done');
   assert.ok(!logs.some(l => l.code === 'qz.failed'), 'no failure logged');
+}, { timeout: 20000 });
+
+test('Daily Quiz: a "write conflict / deadlock" on the reward claim is tried again', async () => {
+  const game = quizGame([Q('2+2?', '3', '4', '5', '6')], ['B']);
+  game.st.conflicts = 2;
+  const logs = [];
+  const s = store();
+  const svc = new QuizService({ store: s, activity: activity(logs), sessions, createSocket: game.createSocket, bundledFile: path.join(os.tmpdir(), 'none.json'), random: () => 0, timing: { userWaitMs: 20, autoDelayMs: 1, marginMs: 0 } });
+  await svc.runAndWait(['a']);
+  assert.equal(game.st.claimed, true);
+  assert.ok(!logs.some(l => l.code === 'qz.claimFailed'));
 }, { timeout: 20000 });

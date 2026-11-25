@@ -441,7 +441,12 @@ class DailyRoutineService {
     }
     try {
       if (!borrowed) await reg.register(userId, { signal, owner: 'Daily routine' });
-      const info = await reg.ack('alliance:getInfo', {}, { signal });
+      // no answer in time (2026-11-24: 72 new accounts while 1000 were being created): asked once more
+      const info = await reg.ack('alliance:getInfo', {}, { signal, timeoutMs: 20000 }).catch(async error => {
+        if (error?.name === 'AbortError' || !/no reply|timed out|timeout/i.test(error?.message || '')) throw error;
+        await sleep(3000 + Math.floor(Math.random() * 3000), signal);
+        return reg.ack('alliance:getInfo', {}, { signal, timeoutMs: 25000 });
+      });
       if (!info?.success || !info.data?.name) {
         this._log(account, 'info', 'dr.donateNoAlliance', {}, 'Not in an alliance · no donation');
         this._markDonate(account.id, cycle);
