@@ -1543,7 +1543,25 @@ function registerIpc() {
     emitState(); return settings;
   });
   ipcMain.handle('activity:days', async () => activity.days());
-  ipcMain.handle('summary:day', async (_event, day) => { const { summarize } = require('./services/daily-summary.cjs'); const d = day || activity.days()[0]; return { day: d || null, days: activity.days(), summary: summarize(d ? activity.readDay(d) : []) }; });
+  // Daily summary: the day's file read line by line (60+ MB a day with 1141 accounts), past days
+  // kept once read, today read again at most once a minute.
+  const summaryCache = new Map(); // day -> { at, promise }
+  ipcMain.handle('summary:day', async (_event, day) => {
+    const { summarizeFile } = require('./services/daily-summary.cjs');
+    const days = activity.days();
+    const d = day || days[0];
+    if (!d || !/^\d{4}-\d{2}-\d{2}$/.test(d)) return { day: null, days, summary: null };
+    const today = d === days[0];
+    const hit = summaryCache.get(d);
+    if (!hit || (today && Date.now() - hit.at > 60000)) {
+      activity.flushArchive();
+      const promise = summarizeFile(path.join(dataDir, 'logs', `${d}.jsonl`));
+      summaryCache.set(d, { at: Date.now(), promise });
+      promise.catch(() => summaryCache.delete(d));
+    }
+    for (const k of summaryCache.keys()) if (!days.includes(k)) summaryCache.delete(k);
+    return { day: d, days, summary: await summaryCache.get(d).promise };
+  });
   ipcMain.handle('activity:day', async (_event, day) => activity.readDay(day));
   ipcMain.handle('activity:search', async (_event, text) => activity.search(text));
   ipcMain.handle('activity:open-folder', async () => shell.openPath(path.join(dataDir, 'logs')));

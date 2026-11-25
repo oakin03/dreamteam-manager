@@ -76,28 +76,24 @@ export const GUIDE_EN = {
       problems: []
     },
     {
-      id: "home", icon: "🏠", name: "Command Center",
-      what: "The main screen. It shows every account at a glance: is the game up, how many accounts run Auto Play, which accounts have a problem, how long until the day turns.",
+      id: "home", icon: "🏠", name: "Daily Summary",
+      what: "The app's first page. It counts on one page what every system did on the chosen day: matches, market, buying and Auto Trade, draft, cards, equipment, daily tasks and accounts.",
       steps: [
-        "Check the game status, running accounts and accounts with problems on the top line.",
-        "Click a summary box (Daily Reward, PVP attempts, Social, task rewards waiting) to open its page.",
-        "Accounts with problems are at the top of the accounts table; clicking a row opens that account in Auto Play."
+        "It opens with today's summary; today refreshes by itself once a minute.",
+        "To see an older day, pick it in the date list at the top right.",
+        "To see what one account did, open “Per account” at the bottom; accounts are grouped by name prefix."
       ],
       buttons: [
-        ["Today's timeline", "Daily stop, tournament registration, PVP, salary update, day turn and scheduled tasks on a time line; the orange line is now."], // @strip(basic)
-        //@only(basic) ["Today's timeline", "Tournament, salary update and day turn on a time line; the orange line is now."],
-        ["Accounts table", "Daily Reward 6 boxes (orange: claimed, green: can be claimed now), PVP attempts, salary / salary cap bar and TK."],
-        ["Account health ⚙", "Changes the warning limits: lowest TK, at what percent of the salary cap to warn, roster size."],
-        ["Check now", "Reads salary, roster and TK of every account now (normally every 10 minutes)."],
-        ["Daily summary", "Matches played, sales claimed, purchases, syntheses and errors of the chosen day."],
-        ["Fallen to Base", "Players at or below Base after 5% off their value (those under 75 TK are not shown); the newest first."]
+        ["Boxes", "Each box shows how many times the work was done and on how many accounts; work with money also shows the APK / TIX total. In “a / b” boxes the first number is the successes, the second the failures (or losses)."],
+        ["Hide zeros", "Hides the boxes of work not done that day; the choice is remembered."],
+        ["Refresh", "Calculates the summary again now."],
+        ["Errors / warnings", "How many errors and warnings the day's Activity logs have."]
       ],
       rules: [
-        "Accounts over the salary cap show in red; Auto Play and Tower cannot start matches on them.",
-        "An account with the game's market lock on gets a “Market locked” warning; no market work is possible there.",
-        "The game's team logos are shown next to the accounts."
+        "The numbers come from the Activity logs; days whose logs were cleaned up are not in the list.",
+        "“Players put on the market” adds up the players Auto Trade, Draft, Scout Hunter and the Trading Hall listed; relistings are counted apart."
       ],
-      tips: ["The details of a red warning are on the Activity page."],
+      tips: ["The details of a number are on the Activity page, where you can search the same day's logs."],
       problems: []
     },
     {
@@ -553,7 +549,7 @@ export const GUIDE_EN = {
       rules: [
         "Value prediction is now a tab of the Players page.",
         "Values change every day at 11:00; the list is renewed at 11:05 (or right away when the game says the update is done). A scan by hand during the day keeps the day's rises and falls.",
-        "The orange BASE badge means the value is at Base. The “At / under Base” part uses the same rule as the Command Center.",
+        "The orange BASE badge means the value is at Base. The “At / under Base” part uses the same rule.",
         "The row's “+ Auto Buy” adds the player to the Auto Buy list; once it is there the button turns into “× Auto Buy” and takes it off. “+ Scouting / × Scouting” does the same for the Scout Hunter list." // @strip(basic)
       ],
       tips: ["A red + after a name means injured, an orange + a short injury; hover it for the return date."],

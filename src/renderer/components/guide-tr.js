@@ -76,28 +76,24 @@ export const GUIDE_TR = {
       problems: []
     },
     {
-      id: "home", icon: "🏠", name: "Komuta Merkezi",
-      what: "Uygulamanın ana ekranı. Bütün hesapların durumunu tek bakışta gösterir: oyun açık mı, kaç hesapta Auto Play çalışıyor, hangi hesaplarda sorun var, gün dönümüne ne kadar kaldı.",
+      id: "home", icon: "🏠", name: "Günlük Özet",
+      what: "Uygulamanın ilk sayfası. Seçtiğin günde bütün sistemlerin ne yaptığını tek sayfada sayar: maçlar, pazar, alım ve Auto Trade, draft, kartlar, ekipman, günlük işler ve hesaplar.",
       steps: [
-        "Üst satırda oyunun durumuna, çalışan hesap sayısına ve sorunlu hesap sayısına bak.",
-        "Özet kutularından (Daily Reward, PVP hakkı, Sosyal bildirimleri, bekleyen görev ödülleri) birine tıklayınca ilgili sayfaya gidersin.",
-        "Hesaplar tablosunda sorunlu hesaplar en üsttedir; bir satıra tıklayınca o hesabın Auto Play satırı açılır."
+        "Sayfa açılınca bugünün özeti gelir; bugün dakikada bir kendiliğinden yenilenir.",
+        "Eski bir günü görmek için sağ üstteki tarih listesinden günü seç.",
+        "Bir hesabın ne yaptığını görmek için alttaki “Hesap başına” bölümünü aç; hesaplar ad önekine göre gruplanır."
       ],
       buttons: [
-        ["Bugünün akışı", "Günlük durdurma, turnuva kaydı, PVP, maaş güncellemesi, gün dönümü ve zamanlanmış görevler bir saat çizgisinde; turuncu çizgi şu anki saat."], // @strip(basic)
-        //@only(basic) ["Bugünün akışı", "Turnuva, maaş güncellemesi ve gün dönümü bir saat çizgisinde; turuncu çizgi şu anki saat."],
-        ["Hesaplar tablosu", "Daily Reward 6 kutu (turuncu: toplandı, yeşil: şimdi alınabilir), PVP hakkı, maaş / maaş sınırı çubuğu ve TK."],
-        ["Hesap sağlığı ⚙", "Uyarı sınırlarını değiştirir: TK alt sınırı, maaş sınırının yüzde kaçında uyarılacağı, kadro sayısı."],
-        ["Şimdi kontrol et", "Bütün hesapların maaş, kadro ve TK durumunu hemen okur (normalde 10 dakikada bir okunur)."],
-        ["Günlük özet", "Seçtiğin günde oynanan maçları, toplanan satışları, alımları, sentezleri ve hataları özetler."],
-        ["Base'e düşenler", "Değerinden %5 düşünce Base'ine eşit ya da altında kalan oyuncular (değeri 75 TK altındakiler gösterilmez); en yeni düşenler üstte."]
+        ["Kutular", "Her kutu o işin kaç kez yapıldığını ve kaç hesapta yapıldığını gösterir; para geçen işlerde APK / TIX toplamı da yazar. “a / b” yazan kutularda ilk sayı başarılı, ikincisi başarısız (ya da kaybedilen) sayısıdır."],
+        ["Sıfır olanları gizle", "O gün hiç yapılmamış işlerin kutularını gizler; seçimin hatırlanır."],
+        ["Yenile", "Özeti hemen yeniden hesaplar."],
+        ["Hata / uyarı", "O günün Aktivite kayıtlarındaki hata ve uyarı sayısı."]
       ],
       rules: [
-        "Maaş sınırını aşan hesaplar kırmızı görünür; bu hesaplarda Auto Play ve Kule maç başlatamaz.",
-        "Oyunda pazar kilidi açık olan hesap “Pazar kilitli” uyarısı alır; o hesapta pazar işleri yapılamaz.",
-        "Hesapların yanında oyundaki takım logoları görünür."
+        "Sayılar Aktivite kayıtlarından hesaplanır; kayıtlar silinen (veri temizliğiyle eskiyen) günler listede görünmez.",
+        "“Pazara eklenen oyuncu” Auto Trade, Draft, Scout Avcısı ve Trading Hall'un pazara koyduğu oyuncuların toplamıdır; tekrar listelemeler ayrı sayılır."
       ],
-      tips: ["Kırmızı bir uyarı görürsen ayrıntısı Aktivite sayfasındadır."],
+      tips: ["Bir sayının ayrıntısı Aktivite sayfasındadır; orada aynı günün kayıtlarında arama yapabilirsin."],
       problems: []
     },
     {
@@ -553,7 +549,7 @@ export const GUIDE_TR = {
       rules: [
         "Değer Tahmini artık Oyuncular sayfasının bir sekmesi.",
         "Değerler her gün 11:00'de değişir; liste 11:05'te (ya da oyun güncellemeyi bitirdiğini haber verince hemen) yenilenir. Gün içinde elle tarama o günün artış / düşüşlerini bozmaz.",
-        "Turuncu BASE rozeti, değerin Base seviyesinde olduğunu gösterir. “Base'de / altında” bölümü Komuta Merkezi ile aynı kuralı kullanır.",
+        "Turuncu BASE rozeti, değerin Base seviyesinde olduğunu gösterir. “Base'de / altında” bölümü de aynı kuralı kullanır.",
         "Satırdaki “+ Auto Buy” oyuncuyu Auto Buy listesine ekler; listedeyse düğme “× Auto Buy” olur ve listeden çıkarır. “+ Scouting / × Scouting” aynı şekilde Scout Avcısı listesine ekler / çıkarır." // @strip(basic)
       ],
       tips: ["Oyuncu adının yanındaki kırmızı + sakat, turuncu + kısa süreli sakat demektir; üzerine gelince dönüş tarihi görünür."],
