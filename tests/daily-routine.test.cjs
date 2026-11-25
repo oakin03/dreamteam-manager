@@ -563,3 +563,54 @@ test('Group Match: only parties led by our accounts are joined; none of ours ope
   assert.ok(game.calls.some(c => c.event === 'createParty'), 'nothing of ours left: our own party');
   assert.ok(codes(logs).includes('dr.gmCreated'));
 });
+
+test('Stop while the account is held (routine / Group Match help): the task ends at once', async () => {
+  let release;
+  const held = new Promise(r => { release = r; });
+  const plugin = { prepare: async () => ({}), run: async ctx => { for (;;) await ctx.sleep(10); } };
+  const logs = [];
+  const engine = new TaskEngine({
+    store: { getAccounts: () => [{ id: 'a1', name: 'Trophy6' }] }, credentials: {}, browserService: {}, activity: { add: e => logs.push(e.message) }, onChanged() {},
+    registry: { load: () => ({ plugin, manifest: { id: 't1', name: 'Quick Play' } }) }
+  });
+  await engine.startAccount('a1', 't1');
+  await new Promise(r => setTimeout(r, 30));
+  engine.hold('a1', () => held); // e.g. helping another account's Group Match for minutes
+  await new Promise(r => setTimeout(r, 30));
+  const t0 = Date.now();
+  await engine.stopAccount('a1');
+  assert.ok(Date.now() - t0 < 1000, `stopped in ${Date.now() - t0} ms`);
+  assert.ok(!engine.workers.has('a1'));
+  release();
+});
+
+test('a task that does not end after Stop counts as stopped after the wait, and starts no new action', async () => {
+  let actions = 0;
+  const plugin = { prepare: async () => ({}), run: async ctx => { actions++; await new Promise(r => setTimeout(r, 15000)); if (!ctx.signal.aborted) actions++; } };
+  const logs = [];
+  const engine = new TaskEngine({
+    store: { getAccounts: () => [{ id: 'a1', name: 'Trophy6' }] }, credentials: {}, browserService: {}, activity: { add: e => logs.push(e.message) }, onChanged() {},
+    registry: { load: () => ({ plugin, manifest: { id: 't1', name: 'Quick Play' } }) }
+  });
+  await engine.startAccount('a1', 't1');
+  await new Promise(r => setTimeout(r, 30));
+  const t0 = Date.now();
+  await engine.stopAccount('a1');
+  const took = Date.now() - t0;
+  assert.ok(took >= 9000 && took < 12000, `took ${took} ms`);
+  assert.ok(!engine.workers.has('a1'), 'no longer listed as running');
+  assert.equal(logs.filter(m => /stopped\.$/.test(m)).length, 1);
+  await new Promise(r => setTimeout(r, 6000));
+  assert.equal(actions, 1, 'the late task did nothing after the Stop');
+  assert.equal(logs.filter(m => /stopped\.$/.test(m)).length, 1, 'stopped is logged once');
+}, { timeout: 30000 });
+
+test('Quick Play search queues: one lane searches one at a time, lanes run side by side (Dummy lanes)', async () => {
+  const engine = new TaskEngine({ store: { getAccounts: () => [] }, credentials: {}, browserService: {}, activity: { add() {} }, onChanged() {}, registry: {}, laneOf: id => (id.startsWith('d') ? 'dummy0' : 'main') });
+  let live = { main: 0, dummy0: 0 }, max = { main: 0, dummy0: 0 }, both = false;
+  const turn = lane => engine._matchTurn(async () => { live[lane]++; max[lane] = Math.max(max[lane], live[lane]); if (live.main && live.dummy0) both = true; await new Promise(r => setTimeout(r, 40)); live[lane]--; }, null, lane);
+  await Promise.all([turn('main'), turn('main'), turn('dummy0'), turn('dummy0')]);
+  assert.deepEqual(max, { main: 1, dummy0: 1 }, 'one at a time inside a lane');
+  assert.ok(both, 'the two lanes overlapped');
+  assert.equal(engine.laneOf('d1'), 'dummy0');
+});

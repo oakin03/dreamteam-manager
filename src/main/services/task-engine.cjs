@@ -24,8 +24,13 @@ function sleep(ms, signal) {
   });
 }
 
+const STOP_WAIT_MS = 10000; // a Stop waits this long for the task to end, then counts it as stopped
+
 class TaskEngine {
-  constructor({ store, credentials, registry, browserService, activity, onChanged, beforeRun = null, beforeRunNextAt = null, gameHealth = null, capWait = null }) {
+  constructor({ store, credentials, registry, browserService, activity, onChanged, beforeRun = null, beforeRunNextAt = null, gameHealth = null, capWait = null, laneOf = null }) {
+    // accountId → its Quick Play search queue ('main' unless told otherwise; see _matchTurn)
+    this.laneOf = laneOf || (() => 'main');
+    this.matchChains = new Map();
     this.store = store;
     // Optional `({ accountId, attempt, signal }) => Promise<boolean>`: a task over the salary cap
     // may wait (true = try again) instead of stopping (Auto Trade making room, 2026-11-13).
@@ -57,10 +62,14 @@ class TaskEngine {
   // One account's search at a time. A stopped account leaves the line at once instead of waiting for
   // its turn (user 2026-11-12: "stop all" stopped the last 50-60 accounts one by one), and a turn
   // that comes after its stop is skipped.
-  _matchTurn(fn, signal = null) {
+  // `lane`: accounts of one lane search one at a time (they are never paired with each other); the
+  // lanes run side by side (user 2026-11-25: the Dummy accounts in lanes of their own, the others
+  // in 'main' as before — one queue for 1141 accounts meant a match every ~37 minutes).
+  _matchTurn(fn, signal = null, lane = 'main') {
     const go = () => { if (signal?.aborted) throw abortError(); return fn(); };
-    const run = this.matchChain.then(go, go);
-    this.matchChain = run.catch(() => {});
+    const chain = lane === 'main' ? this.matchChain : (this.matchChains.get(lane) || Promise.resolve());
+    const run = chain.then(go, go);
+    if (lane === 'main') this.matchChain = run.catch(() => {}); else this.matchChains.set(lane, run.catch(() => {}));
     if (!signal) return run;
     return new Promise((resolve, reject) => {
       const onAbort = () => reject(abortError());
@@ -151,8 +160,9 @@ class TaskEngine {
       browser: this.browserService,
       sleep: async (ms) => {
         await sleep(ms, signal);
+        // a routine / Group Match help holding the account: waited for, but a Stop ends the wait
         for (let gate; (gate = this.gates.get(account.id));) {
-          await gate;
+          await Promise.race([gate, new Promise((_, reject) => { if (signal.aborted) reject(abortError()); else signal.addEventListener('abort', () => reject(abortError()), { once: true }); })]);
           if (signal.aborted) throw abortError();
         }
       },
@@ -174,7 +184,7 @@ class TaskEngine {
       httpLogin: () => httpLogin(account.login, this.credentials.decryptSecret(account.passwordEncrypted), { signal }),
       // Quick Play: one account's search at a time (see _matchTurn) and the user ids of
       // all accounts, to see when the opponent is one of them.
-      matchTurn: fn => this._matchTurn(fn, signal),
+      matchTurn: fn => this._matchTurn(fn, signal, this.laneOf(account.id)),
       // over the salary cap: wait for Auto Trade to make room (true) or give up (false)
       capWait: attempt => (this.capWait ? this.capWait({ accountId: account.id, attempt, signal }) : Promise.resolve(false)),
       // an injured starter blocks every match (2026-11-18): the shared guard swaps / heals and
@@ -494,8 +504,18 @@ class TaskEngine {
     if (worker.donePromise) {
       await Promise.race([
         worker.donePromise.catch(() => {}),
-        new Promise(resolve => setTimeout(resolve, 10000))
+        new Promise(resolve => setTimeout(resolve, STOP_WAIT_MS))
       ]);
+    }
+    // Still not over after STOP_WAIT_MS (2026-11-25: accounts showed "stopping" for up to an hour
+    // after a Stop): it counts as stopped now. Its signal is aborted, so the loop that is still
+    // waiting somewhere never starts another match; when it ends it finds itself replaced.
+    if (this.workers.get(accountId) === worker) {
+      this.workers.delete(accountId);
+      clearTimeout(worker.beforeRunTimer);
+      const account = this.accountById(accountId);
+      this.activity.add({ level: 'info', accountId, accountName: account?.name || '', taskId: worker.taskId, taskName: worker.taskName, message: `${worker.taskName} stopped.` });
+      this.onChanged?.();
     }
   }
 

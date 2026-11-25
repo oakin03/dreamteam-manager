@@ -2752,8 +2752,10 @@ export default function App(){
     //@only(basic) hunter:Object.values(state.scout||{}).some(s=>s&&!['idle','open','error'].includes(s.status)),
     social:Boolean(state.social?.claimingAll),
     office:Boolean((state.office?.busy||[]).length||state.big3?.setupBusy||state.big3?.scan?.busy||(state.skills?.busy||[]).length),
-    draft:Boolean((state.draft?.rooms||[]).some(r=>!r.ended)),
-    bag:Boolean(state.bag?.reading||(state.bag?.busy||[]).length),
+    // Draft: a room of ours, the automatic Draft, or work waiting after a draft (user 2026-11-25: no dot)
+    draft:Boolean((state.draft?.rooms||[]).some(r=>!r.ended)||state.autoDraft?.running||(state.autoDraft?.pending||[]).length),
+    // Bag: every tab — bags, Random Card opening, Laborer Contract, Anesthesia (scan, replace, viewer)
+    bag:Boolean(state.bag?.reading||(state.bag?.busy||[]).length||Object.values(state.bag?.opening||{}).some(o=>o?.running)||state.labor?.reading||state.labor?.busy||state.injuryGuard?.reading||(state.injuryGuard?.busy||[]).length||(state.injuryViewer?.open||[]).length||(state.injuryViewer?.queue||[]).length),
     accounts:Boolean(state.signup?.running) // @strip(basic)
   };
   const navBadges={

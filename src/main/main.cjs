@@ -35,6 +35,8 @@ const { eachAtOnce } = require('./services/wide.cjs');
 // (user 2026-11-25: 1000+ dummies one by one took most of an hour); the other accounts one by one, as
 // before. Both groups run at the same time. The Chromium fallback has its own limit.
 const AUTOPLAY_START_PARALLEL = 25;
+const DUMMY_LANES = 5; // Quick Play search queues for Dummy accounts (user 2026-11-25)
+function laneHash(id) { let h = 0; for (const ch of String(id)) h = (h * 31 + ch.charCodeAt(0)) >>> 0; return h; }
 function isDummyAccount(id) {
   const role = store.getAccounts().find(a => a.id === id)?.role;
   if (!role) return false;
@@ -997,6 +999,8 @@ function initServices() {
   dailyRoutine = new DailyRoutineService({ store, activity, sessions: gameSessions, onChanged: emitState });
   engine = new TaskEngine({
     gameHealth,
+    // Quick Play search queues: Dummy accounts in DUMMY_LANES lanes of their own, the others in one
+    laneOf: id => (isDummyAccount(id) ? `dummy${laneHash(id) % DUMMY_LANES}` : 'main'),
     capWait: autoPlayCapWait,
     store, credentials, registry, browserService, activity, onChanged: emitState,
     beforeRun: ({ account, signal }) => dailyRoutine.runIfDue(account, { signal }),
