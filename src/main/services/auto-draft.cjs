@@ -1,19 +1,21 @@
-// Automatic Draft (user 2026-11-24). Over the Draft service (rooms, joining, picking):
-//  - every open room (not started, no cooldown, seats left) that fits chosen accounts' level is
-//    filled: as many of our accounts join as the room has free seats (user 2026-11-25: "her açık
-//    odayı doldursun"), every open room at the same time;
-//  - our turns are watched by a fast loop of their own, so a pick comes 3–5 s after the turn
-//    (the slow work — attempts, roster checks, joins — never holds it up);
-//  - on each of our turns, after a random 3–5 s (no bot-like instant picks), the account picks by
-//    the role priority (default Stok, Satılabilir, Kart, then any new role). Stok goes to Lv30+
-//    accounts first (a lower account leaves it while a Lv30+ one of ours still has to pick);
-//  - a room with no role player: the cheapest player at or under Auto Trade's cheap price is taken
-//    and made into a card / fired (option), or nothing is picked;
-//  - after the draft: card players → main → star cards; Satılabilir / Stok → a Harcayıcı that lists
-//    them at Auto Trade's price (none free → the account lists them itself). Accounts Auto Trade is
-//    working on wait; Auto Play over the cap waits for this (capRelief);
-//  - it goes on until the chosen accounts have no draft attempts left (rooms have a 10-minute
-//    cooldown after a draft ends).
+// Automatic Draft (user 2026-11-24, rules redone 2026-11-26). Over the Draft service:
+//  - a new room that fits a chosen account's level: ONE account with attempts joins at once and
+//    sees the pool (every open room at the same time);
+//  - the pool's role players are counted (N) and N-1 more accounts join (5 role players → 4 more),
+//    while the room has seats. "Cheap players count as Kart" (option, price limit) adds the players
+//    at or under the price; "only Stok" (option, always off at start) counts only Stok players.
+//    With Stok in the pool, at least one Lv30+ account (Lv30 included) is in the room (only matters
+//    in the Lv21–30 rooms);
+//  - on its turn, after a random 2–4 s, an account picks by the priority Stok → Satılabilir → Kart
+//    (→ any other role) → cheap players (as Kart; the cheapest first). It never picks a player its
+//    own roster already has (that one is left to another account of ours); an "already signed"
+//    answer makes it pick the next one. Stok goes to Lv30+ accounts first;
+//  - an account left without a role player (others took them, or the pool has none) takes the
+//    cheapest player and it is made into a card (option: fire / nothing). No account joins for
+//    these players;
+//  - after the draft: Kart and cheap players → main → star cards; Satılabilir / Stok → the Harcayıcı
+//    with the most TK (room and TK enough), listed at Auto Trade's price;
+//  - it goes on until the chosen accounts have no draft attempts left.
 const { GameSocket } = require('./game-socket.cjs');
 const R = require('./trade-rules.cjs');
 const { levelRange } = require('./draft-service.cjs');
@@ -21,7 +23,9 @@ const { levelRange } = require('./draft-service.cjs');
 const TICK_MS = 700;
 const TURN_MS = 250;       // how often our turns are looked at
 const ROSTER_CHECKS = 10;  // roster reads at a time when choosing accounts for a room
-const PICK_DELAY = [3000, 5000];
+const PICK_DELAY = [2000, 4000];
+const PICK_TRIES_AD = 6;   // players tried on one turn (taken / already in our roster → the next)
+const CHEAP = '__cheap';   // the pseudo role of a cheap player counted as Kart
 const JOIN_GAP = [900, 2200];
 const ATTEMPTS_EVERY_MS = 60 * 1000;
 const ROSTER_MAX = 11;
@@ -41,6 +45,9 @@ class AutoDraftService {
     this.rosterCache = new Map();
     this.turnTimer = null;
     this.reserved = new Set(); // accounts picked for a room and still joining it
+    // "only Stok" is always off when the app starts (user 2026-11-26)
+    const saved = this.store.getSettings?.()?.autoDraft;
+    if (saved?.stokOnly) { try { this.store.saveSettings({ ...this.store.getSettings(), autoDraft: { ...saved, stokOnly: false } }); } catch {} }
   }
 
   setActions(actions) { this.actions = actions; }
@@ -68,14 +75,17 @@ class AutoDraftService {
       accountIds: Array.isArray(saved.accountIds) ? saved.accountIds : [],
       priority: order,
       fallback: ['card', 'fire', 'none'].includes(saved.fallback) ? saved.fallback : 'card',
-      sideOnly: Boolean(saved.sideOnly)
+      sideOnly: Boolean(saved.sideOnly),
+      cheapAsCard: Boolean(saved.cheapAsCard),
+      cheapPrice: Number(saved.cheapPrice) > 0 ? Number(saved.cheapPrice) : 70,
+      stokOnly: Boolean(saved.stokOnly)
     };
   }
   saveConfig(patch = {}) {
     const s = this.store.getSettings();
     const cur = this.config();
     const next = { ...cur, ...patch };
-    this.store.saveSettings({ ...s, autoDraft: { accountIds: next.accountIds, priority: next.priority, fallback: next.fallback, sideOnly: next.sideOnly } });
+    this.store.saveSettings({ ...s, autoDraft: { accountIds: next.accountIds, priority: next.priority, fallback: next.fallback, sideOnly: next.sideOnly, cheapAsCard: Boolean(next.cheapAsCard), cheapPrice: Number(next.cheapPrice) > 0 ? Math.round(Number(next.cheapPrice)) : 70, stokOnly: Boolean(next.stokOnly) } });
     this.onChanged();
     return this.config();
   }
@@ -147,86 +157,84 @@ class AutoDraftService {
   }
   _fits(id, slot) { const range = levelRange(slot); const lv = this._level(id); return Boolean(range && lv && lv >= range[0] && lv <= range[1]); }
 
-  // the roster size, read without logging in (cached 60 s; a full roster cannot draft)
-  async _rosterTotal(id) {
+  // the roster (size and player ids), read without logging in (cached 60 s; a full roster cannot draft)
+  async _roster(id) {
     const c = this.rosterCache.get(id);
-    if (c && this.now() - c.at < 60000) return c.total;
+    if (c && this.now() - c.at < 60000) return c;
     const gs = await GameSocket.open({ createSocket: this.createSocket });
     try {
       const r = await gs.ack('getTeamOptimized', { userId: this._userId(id) }, { timeoutMs: 10000 });
-      const total = (r?.players?.starters || []).length + (r?.players?.bench || []).length;
-      this.rosterCache.set(id, { total, at: this.now() });
-      return total;
+      const all = [...(r?.players?.starters || []), ...(r?.players?.bench || [])];
+      const v = { total: all.length, ids: new Set(all.map(p => p.id || p.playerId).filter(Boolean)), at: this.now() };
+      this.rosterCache.set(id, v);
+      return v;
     } finally { try { gs.close(); } catch {} }
   }
+  async _rosterTotal(id) { return (await this._roster(id)).total; }
+  // the account cannot sign this player: its roster has him, or the game said so this draft
+  _owns(id, playerId) { return Boolean(this.rosterCache.get(id)?.ids?.has(playerId)) || Boolean(this.run?.accounts?.[id]?.skip?.includes(playerId)); }
 
   // free accounts for a room: chosen, attempts left, fit the level, in no room, not used by Auto
-  // Trade, roster not full
-  async _free(slot, n) {
+  // Trade, roster not full. `lv30`: 'only' Lv30+ accounts, 'first' or 'last' (Lv30 included).
+  async _free(slot, n, { lv30 = 'last', not = [] } = {}) {
     const out = [];
     if (n <= 0) return out;
-    // Lv30+ first: they take the Stok players
+    const hi = id => (this._level(id) || 0) >= 30;
     const cands = this.run.accountIds
-      .filter(id => !this.reserved.has(id) && this._attempts(id) > 0 && !this._inSlot(id) && !this.isBusy(id) && this._fits(id, slot))
-      .sort((a, b) => (this._level(b) >= 30) - (this._level(a) >= 30));
+      .filter(id => !not.includes(id) && !this.reserved.has(id) && this._attempts(id) > 0 && !this._inSlot(id) && !this.isBusy(id) && this._fits(id, slot) && (lv30 !== 'only' || hi(id)))
+      .sort((a, b) => (lv30 === 'first' ? hi(b) - hi(a) : hi(a) - hi(b)));
     // roster checks a few at a time (each is one short anonymous read)
     for (let i = 0; i < cands.length && out.length < n; i += ROSTER_CHECKS) {
       const chunk = cands.slice(i, i + ROSTER_CHECKS);
-      const totals = await Promise.all(chunk.map(id => this._rosterTotal(id).catch(() => ROSTER_MAX)));
+      const rosters = await Promise.all(chunk.map(id => this._roster(id).catch(() => null)));
       chunk.forEach((id, k) => {
-        if (totals[k] >= ROSTER_MAX) { if (this.run.accounts[id]) this.run.accounts[id].state = 'rosterFull'; return; }
+        if (!rosters[k] || rosters[k].total >= ROSTER_MAX) { if (rosters[k] && this.run.accounts[id]) this.run.accounts[id].state = 'rosterFull'; return; }
         if (out.length < n && !this.reserved.has(id)) out.push(id);
       });
     }
     return out;
   }
 
-  // every open room (not started, no cooldown, seats left) for a level ours fit: as many of our
-  // accounts join as there are free seats; the rooms fill at the same time
+  // a new room (not started, no cooldown, seats left) for a level ours fit: ONE account joins at
+  // once and sees the pool; every open room at the same time. A Lv30+ account is kept for the
+  // Stok players of the pool (a lower one scouts when there is one).
   async _openRooms() {
     for (const s of this.draft.slots || []) {
       const slot = s.slotNumber;
-      if (!levelRange(slot)) continue; // rooms 1-2: Rookie draft, closed this season
-      const room = this.run.rooms[slot] && !this.run.rooms[slot].ended ? this.run.rooms[slot] : null;
-      if (room?.filling) continue;
-      if (s.hasStarted || s.cooldownRemaining > 0) continue;
-      const seats = ROOM_SIZE - Math.max(s.users?.length || 0, room ? room.ours.length : 0);
-      if (seats <= 0) continue;
-      const ids = await this._free(slot, seats);
-      if (!ids.length) continue;
-      ids.forEach(id => this.reserved.add(id));
-      const r = room || (this.run.rooms[slot] = { slot, scout: ids[0], ours: [], rolePlayers: null, ended: false, at: new Date(this.now()).toISOString() });
-      r.filling = true;
-      this._fill(r, ids).finally(() => { r.filling = false; ids.forEach(id => this.reserved.delete(id)); this.onChanged(); });
+      if (!levelRange(slot)) continue; // rooms 1-2: Rookie draft (Lv20+, attempts of its own), closed this season
+      if (this.run.rooms[slot] && !this.run.rooms[slot].ended) continue;
+      if (s.hasStarted || s.cooldownRemaining > 0 || (s.users?.length || 0) >= ROOM_SIZE) continue;
+      const [scout] = await this._free(slot, 1, { lv30: 'last' });
+      if (!scout) continue;
+      this.reserved.add(scout);
+      const room = this.run.rooms[slot] = { slot, scout, ours: [], extrasDone: false, rolePlayers: null, ended: false, at: new Date(this.now()).toISOString() };
+      room.filling = true;
+      this._join(room, [scout], { first: true }).finally(() => { room.filling = false; this.reserved.delete(scout); if (!room.ours.length && this.run?.rooms?.[slot] === room) delete this.run.rooms[slot]; this.onChanged(); });
     }
   }
 
-  async _fill(room, ids) {
-    let first = !room.ours.length;
-    for (const id of ids) {
+  async _join(room, ids, { first = false } = {}) {
+    for (let i = 0; i < ids.length; i++) {
+      const id = ids[i];
       const live = this.draft.rooms.get(room.slot);
       if (this.run?.status !== 'running' || live?.started || room.ended) break;
-      if (!first) await sleep(rand(JOIN_GAP));
+      if (i > 0 || !first) await sleep(rand(JOIN_GAP));
       this.run.accounts[id] = { ...this.run.accounts[id], state: 'joining', slot: room.slot };
       this.onChanged();
       try {
         await this.draft.join(id, room.slot);
         room.ours.push(id);
         this.run.accounts[id].state = 'inRoom';
-        if (first) this._log('info', 'ad.joined', { slot: room.slot }, `Joined draft room ${room.slot} · filling its free seats`, id);
-        first = false;
+        if (first && i === 0) this._log('info', 'ad.joined', { slot: room.slot }, `Joined draft room ${room.slot} first · looking at the players`, id);
       } catch (error) {
         this.run.accounts[id].state = 'waiting';
         this.run.accounts[id].slot = null;
         this._log('warning', 'ad.joinFailed', { slot: room.slot, error: error.message }, `Could not join room ${room.slot}: ${error.message}`, id);
-        // a room that is full, started or cooling down: the others do not try it now
         if (/cool|full|start|progress/i.test(error.message)) break;
       }
     }
-    if (!room.ours.length && this.run?.rooms?.[room.slot] === room) delete this.run.rooms[room.slot];
   }
 
-  // the room's pool is known after the first join: as many more accounts as there are role players
   _roleOf(player) {
     const map = R.roleMapFrom(this.store.getCardMetadata?.() || {});
     const roles = map.get(player.id) || [];
@@ -235,6 +243,7 @@ class AutoDraftService {
     return ranked[0] || null;
   }
   _dirOf(role) {
+    if (role === CHEAP) return 'main';
     const at = this.atConfig() || {};
     const toMain = at.sideToMainRoleIds || ['card'];
     const toSide = at.mainToSideRoleIds || ['sellable'];
@@ -242,11 +251,35 @@ class AutoDraftService {
     if (toMain.includes(role)) return 'main';
     return 'side';
   }
-  _isStok(role) { return /^sto(k|ck)/i.test(String(this.roles().find(r => r.id === role)?.name || '').trim()); }
+  _isStok(role) { return role !== CHEAP && /^sto(k|ck)/i.test(String(this.roles().find(r => r.id === role)?.name || '').trim()); }
+  // the pool's players we want, best first: by the role priority, cheap players (counted as Kart,
+  // option) after every role, the cheapest of them first; in a role the higher salary first
   _wanted(players) {
     const cfg = this.config();
-    return (players || []).filter(p => !p.signed).map(p => ({ p, role: this._roleOf(p) }))
-      .filter(x => x.role && !(cfg.sideOnly && this._dirOf(x.role) === 'main'));
+    const out = [];
+    for (const p of players || []) {
+      if (p.signed) continue;
+      let role = this._roleOf(p);
+      const price = Number(p.baseSalary) || 0;
+      if (!role && cfg.cheapAsCard && price > 0 && price <= cfg.cheapPrice) role = CHEAP;
+      if (!role || (cfg.sideOnly && this._dirOf(role) === 'main')) continue;
+      out.push({ p, role });
+    }
+    const rank = r => (r === CHEAP ? 1e6 : cfg.priority.indexOf(r));
+    return out.sort((a, b) => (rank(a.role) - rank(b.role)) || (a.role === CHEAP ? (Number(a.p.baseSalary) || 0) - (Number(b.p.baseSalary) || 0) : (Number(b.p.baseSalary) || 0) - (Number(a.p.baseSalary) || 0)));
+  }
+
+  // after the scout sees the pool: N role players → N-1 more accounts (only Stok: N = Stok players),
+  // with a Lv30+ account in the room for the Stok players
+  _extrasPlan(room, players, seats) {
+    const cfg = this.config();
+    const wanted = this._wanted(players);
+    const stok = wanted.filter(w => this._isStok(w.role)).length;
+    const counted = cfg.stokOnly ? stok : wanted.length;
+    const hiIn = room.ours.filter(a => (this._level(a) || 0) >= 30).length;
+    const hiNeed = stok ? Math.max(0, Math.min(stok, Math.max(counted, 1)) - hiIn) : 0;
+    const extra = Math.max(0, Math.min(seats, Math.max(counted - room.ours.length, hiNeed)));
+    return { counted, stok, extra, hiNeed: Math.min(hiNeed, extra) };
   }
 
   async _syncRooms() {
@@ -255,16 +288,25 @@ class AutoDraftService {
       const live = this.draft.rooms.get(room.slot);
       if (!live) continue;
       if (live.ended) { await this._roomEnded(room); continue; }
-      if (!room.poolLogged && (live.players || []).length) {
-        room.poolLogged = true;
-        const want = this._wanted(live.players).length;
-        room.rolePlayers = want;
-        this._log('info', 'ad.pool', { slot: room.slot, count: want, ours: room.ours.length }, `Room ${room.slot}: ${want} player(s) with a role · ${room.ours.length} of our account(s) in the room`, room.scout);
+      if (!room.extrasDone && !room.filling && room.ours.length && (live.players || []).length) {
+        room.extrasDone = true;
+        const seats = ROOM_SIZE - Math.max((live.users || []).length, room.ours.length);
+        const plan = this._extrasPlan(room, live.players, seats);
+        room.rolePlayers = plan.counted;
+        this._log('info', 'ad.pool', { slot: room.slot, count: plan.counted, extra: plan.extra }, `Room ${room.slot}: ${plan.counted} player(s) with a role · ${plan.extra} more account(s) join`, room.scout);
+        if (live.started || plan.extra <= 0) continue;
+        const hi = await this._free(room.slot, plan.hiNeed, { lv30: 'only' });
+        hi.forEach(id => this.reserved.add(id));
+        const rest = await this._free(room.slot, plan.extra - hi.length, { lv30: 'last', not: hi });
+        rest.forEach(id => this.reserved.add(id));
+        const ids = [...hi, ...rest];
+        room.filling = true;
+        this._join(room, ids).finally(() => { room.filling = false; ids.forEach(id => this.reserved.delete(id)); this.onChanged(); });
       }
     }
   }
 
-  // our account's turn: a random 3–5 s, then the best player for it
+  // our account's turn: a random 2–4 s, then the best player for it
   async _turns() {
     for (const room of Object.values(this.run.rooms)) {
       if (room.ended) continue;
@@ -279,22 +321,27 @@ class AutoDraftService {
       const delay = rand(PICK_DELAY);
       this.run.accounts[id].state = 'picking';
       this.onChanged();
+      // the roster is read meanwhile, so a player we already have is not tried
+      this._roster(id).catch(() => {});
       setTimeout(() => this._pick(room, id).catch(error => this._log('warning', 'ad.pickFailed', { error: error.message }, `Pick failed: ${error.message}`, id)), delay);
     }
   }
 
   _choose(room, id, live) {
     const cfg = this.config();
-    const wanted = this._wanted(live.players).sort((a, b) => (cfg.priority.indexOf(a.role) - cfg.priority.indexOf(b.role)) || ((Number(b.p.baseSalary) || 0) - (Number(a.p.baseSalary) || 0)));
+    const wanted = this._wanted(live.players);
+    const mineAll = wanted.filter(w => !this._owns(id, w.p.id));
     // Stok is left for a Lv30+ account of ours that still has to pick (it may get the 5% cut)
     const picked = new Set(live.picked || []);
-    const lv30Left = room.ours.filter(a => a !== id && !picked.has(a) && this._level(a) >= 30).length;
-    const stokLeft = wanted.filter(w => this._isStok(w.role)).length;
-    const mine = this._level(id) >= 30 || stokLeft > lv30Left ? wanted : wanted.filter(w => !this._isStok(w.role));
-    if (mine.length) return { player: mine[0].p, role: mine[0].role, kind: this._dirOf(mine[0].role) === 'main' ? 'cards' : 'spender' };
-    if (cfg.fallback === 'none' || cfg.sideOnly || wanted.length) return null;
-    const cheap = Number(this.atConfig()?.maxPrice) || 0;
-    const pool = (live.players || []).filter(p => !p.signed && Number(p.baseSalary) > 0 && Number(p.baseSalary) <= cheap).sort((a, b) => Number(a.baseSalary) - Number(b.baseSalary));
+    const lv30Left = room.ours.filter(a => a !== id && !picked.has(a) && (this._level(a) || 0) >= 30).length;
+    const stokLeft = mineAll.filter(w => this._isStok(w.role)).length;
+    const mine = (this._level(id) || 0) >= 30 || stokLeft > lv30Left ? mineAll : mineAll.filter(w => !this._isStok(w.role));
+    if (mine.length) return { player: mine[0].p, role: mine[0].role === CHEAP ? null : mine[0].role, kind: this._dirOf(mine[0].role) === 'main' ? 'cards' : 'spender' };
+    // no role player for this account: the cheapest player (not one left for another of ours)
+    if (cfg.fallback === 'none' || cfg.sideOnly) return null;
+    const kept = new Set(wanted.map(w => w.p.id));
+    const free = (live.players || []).filter(p => !p.signed && Number(p.baseSalary) > 0 && !this._owns(id, p.id));
+    const pool = (free.some(p => !kept.has(p.id)) ? free.filter(p => !kept.has(p.id)) : free).sort((a, b) => Number(a.baseSalary) - Number(b.baseSalary));
     return pool[0] ? { player: pool[0], role: null, kind: cfg.fallback === 'fire' ? 'fire' : 'cards' } : null;
   }
 
@@ -302,18 +349,24 @@ class AutoDraftService {
     const live = this.draft.rooms.get(room.slot);
     if (!live || live.ended || this.run?.status !== 'running') return;
     if (this.draft.joined.get(id)?.userId !== live.turn?.userId) return; // the turn moved on
+    const acc = this.run.accounts[id];
+    acc.skip ||= [];
     let c = null;
-    // the chosen player may be taken by someone else in the meantime: the next best one
-    for (let attempt = 0; attempt < 3; attempt++) {
+    // taken by someone else meanwhile, or already in our roster ("already signed"): the next one
+    for (let attempt = 0; attempt < PICK_TRIES_AD; attempt++) {
       c = this._choose(room, id, live);
       if (!c) break;
       try { await this.draft.pick(id, c.player.id); break; }
-      catch (error) { if (attempt === 2 || !/already|signed|picked/i.test(error.message)) throw error; c = null; }
+      catch (error) {
+        if (!/already|signed|picked|roster|own|have/i.test(error.message) || attempt === PICK_TRIES_AD - 1) throw error;
+        if (!c.player.signed) acc.skip.push(c.player.id); // the game says we have him: left for another account
+        c = null;
+      }
     }
-    if (!c) { this.run.accounts[id].state = 'noPick'; this._log('info', 'ad.noPick', { slot: room.slot }, `Room ${room.slot}: nothing to pick for this account`, id); this.onChanged(); return; }
+    if (!c) { acc.state = 'noPick'; this._log('info', 'ad.noPick', { slot: room.slot }, `Room ${room.slot}: nothing to pick for this account`, id); this.onChanged(); return; }
     this.draft.tagRows(id, { [c.player.id]: { role: c.role, auto: c.kind } });
-    this.run.accounts[id].picks.push({ name: c.player.visualName || c.player.name, role: c.role, kind: c.kind, slot: room.slot });
-    this.run.accounts[id].state = 'picked';
+    acc.picks.push({ name: c.player.visualName || c.player.name, role: c.role, kind: c.kind, slot: room.slot });
+    acc.state = 'picked';
     this.run.picked += 1;
     this.rosterCache.delete(id);
     this.onChanged();
