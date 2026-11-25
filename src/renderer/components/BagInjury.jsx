@@ -130,7 +130,8 @@ export default function InjuryTab({ state, t, toast }) {
   // the player rows grouped by account name prefix (user 2026-11-25: every table groups)
   const grpInj = useGroupedRows('inj-rows');
   const grpPk = useGroupedRows('inj-parked');
-  const byAcc = list => list.map(r => ({ ...r, id: r.key || `${r.accountId}:${r.playerId}`, name: accName(r.accountId) }));
+  // grouping reads `name` as the account name; the player's name stays in `playerName`
+  const byAcc = list => list.map(r => ({ ...r, id: r.key || `${r.accountId}:${r.playerId}`, playerName: r.name, name: accName(r.accountId) }));
   const [atOnce, setAtOnce] = useState(3);
   const viewIds = (() => {
     const ticked = [...new Set(rows.filter(r => sel.has(r.key)).map(r => r.accountId))];
@@ -195,9 +196,9 @@ export default function InjuryTab({ state, t, toast }) {
       <small className="muted-text">{x.pkHint}</small>
       {parked.length ? <div className="table-panel"><SortTable><thead><tr><th className="select-col" /><th>{x.account}</th><th>{x.player}</th><th>{x.pkReplaced}</th><th>{x.pkWhen}</th></tr></thead>
         <tbody>{grpPk(byAcc(parked), r => <tr key={pkKey(r)} className={pkSel.has(pkKey(r)) ? 'selected-row-soft' : ''}>
-          <td className="select-col"><input type="checkbox" checked={pkSel.has(pkKey(r))} onChange={() => setPkSel(s2 => { const n = new Set(s2); n.has(pkKey(r)) ? n.delete(pkKey(r)) : n.add(pkKey(r)); return n; })} aria-label={r.name} /></td>
+          <td className="select-col"><input type="checkbox" checked={pkSel.has(pkKey(r))} onChange={() => setPkSel(s2 => { const n = new Set(s2); n.has(pkKey(r)) ? n.delete(pkKey(r)) : n.add(pkKey(r)); return n; })} aria-label={r.playerName} /></td>
           <td><b>{accName(r.accountId)}</b></td>
-          <td><b>{r.name}</b> <span className="muted-text">{r.position} · {r.slot}</span> <RatingBadge grade={r.rating} mini /></td>
+          <td><b>{r.playerName}</b> <span className="muted-text">{r.position} · {r.slot}</span> <RatingBadge grade={r.rating} mini /></td>
           <td>{r.replacedBy || '—'}</td>
           <td className="muted-text">{r.at ? new Date(r.at).toLocaleString() : '—'}</td>
         </tr>, (g, { open, toggle }) => { const keys = g.accounts.map(pkKey); const on = keys.filter(k => pkSel.has(k)).length; return <tr key={g.key} className="grp-row">
@@ -233,9 +234,9 @@ export default function InjuryTab({ state, t, toast }) {
     <div className="panel table-panel">{!Object.keys(inj.teams || {}).length ? <p className="muted-text">{x.notRead}</p> : !rows.length ? <p className="muted-text">{x.empty}</p> : <SortTable>
       <thead><tr><th className="select-col" /><th>{x.account}</th><th>{x.player}</th><th>{x.role}</th><th>{x.status}</th><th>{x.anes}</th></tr></thead>
       <tbody>{grpInj(byAcc(rows), r => <tr key={r.key} className={sel.has(r.key) ? 'selected-row-soft' : ''}>
-        <td className="select-col"><input type="checkbox" disabled={!can(r)} checked={sel.has(r.key)} onChange={() => toggle(r.key)} aria-label={r.name} /></td>
+        <td className="select-col"><input type="checkbox" disabled={!can(r)} checked={sel.has(r.key)} onChange={() => toggle(r.key)} aria-label={r.playerName} /></td>
         <td><b>{accName(r.accountId)}</b>{inj.blocked?.[r.accountId] && <span className="pill bad"><i />⏸</span>}</td>
-        <td><b>{r.name}</b> <span className="muted-text">{r.position}</span> <RatingBadge grade={r.rating} mini /></td>
+        <td><b>{r.playerName}</b> <span className="muted-text">{r.position}</span> <RatingBadge grade={r.rating} mini /></td>
         <td>{r.starter ? <span className="pill warn"><i />{x.starter}</span> : <span className="muted-text">{x.bench}</span>}</td>
         <td>{r.hurt ? <span className="pill bad"><i />{x.injured}</span> : <span className="pill ok"><i />{r.healedUntil ? fill(x.healed, { until: new Date(r.healedUntil).toLocaleString() }) : x.healedNoTime}</span>}</td>
         <td className="num">{r.anesthesia > 0 ? r.anesthesia : <span className="bad-text">{x.noItem}</span>}</td>
