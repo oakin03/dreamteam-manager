@@ -605,12 +605,16 @@ test('a task that does not end after Stop counts as stopped after the wait, and 
   assert.equal(logs.filter(m => /stopped\.$/.test(m)).length, 1, 'stopped is logged once');
 }, { timeout: 30000 });
 
-test('Quick Play search queues: one lane searches one at a time, lanes run side by side (Dummy lanes)', async () => {
-  const engine = new TaskEngine({ store: { getAccounts: () => [] }, credentials: {}, browserService: {}, activity: { add() {} }, onChanged() {}, registry: {}, laneOf: id => (id.startsWith('d') ? 'dummy0' : 'main') });
-  let live = { main: 0, dummy0: 0 }, max = { main: 0, dummy0: 0 }, both = false;
-  const turn = lane => engine._matchTurn(async () => { live[lane]++; max[lane] = Math.max(max[lane], live[lane]); if (live.main && live.dummy0) both = true; await new Promise(r => setTimeout(r, 40)); live[lane]--; }, null, lane);
-  await Promise.all([turn('main'), turn('main'), turn('dummy0'), turn('dummy0')]);
-  assert.deepEqual(max, { main: 1, dummy0: 1 }, 'one at a time inside a lane');
-  assert.ok(both, 'the two lanes overlapped');
-  assert.equal(engine.laneOf('d1'), 'dummy0');
+test('Quick Play search queues: the main lane one at a time, Dummy accounts (no lane) all at once', async () => {
+  const engine = new TaskEngine({ store: { getAccounts: () => [] }, credentials: {}, browserService: {}, activity: { add() {} }, onChanged() {}, registry: {}, laneOf: id => (id.startsWith('d') ? null : 'main') });
+  const live = { main: 0, dummy: 0 }, max = { main: 0, dummy: 0 };
+  let both = false;
+  const turn = kind => engine._matchTurn(async () => { live[kind]++; max[kind] = Math.max(max[kind], live[kind]); if (live.main && live.dummy) both = true; await new Promise(r => setTimeout(r, 40)); live[kind]--; }, null, kind === 'main' ? 'main' : null);
+  await Promise.all([turn('main'), turn('main'), turn('dummy'), turn('dummy'), turn('dummy')]);
+  assert.equal(max.main, 1, 'one at a time in the main lane');
+  assert.equal(max.dummy, 3, 'every dummy at once');
+  assert.ok(both, 'dummies search while a main account searches');
+  assert.equal(engine.laneOf('d1'), null);
+  const ctl = new AbortController(); ctl.abort();
+  await assert.rejects(engine._matchTurn(() => 1, ctl.signal, null), /Aborted/);
 });

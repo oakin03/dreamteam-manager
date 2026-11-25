@@ -63,10 +63,12 @@ class TaskEngine {
   // its turn (user 2026-11-12: "stop all" stopped the last 50-60 accounts one by one), and a turn
   // that comes after its stop is skipped.
   // `lane`: accounts of one lane search one at a time (they are never paired with each other); the
-  // lanes run side by side (user 2026-11-25: the Dummy accounts in lanes of their own, the others
-  // in 'main' as before — one queue for 1141 accounts meant a match every ~37 minutes).
+  // lanes run side by side. `null`: no queue at all, the account searches whenever it is ready (user
+  // 2026-11-25: Dummy accounts search together and may meet each other or any other account; the
+  // others keep 'main' — one queue for 1141 accounts meant a match every ~37 minutes).
   _matchTurn(fn, signal = null, lane = 'main') {
     const go = () => { if (signal?.aborted) throw abortError(); return fn(); };
+    if (lane == null) return Promise.resolve().then(go);
     const chain = lane === 'main' ? this.matchChain : (this.matchChains.get(lane) || Promise.resolve());
     const run = chain.then(go, go);
     if (lane === 'main') this.matchChain = run.catch(() => {}); else this.matchChains.set(lane, run.catch(() => {}));
