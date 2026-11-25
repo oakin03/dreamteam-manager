@@ -49,7 +49,7 @@ const TEXT = {
       how: ['Her hesap günlük 2 hakkını kullanana kadar kuyruğa girer, rakip bulununca maç oynanır, maç bitince puanlar güncellenir. Kuyruk uzun sürebilir; süre canlı gösterilir. Durdur kuyruktan da çıkar.', 'Haklar her gün 19:10 civarında yenilenir. Etkinlik kapalıysa (sezon arası) uyarı verip durur.', 'Başlatırken seçili hesaplarda çalışan Auto Play durdurulur, Go-up bitince yeniden başlatılır. Mağazadan hiçbir şey alınmaz.', 'Aynı görevi Auto Play sayfasındaki "Zamanla" ile belirli bir saate de kurabilirsin.']
     },
     qz: {
-      start: 'Quiz Başlat ({n})', bank: 'Bilinen soru: {n}', question: 'Soru {n}/10', score: 'Skor {n}/10',
+      start: 'Quiz Başlat ({n})', bank: 'Bilinen soru: {n}', sum: '{done}/{total} bitti · {working} çalışıyor · {asking} senin cevabını bekliyor · {queued} sırada · {errors} hata', last: 'Son quiz: {done}/{total} hesap bitti · {errors} hata · {at}', question: 'Soru {n}/10', score: 'Skor {n}/10',
       known: 'Uygulama biliyor', unknown: 'Yeni soru · cevabını seç', auto: 'oto', user: 'senin', random: 'rastgele', randomIn: '{s} sn içinde seçmezsen rastgele denenecek',
       correct: 'Doğru', wrong: 'Yanlış', rightAnswer: 'doğru cevap', learned: 'öğrenildi',
       st: { queued: 'Sırada', login: 'Bağlanıyor', answering: 'Cevaplanıyor', askUser: 'Cevabını bekliyor', claiming: 'Ödüller toplanıyor', done: 'Bitti · ödüller toplandı', already: 'Bugün oynanmış', waitingGame: 'Oyun bekleniyor', error: 'Hata', stopped: 'Durduruldu' },
@@ -105,7 +105,7 @@ const TEXT = {
       how: ['Each account joins the queue until its 2 daily attempts are used; when an opponent is found the match is played and the points are refreshed. The queue may take long; the time is shown live. Stop also leaves the queue.', 'Attempts reset every day around 19:10. When the event is closed (season break) it warns and stops.', 'On start, Auto Play on the selected accounts is stopped and started again when Go-up is over. Nothing is bought from the shop.', 'The same task can be set for a time with "Schedule" on the Auto Play page.']
     },
     qz: {
-      start: 'Start Quiz ({n})', bank: 'Known questions: {n}', question: 'Question {n}/10', score: 'Score {n}/10',
+      start: 'Start Quiz ({n})', sum: '{done}/{total} done · {working} working · {asking} waiting for your answer · {queued} queued · {errors} error(s)', last: 'Last quiz: {done}/{total} account(s) done · {errors} error(s) · {at}', bank: 'Known questions: {n}', question: 'Question {n}/10', score: 'Score {n}/10',
       known: 'The app knows it', unknown: 'New question · pick the answer', auto: 'auto', user: 'yours', random: 'random', randomIn: 'a random answer is tried in {s} s',
       correct: 'Correct', wrong: 'Wrong', rightAnswer: 'right answer', learned: 'learned',
       st: { queued: 'Queued', login: 'Connecting', answering: 'Answering', askUser: 'Waiting for your answer', claiming: 'Claiming rewards', done: 'Done · rewards claimed', already: 'Already played today', waitingGame: 'Waiting for the game', error: 'Error', stopped: 'Stopped' },
@@ -510,9 +510,14 @@ function QuizTab({ state, x, toast }) {
         : <button className="btn primary" disabled={!ids.length} onClick={start}>{fill(x.qz.start, { n: ids.length })}</button>}</div>
     </div>
     <div className="panel dp-section"><AccountPicks accounts={accounts} ids={ids} setIds={setIds} disabled={running} x={x} /></div>
-    {running && <div className="dp-quiz-grid">{rows.map(r => <QuizCard key={r.accountId} row={r} x={x} now={now} />)}</div>}
-    {report && <div className="panel table-panel dp-table"><SortTable><thead><tr><th>{x.account}</th><th>{x.status}</th><th>{x.qz.correct}</th><th>{x.qz.auto} / {x.qz.user} / {x.qz.random}</th><th>{x.qz.learned}</th></tr></thead>
-      <tbody>{grp(asAccounts(report.rows), r => <tr key={r.accountId}><td><b>{r.name}</b></td><td className={r.status === 'error' ? 'bad-text' : ''}>{x.qz.st[r.status] || r.status}{r.reason && r.status === 'error' ? `: ${r.reason}` : ''}</td><td>{r.correct}/10</td><td>{r.auto} / {r.byUser} / {r.random}</td><td>{r.learned}</td></tr>, groupRowOf(5, g => <><td /><td>{g.reduce((n, r) => n + (r.correct || 0), 0)}/{g.length * 10}</td><td /><td>{g.reduce((n, r) => n + (r.learned || 0), 0)}</td></>))}</tbody></SortTable></div>}
+    {/* no per-account cards / table any more (user 2026-11-25: 1000+ accounts): a count, and only the
+        questions waiting for the user's answer */}
+    {running && (() => { const n = st => rows.filter(r => st.includes(r.status)).length; return <div className="panel dp-section"><b>{fill(x.qz.sum, { done: n(['done', 'already']), total: rows.length, working: n(['login', 'answering', 'claiming']), asking: n(['askUser']), queued: n(['queued']), errors: n(['error']) })}</b></div>; })()}
+    {running && <div className="dp-quiz-grid">{rows.filter(r => r.status === 'askUser').slice(0, 12).map(r => <QuizCard key={r.accountId} row={r} x={x} now={now} />)}</div>}
+    {report && <div className="panel dp-section"><span className="muted-text">{fill(x.qz.last, { done: report.rows.filter(r => r.status === 'done' || r.status === 'already').length, total: report.rows.length, errors: report.rows.filter(r => r.status === 'error').length, at: report.finishedAt ? new Date(report.finishedAt).toLocaleString() : '' })}</span></div>}
+    {(running ? rows : report?.rows || []).length > 0 && <div className="panel table-panel dp-table"><SortTable><thead><tr><th>{x.account}</th><th>{x.status}</th></tr></thead>
+      <tbody>{grp(asAccounts(running ? rows : report.rows), r => <tr key={r.accountId}><td><b>{r.name}</b></td><td className={r.status === 'error' ? 'bad-text' : ['done', 'already'].includes(r.status) ? 'good-text' : ''}>{x.qz.st[r.status] || r.status}{r.status === 'error' && r.reason ? `: ${r.reason}` : ''}</td></tr>,
+        groupRowOf(2, g => <td className="muted-text">{g.filter(r => ['done', 'already'].includes(r.status)).length}/{g.length}{g.some(r => r.status === 'error') ? <span className="bad-text"> · {g.filter(r => r.status === 'error').length} ✗</span> : ''}</td>))}</tbody></SortTable></div>}
     <details className="panel pvp-how"><summary>{x.howTitle}</summary><ul>{x.qz.how.map(l => <li key={l}>{l}</li>)}</ul></details>
   </>;
 }

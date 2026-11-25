@@ -178,7 +178,10 @@ class GoUpService {
     this._log(null, 'info', 'gu.start', { count: ids.length, mode: this.run.mode, gap }, `Go-up started · ${ids.length} account(s)${gap ? ` · ${gap} s apart` : ''}`);
     this.onChanged();
     try {
-      await Promise.all(ids.map((id, i) => this._account(id, controller.signal, i * gap * 1000)));
+      // at most WIDE (200) accounts at once, the next starts when one is over (user 2026-11-25: 1141 at once → the game stopped answering)
+      // (one after another with a gap keeps its own timing: every account waits i × gap from the start)
+      if (gap) await Promise.all(ids.map((id, i) => this._account(id, controller.signal, i * gap * 1000)));
+      else await eachAtOnce(ids, id => this._account(id, controller.signal, 0), WIDE);
     } finally {
       signal?.removeEventListener('abort', onAbort);
       const report = this._report(controller.signal.aborted);

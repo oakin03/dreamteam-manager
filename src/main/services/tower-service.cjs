@@ -1,4 +1,5 @@
 const { GameSocket } = require('./game-socket.cjs');
+const { WIDE, eachAtOnce } = require('./wide.cjs');
 const { handleInjury, InjuredError } = require('./injury-guard.cjs');
 const { isNetError } = require('./game-health.cjs');
 const { matchStartSlot } = require('./match-start-gate.cjs');
@@ -85,7 +86,8 @@ class TowerService {
     this._log(null, 'info', 'tw.start', { count: ids.length }, `Tower started · ${ids.length} account(s)`);
     this.onChanged();
     try {
-      await Promise.all(ids.map(id => this._account(id, this.controllers.get(id).signal)));
+      // at most WIDE (200) accounts at once, the next starts when one is over (user 2026-11-25: 1141 at once → the game stopped answering)
+      await eachAtOnce(ids, id => this._account(id, this.controllers.get(id).signal), WIDE);
     } finally {
       this.store.saveTowerReport?.(this._report());
       this.controllers.clear();

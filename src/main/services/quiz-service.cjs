@@ -18,7 +18,7 @@ const { eachAtOnce } = require('./wide.cjs');
 // with the setup) + answers learned here (quiz-bank.json in the user data); a learned
 // answer overrides a bundled one, so a changed answer is relearned by itself.
 const LETTERS = ['A', 'B', 'C', 'D'];
-const QUIZ_PARALLEL = 100;  // accounts in the quiz at the same time
+const QUIZ_PARALLEL = 200;  // accounts in the quiz at the same time (user 2026-11-25: 150–200)
 const CONNECT_TRIES = 3;    // a timed-out connection is tried this many times
 const QUESTIONS = 10;
 const USER_WAIT_MS = 8500;

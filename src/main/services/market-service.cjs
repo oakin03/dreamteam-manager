@@ -15,6 +15,7 @@ const { OwnedSwap } = require('./owned-swap.cjs');
 // this player." while the same player is already in the roster.
 const { pageCount } = require('./market-pages.cjs');
 const ACCOUNT_CONCURRENCY = WIDE; // every account at once (user 2026-11-11)
+const ACCOUNT_TIMEOUT_MS = 2 * 60 * 1000; // a scan / claim of one account is given up after this
 const MAX_ATTEMPTS = 5;
 const CURRENCY = { APK_TICKET: 'APK', TICKET: 'TIX' };
 const PAYMENT_MODE = { APK: 'APK_TICKET', TIX: 'TICKET' };
@@ -84,7 +85,7 @@ function lastExpiryCutoff(now = Date.now()) {
 }
 
 class MarketService {
-  constructor({ store, activity, accountProfile = null, sessions, onChanged, createSocket, concurrency = ACCOUNT_CONCURRENCY, minRetryMs = 0, writeTimeoutMs = 15000, checkCooldown = true }) {
+  constructor({ store, activity, accountProfile = null, sessions, onChanged, createSocket, concurrency = ACCOUNT_CONCURRENCY, minRetryMs = 0, writeTimeoutMs = 15000, checkCooldown = true, accountTimeoutMs = ACCOUNT_TIMEOUT_MS }) {
     this.checkCooldown = checkCooldown;
     this.store = store;
     this.activity = activity;
@@ -93,6 +94,7 @@ class MarketService {
     this.onChanged = onChanged;
     this.createSocket = createSocket;
     this.concurrency = concurrency;
+    this.accountTimeoutMs = accountTimeoutMs;
     this.minRetryMs = minRetryMs;
     this.writeTimeoutMs = writeTimeoutMs;
     this.accounts = new Map(); // accountId -> per-account state
@@ -152,6 +154,8 @@ class MarketService {
     const controller = new AbortController();
     this.job = { kind, controller };
     this.onChanged?.();
+    const jobStart = Date.now();
+    if (kind === 'scan' || kind === 'claim') this.log(null, 'info', `Market ${kind} started · ${accounts.length} account(s)`, 'mk.jobStart', { kind, count: accounts.length });
     const results = new Map();
     try {
       let next = 0;
@@ -161,19 +165,33 @@ class MarketService {
           const account = accounts[next++];
           if (controller.signal.aborted) return;
           const socket = { current: null };
+          // one account never holds the whole job (2026-11-25: a scan stopped after 33 of 141
+          // accounts with no error): after ACCOUNT_TIMEOUT_MS it is given up, with the step it was on
+          const own = new AbortController();
+          const relay = () => own.abort();
+          controller.signal.addEventListener('abort', relay, { once: true });
+          let timer = null;
+          const timedOut = !(kind === 'scan' || kind === 'claim') ? new Promise(() => {}) : new Promise((_, reject) => { timer = setTimeout(() => { const st = this.state(account.id); const e = new Error(`no answer for ${Math.round(this.accountTimeoutMs / 1000)} s (step: ${st?.step || '?'})`); e.timeout = true; own.abort(); reject(e); }, this.accountTimeoutMs); });
           try {
-            results.set(account.id, await perAccount(account, controller.signal, socket));
+            results.set(account.id, await Promise.race([perAccount(account, own.signal, socket), timedOut]));
           } catch (error) {
             const stopped = error?.name === 'AbortError';
             this.set(account.id, { status: stopped ? 'stopped' : 'error', step: stopped ? 'stopped' : 'error', stepParams: { error: error.message }, error: stopped ? null : error.message });
             if (!stopped) this.log(account, 'error', `Market: ${error.message}`, 'mk.failed', { error: error.message });
             results.set(account.id, { error: error.message, stopped });
           } finally {
+            clearTimeout(timer);
+            controller.signal.removeEventListener('abort', relay);
             socket.current?.close();
           }
         }
       }));
       await onDone?.(results, controller.signal);
+      if (kind === 'scan' || kind === 'claim') {
+        const failed = [...results.values()].filter(r => r?.error && !r.stopped).length;
+        const stopped = [...results.values()].filter(r => r?.stopped).length;
+        this.log(null, failed ? 'warning' : 'success', `Market ${kind} finished · ${accounts.length - failed - stopped}/${accounts.length} done${failed ? ` · ${failed} failed` : ''}${stopped ? ` · ${stopped} stopped` : ''} · ${Math.round((Date.now() - jobStart) / 1000)} s`, 'mk.jobDone', { kind, done: accounts.length - failed - stopped, total: accounts.length, failed, stopped, sec: Math.round((Date.now() - jobStart) / 1000) });
+      }
       return results;
     } finally {
       this.job = null;

@@ -298,3 +298,25 @@ test('a sale answered "being processed" right after the cancel is tried again (2
   assert.equal(snap.relist.report.listed, 1);
   assert.ok(!logs.some(l => l.code === 'mk.relistSellFailed'));
 });
+
+test('scan: an account that never answers is given up after the time limit (with its step); the others finish and the job ends', async () => {
+  const game = fakeGame([ticket('l1', 'LISTED')]);
+  const logs = [];
+  const accs = [{ id: 'a1', name: 'Trophy' }, { id: 'a2', name: 'Stuck' }];
+  const s = new MarketService({
+    store: { getAccounts: () => accs }, activity: { add: e => logs.push(e) }, onChanged: () => {},
+    // a2's sign-in never comes back
+    sessions: { get: async a => (a.id === 'a2' ? new Promise(() => {}) : { userId: USER, cookieHeader: 'session=x' }) },
+    createSocket: game.createSocket, minRetryMs: 0, writeTimeoutMs: 80, checkCooldown: false, accountTimeoutMs: 300
+  });
+  const t0 = Date.now();
+  await s.scan(['a1', 'a2']);
+  assert.ok(Date.now() - t0 < 3000, 'the job did not hang');
+  const failed = logs.find(l => l.code === 'mk.failed' && l.accountName === 'Stuck');
+  assert.ok(failed && /step: login/.test(failed.message), failed?.message);
+  assert.ok(logs.some(l => l.code === 'mk.scanned' && l.accountName === 'Trophy'));
+  const done = logs.find(l => l.code === 'mk.jobDone');
+  assert.equal(done.params.done, 1);
+  assert.equal(done.params.failed, 1);
+  assert.equal(s.snapshot().busy, false, 'the next scan can start');
+});

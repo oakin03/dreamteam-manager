@@ -123,7 +123,8 @@ class ProvingBase {
     this._log(null, 'info', 'start', { count: ids.length }, `${this.taskName} started · ${ids.length} account(s)`);
     this.onChanged();
     try {
-      await Promise.all(ids.map(id => this._safe(id, controller.signal)));
+      // at most WIDE (200) accounts at once, the next starts when one is over (user 2026-11-25: 1141 at once → the game stopped answering)
+      await eachAtOnce(ids, id => this._safe(id, controller.signal), WIDE);
     } finally {
       signal?.removeEventListener('abort', onAbort);
       this._report(controller.signal.aborted);
