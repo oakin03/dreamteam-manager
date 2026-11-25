@@ -319,8 +319,8 @@ class Controller {
 }
 
 class MatchControl {
-  constructor({ store, activity, sessions, onChanged, createSocket, gameHealth = null, allowed = () => true, now = () => Date.now() }) {
-    Object.assign(this, { store, activity, sessions, createSocket, gameHealth, allowed, now });
+  constructor({ store, activity, sessions, onChanged, createSocket, gameHealth = null, allowed = () => true, roleOf = () => 'side', isDummyRole = () => false, now = () => Date.now() }) {
+    Object.assign(this, { store, activity, sessions, createSocket, gameHealth, allowed, roleOf, isDummyRole, now });
     this.onChanged = onChanged || (() => {});
     this.controllers = new Map();   // accountId -> Controller
     this.offFor = new Map();        // accountId -> matchId the user switched off
@@ -348,6 +348,24 @@ class MatchControl {
     this.onChanged();
     return this.snapshot();
   }
+  // Which accounts a mode rotates, by account role (user 2026-11-25): every role is on except the
+  // Dummy role; settings.rotationRoles[mode] = { roleId: true | false } keeps the user's choices.
+  roleOn(mode, roleId) {
+    const o = this.store.getSettings?.()?.rotationRoles?.[mode] || {};
+    return Object.prototype.hasOwnProperty.call(o, roleId) ? Boolean(o[roleId]) : !this.isDummyRole(roleId);
+  }
+  accountOn(mode, accountId) { return this.roleOn(mode, this.roleOf(accountId)); }
+  setRole(mode, roleId, on) {
+    if (!MODES.includes(mode)) throw new Error('Unknown mode.');
+    const s = this.store.getSettings?.() || {};
+    const all = { ...(s.rotationRoles || {}) };
+    all[mode] = { ...(all[mode] || {}), [roleId]: Boolean(on) };
+    this.store.saveSettings?.({ ...s, rotationRoles: all });
+    for (const c of [...this.controllers.values()]) if (c.mode === mode && !this.accountOn(mode, c.accountId)) c.end('off');
+    this.onChanged();
+    return this.snapshot();
+  }
+
   // the user switches one account off for its current match
   stopAccount(accountId) {
     const c = this.controllers.get(accountId);
@@ -378,7 +396,10 @@ class MatchControl {
   }
 
   snapshot() {
-    return { modes: this.modes(), live: [...this.controllers.values()].map(c => c.view()), unknownTypes: [...this.unknownTypes] };
+    // per mode the role ids that rotate (the page lists the roles from the account role list)
+    const roleIds = [...new Set(['main', 'main2', 'side', ...(this.store.getSettings?.()?.accountRoleDefs || []).map(d => d.id)])];
+    const roles = Object.fromEntries(MODES.map(m => [m, roleIds.filter(r => this.roleOn(m, r))]));
+    return { modes: this.modes(), roles, live: [...this.controllers.values()].map(c => c.view()), unknownTypes: [...this.unknownTypes] };
   }
 
   start() {
@@ -409,7 +430,7 @@ class MatchControl {
         if (cur) cur.end('ended');
         const mode = MODE_OF_TYPE[m.type];
         if (!mode) { if (m.type !== 'PK' && m.type !== 'FM' && m.type !== 'GROUP' && !this.unknownTypes.has(m.type)) { this.unknownTypes.add(m.type); this._log('info', 'unknownType', { type: m.type }, `Match type ${m.type} is not covered by rotation`, id); } return; }
-        if (!modes[mode] || !this.allowed(id, mode) || this.offFor.get(id) === m.match_id) return;
+        if (!modes[mode] || !this.accountOn(mode, id) || !this.allowed(id, mode) || this.offFor.get(id) === m.match_id) return;
         const c = new Controller(this, { accountId: id, name: this._account(id)?.name || id, userId, match: m, mode });
         if (this.propsFor.delete(id)) c.propsWanted = true;
         this.controllers.set(id, c);

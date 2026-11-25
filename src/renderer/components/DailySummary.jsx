@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import SortTable from './SortTable';
+import { useGroupedRows, groupRowOf, asAccounts } from './AccountGroups';
 import { filOf } from '../i18n-fil';
 
 const api = window.dreamteam;
@@ -22,6 +23,7 @@ const TEXT = {
 export default function DailySummary({ t }) {
   const x = TEXT[t.lang] || TEXT.en;
   const [data, setData] = useState(null);
+  const grp = useGroupedRows('daily-summary');
   const load = day => api.activityArchive?.summary(day).then(setData).catch(() => {});
   useEffect(() => { load(); }, []);
   if (!data) return null;
@@ -41,7 +43,7 @@ export default function DailySummary({ t }) {
       {!data.day ? <p className="muted-text">{x.none}</p> : <>
         <div className="ds-tiles">{tiles.map(([k, v]) => <div key={k} className="ds-tile"><span>{k}</span><b>{v}</b></div>)}</div>
         {accounts.length > 0 && <details className="ds-accounts"><summary>{x.perAccount}</summary><SortTable><thead><tr><th>{x.account}</th><th>{x.quickPlay}</th><th>{x.pvp}</th><th>{x.tower}</th><th>{x.bought}</th><th>{x.sales}</th></tr></thead>
-          <tbody>{accounts.map(([n, a]) => <tr key={n}><td><b>{n}</b></td><td>{a.quickPlay}</td><td>{a.pvp}</td><td>{a.towerWins}</td><td>{a.bought}</td><td>{a.sales}</td></tr>)}</tbody></SortTable></details>}
+          <tbody>{grp(accounts.map(([n, a]) => ({ ...a, id: n, name: n })), a => <tr key={a.id}><td><b>{a.name}</b></td><td>{a.quickPlay}</td><td>{a.pvp}</td><td>{a.towerWins}</td><td>{a.bought}</td><td>{a.sales}</td></tr>, groupRowOf(6, g => ['quickPlay', 'pvp', 'towerWins', 'bought', 'sales'].map(k => <td key={k}>{g.reduce((n, a) => n + (Number(a[k]) || 0), 0)}</td>)))}</tbody></SortTable></details>}
       </>}
     </div>
   </>;

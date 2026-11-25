@@ -4,7 +4,7 @@ import { filOf } from '../i18n-fil';
 import RatingBadge from './RatingBadge';
 import { Drafted, DRAFT_TEXT } from './DraftPage';
 import { MultiPick } from './MultiPick';
-import { groupAccounts } from './AccountGroups';
+import { groupAccounts, useGroupedRows } from './AccountGroups';
 
 // Çanta → Laborer Contract (user 2026-11-18): pick a player from our teams or our own market
 // listings, the account whose contract is used; the player is taken off the market / traded there,
@@ -62,6 +62,7 @@ const LIMIT = 200;
 export default function LaborTab({ state, t, toast }) {
   const x = TEXT[t.lang] || TEXT.en;
   const lb = state.labor || { contracts: {}, busy: null };
+  const grpL = useGroupedRows('labor-cands');
   const accounts = state.accounts || [];
   const accName = id => accounts.find(a => a.id === id)?.name || id;
   const [cands, setCands] = useState(null);
@@ -172,13 +173,13 @@ export default function LaborTab({ state, t, toast }) {
     </div>
     <div className="panel table-panel"><SortTable>
       <thead><tr><th>{x.player}</th><th>{x.account}</th><th>{x.where}</th><th>{x.value}</th><th>{x.salary}</th><th>{x.base}</th><th /></tr></thead>
-      <tbody>{rows.slice(0, LIMIT).map(c => <tr key={c.accountId + c.playerId + (c.ticketId || '')} className={pick?.playerId === c.playerId ? 'selected-row-soft' : ''}>
+      <tbody>{grpL(rows.slice(0, LIMIT).map(c => ({ ...c, id: c.accountId + c.playerId + (c.ticketId || ''), name0: c.name, name: accName(c.accountId) })), c0 => { const c = { ...c0, name: c0.name0 }; return <tr key={c0.id} className={pick?.playerId === c.playerId ? 'selected-row-soft' : ''}>
         <td><b>{c.name}</b> <span className="muted-text">{c.position}</span> <RatingBadge grade={c.rating} mini /></td>
         <td>{accName(c.accountId)}</td>
         <td>{c.where === 'market' ? fill(x.onMarket, { price: num(c.price), cur: c.currency }) : x.team}</td>
         <td className="num">{num(c.value)}</td><td className="num">{num(c.salary)}</td><td className="num">{num(c.base)}</td>
         <td className="actions"><button className="btn ghost small" disabled={Boolean(busy)} onClick={() => choose(c)}>{pick?.playerId === c.playerId ? x.chosen : x.choose}</button></td>
-      </tr>)}</tbody>
+      </tr>; }, (g, { open, toggle }) => <tr key={g.key} className="grp-row"><td className="grp-name" onClick={toggle} colSpan={7}><i className="grp-arrow">{open ? '▾' : '▸'}</i><b>{g.label}</b> <small className="muted-text">{new Set(g.accounts.map(c => c.accountId)).size} · {g.accounts.length}</small></td></tr>)}</tbody>
     </SortTable>{rows.length > LIMIT && <p className="muted-text">{fill(x.more, { n: rows.length - LIMIT })}</p>}</div>
 
     <Drafted d={state.draft || {}} x={dx} players={players} roles={roles} toast={toast} mainName={mainName} source="labor" title={x.listTitle} hint={x.listHint} empty={x.listEmpty} />

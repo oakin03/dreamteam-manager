@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import SortTable from './SortTable';
 import InjuryMark from './InjuryMark';
-import { GroupedPicks } from './AccountGroups';
+import { GroupedPicks, useGroupedRows, groupRowOf, asAccounts } from './AccountGroups';
 import { filOf } from '../i18n-fil';
 
 const api = window.dreamteam;
@@ -105,6 +105,10 @@ export default function ApkTransferTab({ state, t, toast, tabs }) {
   const realMain = prof.mainAccountId || '';
   const saved = ap.config || {};
   const playerIndex = useMemo(() => new Map((state.players?.players || []).map(p => [p.id, p])), [state.players]);
+  const grpCalc = useGroupedRows('apk-calc');
+  const grpAcc = useGroupedRows('apk-accounts');
+  const grpTr = useGroupedRows('apk-transfers');
+  const grpSa = useGroupedRows('apk-sales');
   const [ids, setIds] = useState(() => [...new Set([saved.mainId, ...(saved.sideIds || [])].filter(id => id && accounts.some(a => a.id === id)))]);
   const [receiver, setReceiver] = useState(saved.mainId || realMain);
   const [mode, setMode] = useState(saved.mode || 'APK');
@@ -190,7 +194,7 @@ export default function ApkTransferTab({ state, t, toast, tabs }) {
         <small className="muted-text">{x.calcHint}</small>
         <details><summary>{x.calcDetail}</summary>
           <SortTable><thead><tr><th>{x.account}</th>{est.map(e => <th key={e.c}>{e.c} · {x.calcBal} / {x.calcPending} → {x.calcSend} ({x.calcNet})</th>)}</tr></thead>
-            <tbody>{sideIds.map(id => <tr key={id}><td><b>{nameOf(id)}</b></td>{est.map(e => { const row = e.rows.find(q => q.id === id); return <td key={e.c} className={row.ok ? 'num' : 'num muted-text'}>{num(row.bal)}{row.pending ? ` + ${num(row.pending)}` : ''} → {row.ok ? <>{num(row.total)} (<span className="good-text">{num(row.net)}</span>)</> : x.calcNo}</td>; })}</tr>)}</tbody></SortTable>
+            <tbody>{grpCalc(sideIds.map(id => ({ id, name: nameOf(id) })), ({ id }) => <tr key={id}><td><b>{nameOf(id)}</b></td>{est.map(e => { const row = e.rows.find(q => q.id === id); return <td key={e.c} className={row.ok ? 'num' : 'num muted-text'}>{num(row.bal)}{row.pending ? ` + ${num(row.pending)}` : ''} → {row.ok ? <>{num(row.total)} (<span className="good-text">{num(row.net)}</span>)</> : x.calcNo}</td>; })}</tr>, groupRowOf(1 + est.length, g => est.map(e => { const rs = g.map(a => e.rows.find(q => q.id === a.id)).filter(r => r?.ok); return <td key={e.c} className="num">{rs.length ? <span className="good-text">{num(rs.reduce((n, r) => n + (Number(r.net) || 0), 0))}</span> : '—'}</td>; })))}</tbody></SortTable>
         </details>
       </div>}
       {errors.length > 0 && !running && <div className="tk-errors">{errors.map(e => <span key={e}>{e}</span>)}</div>}
@@ -208,30 +212,30 @@ export default function ApkTransferTab({ state, t, toast, tabs }) {
         </div>)}</div>}
         <div className="tk-sub">{x.accTable}</div>
         <SortTable><thead><tr><th>{x.account}</th><th>{x.role}</th><th>{x.apkBA}</th><th>{x.tixBA}</th><th>{x.claimed}</th><th>{x.eligible}</th><th>{x.status}</th></tr></thead>
-          <tbody>{rows.map(r => <tr key={r.accountId} className={['claiming', 'buying'].includes(r.status) ? 'dp-live' : ''}>
+          <tbody>{grpAcc(asAccounts(rows), r => <tr key={r.accountId} className={['claiming', 'buying'].includes(r.status) ? 'dp-live' : ''}>
             <td><b>{r.name}</b></td><td>{r.main ? x.roleMain : x.roleSide}</td>
             <td className="num">{ba(r, 'apk')}</td><td className="num">{ba(r, 'tix')}</td>
             <td className="num">{r.claimed?.count ? `${r.claimed.count} · ${[r.claimed.APK && `${num(r.claimed.APK)} APK`, r.claimed.TIX && `${num(r.claimed.TIX)} TIX`].filter(Boolean).join(' · ') || '0'}` : '—'}</td>
             <td>{r.main ? '' : r.eligible?.length ? r.eligible.join(' + ') : (r.skipped || []).map(s => `${s.currency}: ${fill(x.skip[s.reason] || s.reason, s)}`).join(' · ') || '—'}</td>
             <td className={r.status === 'error' ? 'bad-text' : ''}>{x.st[r.status] || r.status}{r.note && r.status === 'error' ? `: ${r.note}` : ''}</td>
-          </tr>)}</tbody></SortTable>
+          </tr>, groupRowOf(7, g => <><td /><td /><td /><td className="num">{g.reduce((n, r) => n + (r.claimed?.count || 0), 0) || '—'}</td><td /><td className="muted-text">{g.filter(r => r.status === 'error').length ? <span className="bad-text">{g.filter(r => r.status === 'error').length} ✗</span> : ''}</td></>))}</tbody></SortTable>
         <div className="tk-sub">{x.transfers}</div>
         {!(shown.transfers || []).length ? <div className="empty">{x.noTransfers}</div> :
           <SortTable><thead><tr><th>{x.account}</th><th>{x.currency}</th><th>{x.amount}</th><th>{x.player}</th><th>{x.source}</th><th>{x.fee}</th><th>{x.got}</th><th>{x.status}</th></tr></thead>
-            <tbody>{shown.transfers.map(tr => <tr key={tr.id} className={['listing', 'buying'].includes(tr.status) ? 'dp-live' : ''}>
+            <tbody>{grpTr((shown.transfers || []).map(tr => ({ ...tr, name: tr.sideName })), tr => <tr key={tr.id} className={['listing', 'buying'].includes(tr.status) ? 'dp-live' : ''}>
               <td><b>{tr.sideName}</b></td><td>{tr.currency}</td><td className="num">{num(tr.price)}</td>
               <td>{tr.player ? <><b>{tr.player}</b><InjuryMark name={tr.player} />{tr.salary ? <small className="cell-sub">{num(tr.salary)} TK</small> : null}</> : '—'}</td>
               <td>{srcLabel(tr.source)}</td><td className="num">{tr.fee == null ? '—' : num(tr.fee)}</td><td className="num good-text">{tr.payout == null ? '—' : `+${num(tr.payout)}`}</td>
               <td><span className={`tk-badge ${TONE[tr.status] || ''}`} title={tr.error || ''}>{x.tr[tr.status] || tr.status}</span>{tr.error && <small className="cell-sub bad-text">{tr.error}</small>}</td>
-            </tr>)}</tbody></SortTable>}
+            </tr>, groupRowOf(8, g => <><td /><td className="num">{num(g.reduce((n, r) => n + (Number(r.price) || 0), 0))}</td><td /><td /><td className="num">{num(g.reduce((n, r) => n + (Number(r.fee) || 0), 0))}</td><td className="num good-text">+{num(g.reduce((n, r) => n + (Number(r.payout) || 0), 0))}</td><td /></>))}</tbody></SortTable>}
         <div className="tk-sub">{x.sales}</div>
         {!(shown.sales || []).length ? <div className="empty">{x.noSales}</div> :
           <SortTable><thead><tr><th>{x.account}</th><th>{x.player}</th><th>{x.grade}</th><th>{x.value}</th><th>{x.salary}</th><th>{x.base}</th><th>Base %</th><th>{x.price}</th><th>{x.payout}</th><th>{x.fee}</th></tr></thead>
-            <tbody>{shown.sales.map(s => <tr key={s.ticketId}>
+            <tbody>{grpSa((shown.sales || []).map(s => ({ ...s, id: s.ticketId, name0: s.name, name: s.accountName })), s0 => { const s = { ...s0, name: s0.name0 }; return <tr key={s.ticketId}>
               <td>{s.accountName}</td><td><b>{s.name}</b><InjuryMark name={s.name} />{s.salary != null && s.base > 0 && s.salary <= s.base && <span className="base-badge">BASE</span>}{s.position && <small className="cell-sub">{s.position}</small>}</td>
               <td>{s.grade || '—'}</td><td className="num">{num(playerIndex.get(s.playerId)?.value)}</td><td className="num"><b>{num(s.salary)}</b></td><td className="num">{num(s.base)}</td><td className={`base-pct ${s.basePct == null ? '' : s.basePct <= 0 ? 'below' : 'above'}`}>{fmtPct(s.basePct)}</td>
               <td className="num"><b>{num(s.price)}</b> {s.currency}</td><td className="num good-text">{s.claimed ? `+${num(s.payout)}` : <span className="bad-text" title={s.error}>✗</span>}</td><td className="num">{s.claimed ? num(s.fee) : '—'}</td>
-            </tr>)}</tbody></SortTable>}
+            </tr>; }, groupRowOf(10, g => <><td /><td /><td /><td /><td /><td /><td /><td className="num good-text">+{num(g.filter(r => r.claimed).reduce((n, r) => n + (Number(r.payout) || 0), 0))}</td><td className="num">{num(g.filter(r => r.claimed).reduce((n, r) => n + (Number(r.fee) || 0), 0))}</td></>))}</tbody></SortTable>}
       </>}
     </div>
     <details className="panel pvp-how"><summary>{x.how}</summary><ul>{x.howLines.map(l => <li key={l}>{l}</li>)}</ul></details>

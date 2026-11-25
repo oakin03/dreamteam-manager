@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { filOf } from '../i18n-fil';
 import SortTable from './SortTable';
+import { useGroupedRows } from './AccountGroups';
 
 // Office → "Big 3 otomatik" (user 2026-11-09): scan the accounts, set up their Big 3 (league trio /
 // existing Super Big 3 / a new Super Big 3 of the best three starters), and the training that
@@ -69,6 +70,7 @@ export default function Big3AutoTab({ state, t, toast }) {
   const picked = actionable.filter(id => sel.has(id));
   const brokenIds = accounts.filter(a => isBroken(a.id)).map(a => a.id);
   const shown = onlyBroken ? accounts.filter(a => isBroken(a.id)) : accounts;
+  const grp = useGroupedRows('big3-auto');
   // one button for the broken ones (user 2026-11-13: how to fix them was not clear)
   const rebuildIds = accounts.filter(a => rows[a.id]?.plan === 'rebuild' && !rows[a.id]?.done).map(a => a.id);
   const runSetup = ids => { const n = ids.filter(id => rows[id]?.plan === 'rebuild').length; if (n) setAsk({ ids, n }); else act(() => api.big3.setup(ids)); };
@@ -98,7 +100,7 @@ export default function Big3AutoTab({ state, t, toast }) {
     </div>
     <div className="panel table-panel dp-table"><SortTable>
       <thead><tr><th className="select-col"><input type="checkbox" checked={allOn} disabled={!actionable.length} onChange={() => setSel(allOn ? new Set() : new Set(actionable))} aria-label={x.selectAll} /></th><th>{x.account}</th><th>{x.magic}</th><th>{x.super}</th><th>{x.plan}</th><th>{x.active}</th><th>{x.level}</th><th>{x.attempts}</th><th>{x.training}</th><th>{x.bonus}</th><th>{x.status}</th></tr></thead>
-      <tbody>{shown.map(a => {
+      <tbody>{grp(shown, a => {
         const r = rows[a.id];
         const s = b.accounts?.[a.id] || {};
         const type = s.type ?? r?.type;
@@ -116,7 +118,10 @@ export default function Big3AutoTab({ state, t, toast }) {
           <td><select value={b.bonus?.[a.id] || 'offense'} onChange={e => act(() => api.big3.bonus(a.id, e.target.value))}><option value="offense">{x.offense}{s.offense ? ` · ${s.offense}%` : ''}</option><option value="defense">{x.defense}{s.defense ? ` · ${s.defense}%` : ''}</option></select></td>
           <td className={s.status === 'error' || s.status === 'broken' ? 'bad-text' : s.status === 'training' ? 'good-text' : ''} title={s.message || ''}>{(b.working || []).includes(a.id) ? x.st.working : x.st[s.status] || ''}</td>
         </tr>;
-      })}</tbody>
+      }, (g, { open, toggle }) => { const ids = g.accounts.map(a => a.id).filter(id => ready(id)); const on = ids.filter(id => sel.has(id)).length; return <tr key={g.key} className="grp-row">
+        <td className="select-col"><input type="checkbox" disabled={!ids.length} checked={ids.length > 0 && on === ids.length} ref={el => { if (el) el.indeterminate = on > 0 && on < ids.length; }} onChange={() => setSel(prev => { const n = new Set(prev); if (on === ids.length) ids.forEach(id => n.delete(id)); else ids.forEach(id => n.add(id)); return n; })} aria-label={g.label} /></td>
+        <td className="grp-name" onClick={toggle} colSpan={10}><i className="grp-arrow">{open ? '▾' : '▸'}</i><b>{g.label}</b> <small className="muted-text">{g.accounts.length}</small>{g.accounts.some(a => isBroken(a.id)) && <small className="bad-text"> · {g.accounts.filter(a => isBroken(a.id)).length} {x.st.broken || ''}</small>}</td>
+      </tr>; })}</tbody>
     </SortTable></div>
     {ask && <div className="modal-backdrop" onClick={() => setAsk(null)}><div className="modal" style={{ maxWidth: 480 }} onClick={e => e.stopPropagation()}>
       <div className="modal-head"><b>{x.confirmTitle}</b></div>

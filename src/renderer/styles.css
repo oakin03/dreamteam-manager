@@ -1303,3 +1303,19 @@ tr.b3-broken td{background:color-mix(in srgb, var(--bg-fff0ee) 70%, transparent)
 .card-factory .cf-tk{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .card-factory .cf-sides{display:grid;gap:10px}
 .card-factory .cf-sides-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+
+/* Rotasyon: roles per mode (2026-11-25) */
+.rot-mode-rows{display:grid;gap:8px;margin-top:6px}
+.rot-mode-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:6px 0;border-top:1px solid var(--d-line-2)}
+.rot-mode-row>.switchline{min-width:150px}
+.rot-roles{display:flex;gap:6px;flex-wrap:wrap}
+.rot-role{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 10px;border-radius:999px;border:1px solid var(--d-line);background:var(--d-surface);color:var(--d-muted);font-size:12px;font-weight:700;cursor:pointer;opacity:.75}
+.rot-role i{width:8px;height:8px;border-radius:50%;background:var(--role);opacity:.45}
+.rot-role small{color:var(--d-muted);font-weight:600}
+.rot-role.on{border-color:var(--role);color:var(--d-ink);opacity:1;background:var(--d-surface)}
+.rot-role.on i{opacity:1}
+.rot-role:disabled{cursor:default;opacity:.4}
+
+/* Draft: drafted players grouped by account prefix (2026-11-25) */
+.df-drafted-group{display:flex;align-items:center;gap:10px;padding:10px 14px;margin-bottom:8px;cursor:pointer}
+.df-drafted-group:hover{border-color:var(--d-accent)}

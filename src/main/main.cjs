@@ -35,11 +35,22 @@ const { eachAtOnce } = require('./services/wide.cjs');
 // (user 2026-11-25: 1000+ dummies one by one took most of an hour); the other accounts one by one, as
 // before. Both groups run at the same time. The Chromium fallback has its own limit.
 const AUTOPLAY_START_PARALLEL = 25;
+function isDummyRoleId(roleId) {
+  const def = (store.getSettings()?.accountRoleDefs || []).find(d => d.id === roleId);
+  return /^dummy$/i.test(String(def?.name || '').trim());
+}
 function isDummyAccount(id) {
   const role = store.getAccounts().find(a => a.id === id)?.role;
-  if (!role) return false;
-  const def = (store.getSettings()?.accountRoleDefs || []).find(d => d.id === role);
-  return /^dummy$/i.test(String(def?.name || '').trim());
+  return Boolean(role) && isDummyRoleId(role);
+}
+// the account's role as the Accounts page shows it: Main, 2. Main, its own role, or Side
+function accountRoleOf(id) {
+  const prof = store.getAccountProfile?.() || {};
+  if (prof.mainAccountId === id) return 'main';
+  if (prof.secondMainId === id) return 'main2';
+  const role = store.getAccounts().find(a => a.id === id)?.role;
+  const defs = store.getSettings()?.accountRoleDefs;
+  return role && (!Array.isArray(defs) || defs.some(d => d.id === role)) ? role : 'side';
 }
 // fn(item) for every item: dummies AUTOPLAY_START_PARALLEL at once, the others one after another
 async function startInGroups(items, idOf, fn) {
@@ -1132,7 +1143,7 @@ function initServices() {
   // Turnuva → Canlı and Rotasyon (user 2026-11-13): both run by themselves, nothing to start
   tournamentLive = new TournamentLive({ store, activity, engine, gameHealth, onChanged: emitState }); // @strip(basic)
   tournamentLive.start(); // @strip(basic)
-  matchControl = new MatchControl({ store, activity, gameHealth, sessions: gameSessions, onChanged: emitState, allowed: (id, mode) => mode !== 'tournament' || tournamentLive.rotationOn(id) }); // @strip(basic)
+  matchControl = new MatchControl({ store, activity, gameHealth, sessions: gameSessions, onChanged: emitState, roleOf: accountRoleOf, isDummyRole: roleId => isDummyRoleId(roleId), allowed: (id, mode) => mode !== 'tournament' || tournamentLive.rotationOn(id) }); // @strip(basic)
   matchControl.start(); // @strip(basic)
   // @strip-begin(basic)
   scheduler.registerBuiltin('tournament-register', (accountIds, { signal }) => tournament.runAndWait(accountIds, { signal }));
@@ -1572,6 +1583,7 @@ function registerIpc() {
   ipcMain.handle('rosters:refresh', async () => rosters.refresh());
   ipcMain.handle('rotation:set-mode', async (_event, { mode, on }) => matchControl.setMode(mode, on)); // @strip(basic)
   ipcMain.handle('rotation:stop', async (_event, accountId) => matchControl.stopAccount(accountId)); // @strip(basic)
+  ipcMain.handle('rotation:set-role', async (_event, { mode, roleId, on }) => matchControl.setRole(mode, roleId, on)); // @strip(basic)
   ipcMain.handle('tlive:set-auto', async (_event, ids) => tournamentLive.setAuto(Array.isArray(ids) ? ids : [])); // @strip(basic)
   ipcMain.handle('tlive:set-rotation', async (_event, { ids, on }) => tournamentLive.setRotation(Array.isArray(ids) ? ids : [], Boolean(on))); // @strip(basic)
   ipcMain.handle('hunter:add', async (_event, players) => hunter.addWatch(players || [])); // @strip(basic)

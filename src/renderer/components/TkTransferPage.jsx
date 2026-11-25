@@ -2,7 +2,7 @@ import { useState } from 'react';
 import SortTable from './SortTable';
 import { filOf } from '../i18n-fil';
 import InjuryMark from './InjuryMark';
-import { GroupedPicks } from './AccountGroups';
+import { GroupedPicks, useGroupedRows, groupRowOf, asAccounts } from './AccountGroups';
 import ApkTransferTab from './ApkTransferTab';
 
 const api = window.dreamteam;
@@ -104,6 +104,8 @@ function TkTab({ state, t, toast, tabs }) {
   const report = !running && tk.lastReport;
   const shown = running ? run : report;
   const rows = shown ? Object.values(shown.accounts || {}) : [];
+  const grp = useGroupedRows('tk-accounts');
+  const grpIt = useGroupedRows('tk-items');
   const pct = shown ? Math.min(100, Math.round(((shown.transferred || 0) / Math.max(1, shown.config?.targetTk || 1)) * 100)) : 0;
 
   return <div className="page tk-page">
@@ -140,20 +142,20 @@ function TkTab({ state, t, toast, tabs }) {
           <div><span>{x.rounds}</span><b className="num">{num(shown.rounds)}</b></div>
         </div>
         <SortTable><thead><tr><th>{x.account}</th><th>{x.role}</th><th>{x.tk}</th><th>{x.apk}</th><th>{x.bought}</th><th>{x.apkSpent}</th><th>{x.tkMoved}</th><th>{x.relisted}</th><th>{x.status}</th></tr></thead>
-          <tbody>{rows.map(r => <tr key={r.accountId} className={['buying', 'trading', 'listing'].includes(r.status) ? 'dp-live' : ''}>
+          <tbody>{grp(asAccounts(rows), r => <tr key={r.accountId} className={['buying', 'trading', 'listing'].includes(r.status) ? 'dp-live' : ''}>
             <td><b>{r.name}</b></td><td>{r.main ? x.roleMain : x.roleSide}</td>
             <td className="num">{num(r.funds)}</td><td className="num">{num(r.apk)}</td>
             <td className="num">{r.bought || '—'}</td><td className="num">{r.apkSpent || '—'}</td>
             <td className="num good-text">{r.main ? '' : (r.tk ? `+${num(r.tk)}` : '—')}</td><td className="num">{r.main ? '' : (r.relisted || '—')}</td>
             <td className={r.status === 'error' ? 'bad-text' : ''}>{x.st[r.status] || r.status}{r.note && x.note[r.note] ? ` · ${x.note[r.note]}` : r.note && r.status === 'error' ? `: ${r.note}` : ''}</td>
-          </tr>)}</tbody></SortTable>
+          </tr>, groupRowOf(9, g => <><td /><td className="num">{num(g.reduce((n, r) => n + (Number(r.funds) || 0), 0))}</td><td className="num">{num(g.reduce((n, r) => n + (Number(r.apk) || 0), 0))}</td><td className="num">{g.reduce((n, r) => n + (r.bought || 0), 0) || '—'}</td><td className="num">{g.reduce((n, r) => n + (r.apkSpent || 0), 0) || '—'}</td><td className="num good-text">{g.reduce((n, r) => n + (r.main ? 0 : (r.tk || 0)), 0) ? `+${num(g.reduce((n, r) => n + (r.main ? 0 : (r.tk || 0)), 0))}` : '—'}</td><td className="num">{g.reduce((n, r) => n + (r.main ? 0 : (r.relisted || 0)), 0) || '—'}</td><td /></>))}</tbody></SortTable>
         <div className="tk-sub">{x.players}</div>
         {!(shown.items || []).length ? <div className="empty">{x.noPlayers}</div> :
           <SortTable><thead><tr><th>{x.round}</th><th>{x.side}</th><th>{x.player}</th><th>{x.salary}</th><th>{x.price}</th><th>{x.status}</th></tr></thead>
-            <tbody>{shown.items.map((p, i) => <tr key={i} className={['buying', 'trading', 'listing'].includes(p.status) ? 'dp-live' : ''}>
+            <tbody>{grpIt((shown.items || []).map((p, i) => ({ ...p, id: String(i), name0: p.name, name: p.side })), p0 => { const p = { ...p0, name: p0.name0 }; return <tr key={p0.id} className={['buying', 'trading', 'listing'].includes(p.status) ? 'dp-live' : ''}>
               <td className="num">{p.round}</td><td>{p.side}</td><td><b>{p.name}</b><InjuryMark name={p.name} /></td><td className="num">{num(p.salary)}</td><td className="num">{p.price} APK</td>
               <td><span className={`tk-badge ${ITEM_TONE[p.status] || ''}`} title={p.error || ''}>{x.item[p.status] || p.status}</span>{p.error && <small className="cell-sub bad-text">{p.error}</small>}</td>
-            </tr>)}</tbody></SortTable>}
+            </tr>; }, (g, { open, toggle }) => <tr key={g.key} className="grp-row"><td /><td className="grp-name" onClick={toggle} colSpan={5}><i className="grp-arrow">{open ? '▾' : '▸'}</i><b>{g.label}</b> <small className="muted-text">{new Set(g.accounts.map(p => p.side)).size} · {g.accounts.length} · {num(g.accounts.reduce((n, p) => n + (Number(p.salary) || 0), 0))} TK</small></td></tr>)}</tbody></SortTable>}
       </>}
     </div>
     <details className="panel pvp-how"><summary>{x.how}</summary><ul>{x.howLines.map(l => <li key={l}>{l}</li>)}</ul></details>

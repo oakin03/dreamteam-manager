@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import SortTable from './SortTable';
 import { filOf } from '../i18n-fil';
 import InjuryMark from './InjuryMark';
+import { useGroupedRows } from './AccountGroups';
 
 const api = window.dreamteam;
 const num = v => v == null || v === '' ? '—' : Number(v).toLocaleString();
@@ -118,6 +119,8 @@ export function BoughtList({ state, lang, toast, source = null, title = null, hi
   const [edits, setEdits] = useState(() => BOUGHT_UI.get(uiKey)?.edits || {});
   const [filter, setFilter] = useState(source || '');
   const rows = (state.buy?.bought || []).filter(e => !filter || e.source === filter);
+  // grouped by account name prefix (user 2026-11-25: every table groups)
+  const grpB = useGroupedRows(`bought-${source || 'all'}`);
   const busy = state.buy?.busy || {};
   const name = id => (state.accounts || []).find(a => a.id === id)?.name || id;
   const mainId = state.accountProfile?.mainAccountId || null;
@@ -181,7 +184,7 @@ export function BoughtList({ state, lang, toast, source = null, title = null, hi
     {!source && <div className="bought-filter">{[['', x.filterAll], ['hall', x.filterHall], ['auto', x.filterAuto], ['trade', 'Auto Trade'], ['scout', x.filterScout]].map(([k, l]) => <button key={k} className={`chip ${filter === k ? 'on' : ''}`} onClick={() => setFilter(k)}>{l}</button>)}</div>}
     {chosen.length > 0 && <div className="bought-bulk"><b>{fill(x.selected, { count: chosen.length })}</b><button className="btn primary small" disabled={bulk} onClick={relist}>{x.relistSel}</button><button className="btn danger-soft small" disabled={bulk} onClick={() => setFireAsk(chosen)}>{x.fireSel}</button></div>}
     <div className="panel table-panel">{rows.length ? <SortTable><thead><tr><th className="sel-col"><input type="checkbox" checked={allOn} disabled={!live2.length} onChange={() => setSel(allOn ? new Set() : new Set(live2.map(e => e.id)))} /></th><th>{x.account}</th><th>{x.player}</th><th>{source === 'trade' || source === 'scout' ? x.value : x.paid}</th><th>{x.salary}</th><th>{x.base}</th><th>{x.status}</th><th>{x.newPrice}</th><th></th></tr></thead>
-      <tbody>{rows.map(e => { const v = get(e); const parked = e.state === 'listed' && e.listPrice === state.buy?.parkPrice; return <tr key={e.id} className={sel.has(e.id) ? 'selected' : ''}>
+      <tbody>{grpB(rows.map(e => ({ ...e, name0: e.name, name: name(e.accountId) })), e0 => { const e = { ...e0, name: e0.name0 }; const v = get(e); const parked = e.state === 'listed' && e.listPrice === state.buy?.parkPrice; return <tr key={e.id} className={sel.has(e.id) ? 'selected' : ''}>
         <td className="sel-col">{e.state !== 'converted' && <input type="checkbox" checked={sel.has(e.id)} onChange={() => toggle(e.id)} />}</td>
         <td>{name(e.accountId)}{!source && <small className="cell-sub">{e.source === 'auto' ? x.auto : e.source === 'trade' ? 'Auto Trade' : e.source === 'scout' ? x.filterScout : x.hall}</small>}{e.from && <small className="cell-sub">{String(x.fromScout).replace('{owner}', e.from)}</small>}</td>
         <td><b>{e.name}</b><InjuryMark name={e.name} />{e.salary != null && baseOf(e) > 0 && e.salary <= baseOf(e) && <span className="base-badge">BASE</span>}{e.position && <small className="cell-sub">{e.position} · {e.grade}</small>}</td>
@@ -189,6 +192,9 @@ export function BoughtList({ state, lang, toast, source = null, title = null, hi
         <td>{e.state === 'converted' ? <span className="pill muted"><i />{x.converted}</span> : e.state === 'listed' ? <span className={`pill ${parked ? 'warn' : 'ok'}`}><i />{parked ? x.parked : fill(x.listed, { price: num(e.listPrice), cur: e.listCurrency })}</span> : <span className="pill muted"><i />{x.owned}</span>}</td>
         <td>{e.state !== 'converted' && <span className="bought-price"><input className="price-input" type="number" min="1" value={v.price} onChange={ev => edit(e.id, { price: ev.target.value })} /><span className="currency-toggle">{['APK', 'TIX'].map(c => <button type="button" key={c} className={v.currency === c ? 'on' : ''} onClick={() => edit(e.id, { currency: c })}>{c}</button>)}</span><PriceHint playerId={e.playerId} name={e.name} currency={v.currency} lang={lang} onPick={p => edit(e.id, { price: p })} /></span>}</td>
         <td className="actions">{e.state !== 'converted' && <button className="btn primary small" disabled={busy[e.id]} onClick={() => sell(e)}>{e.state === 'listed' ? x.reprice : x.sell}</button>}{source !== 'scout' && mainId && e.accountId === mainId && e.state !== 'converted' && <button className="btn accent small" disabled={busy[e.id]} onClick={() => setAsk({ e, warn: warnings(e) })}>{busy[e.id] ? x.converting : x.convert}</button>}{e.state !== 'converted' && <button className="btn danger-soft small" disabled={busy[e.id] || bulk} onClick={() => setFireAsk([e])}>{x.fire}</button>}<button className="icon-btn" title={x.remove} onClick={() => api.buy.removeBought([e.id])}>×</button></td>
+      </tr>; }, (g, { open, toggle }) => { const ids = g.accounts.filter(e => e.state !== 'converted').map(e => e.id); const on = ids.filter(id => sel.has(id)).length; return <tr key={g.key} className="grp-row">
+        <td className="sel-col"><input type="checkbox" disabled={!ids.length} checked={ids.length > 0 && on === ids.length} ref={el => { if (el) el.indeterminate = on > 0 && on < ids.length; }} onChange={() => setSel(prev => { const n = new Set(prev); if (on === ids.length) ids.forEach(id => n.delete(id)); else ids.forEach(id => n.add(id)); return n; })} aria-label={g.label} /></td>
+        <td className="grp-name" onClick={toggle} colSpan={8}><i className="grp-arrow">{open ? '▾' : '▸'}</i><b>{g.label}</b> <small className="muted-text">{new Set(g.accounts.map(e => e.accountId)).size} · {g.accounts.length}</small></td>
       </tr>; })}</tbody></SortTable> : <div className="empty">{x.none}</div>}</div>
     {clearAsk && <div className="modal-backdrop" onMouseDown={ev => ev.target === ev.currentTarget && setClearAsk(false)}><div className="modal" style={{ maxWidth: 460 }}>
       <div className="modal-head"><b>{x.clearList}</b><button className="icon-btn" onClick={() => setClearAsk(false)}>×</button></div>

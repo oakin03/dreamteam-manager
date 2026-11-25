@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import SortTable from './SortTable';
 import { filOf } from '../i18n-fil';
 import RatingBadge from './RatingBadge';
+import { useGroupedRows } from './AccountGroups';
 
 // Çanta → Anestezi (user 2026-11-18): the injured players of every roster, Anesthesia on the ticked
 // ones (every account at once), the bench swap, and the automatic fixes of the injury guard.
@@ -126,6 +127,10 @@ export default function InjuryTab({ state, t, toast }) {
   };
   const set = patch => api.injury.settings(patch).catch(e => toast(e.message, 'error'));
   const viewer = state.injuryViewer || { open: [], queue: [], max: 3 };
+  // the player rows grouped by account name prefix (user 2026-11-25: every table groups)
+  const grpInj = useGroupedRows('inj-rows');
+  const grpPk = useGroupedRows('inj-parked');
+  const byAcc = list => list.map(r => ({ ...r, id: r.key || `${r.accountId}:${r.playerId}`, name: accName(r.accountId) }));
   const [atOnce, setAtOnce] = useState(3);
   const viewIds = (() => {
     const ticked = [...new Set(rows.filter(r => sel.has(r.key)).map(r => r.accountId))];
@@ -189,13 +194,16 @@ export default function InjuryTab({ state, t, toast }) {
         </>}</div>
       <small className="muted-text">{x.pkHint}</small>
       {parked.length ? <div className="table-panel"><SortTable><thead><tr><th className="select-col" /><th>{x.account}</th><th>{x.player}</th><th>{x.pkReplaced}</th><th>{x.pkWhen}</th></tr></thead>
-        <tbody>{parked.map(r => <tr key={pkKey(r)} className={pkSel.has(pkKey(r)) ? 'selected-row-soft' : ''}>
+        <tbody>{grpPk(byAcc(parked), r => <tr key={pkKey(r)} className={pkSel.has(pkKey(r)) ? 'selected-row-soft' : ''}>
           <td className="select-col"><input type="checkbox" checked={pkSel.has(pkKey(r))} onChange={() => setPkSel(s2 => { const n = new Set(s2); n.has(pkKey(r)) ? n.delete(pkKey(r)) : n.add(pkKey(r)); return n; })} aria-label={r.name} /></td>
           <td><b>{accName(r.accountId)}</b></td>
           <td><b>{r.name}</b> <span className="muted-text">{r.position} · {r.slot}</span> <RatingBadge grade={r.rating} mini /></td>
           <td>{r.replacedBy || '—'}</td>
           <td className="muted-text">{r.at ? new Date(r.at).toLocaleString() : '—'}</td>
-        </tr>)}</tbody></SortTable></div> : <p className="muted-text">{x.pkEmpty}</p>}
+        </tr>, (g, { open, toggle }) => { const keys = g.accounts.map(pkKey); const on = keys.filter(k => pkSel.has(k)).length; return <tr key={g.key} className="grp-row">
+          <td className="select-col"><input type="checkbox" checked={on === keys.length} ref={el => { if (el) el.indeterminate = on > 0 && on < keys.length; }} onChange={() => setPkSel(prev => { const n = new Set(prev); if (on === keys.length) keys.forEach(k => n.delete(k)); else keys.forEach(k => n.add(k)); return n; })} aria-label={g.label} /></td>
+          <td className="grp-name" onClick={toggle} colSpan={4}><i className="grp-arrow">{open ? '▾' : '▸'}</i><b>{g.label}</b> <small className="muted-text">{g.accounts.length}</small></td>
+        </tr>; })}</tbody></SortTable></div> : <p className="muted-text">{x.pkEmpty}</p>}
     </div>
 
     <div className="panel hunter-refresh">
@@ -224,14 +232,17 @@ export default function InjuryTab({ state, t, toast }) {
     </div>
     <div className="panel table-panel">{!Object.keys(inj.teams || {}).length ? <p className="muted-text">{x.notRead}</p> : !rows.length ? <p className="muted-text">{x.empty}</p> : <SortTable>
       <thead><tr><th className="select-col" /><th>{x.account}</th><th>{x.player}</th><th>{x.role}</th><th>{x.status}</th><th>{x.anes}</th></tr></thead>
-      <tbody>{rows.map(r => <tr key={r.key} className={sel.has(r.key) ? 'selected-row-soft' : ''}>
+      <tbody>{grpInj(byAcc(rows), r => <tr key={r.key} className={sel.has(r.key) ? 'selected-row-soft' : ''}>
         <td className="select-col"><input type="checkbox" disabled={!can(r)} checked={sel.has(r.key)} onChange={() => toggle(r.key)} aria-label={r.name} /></td>
         <td><b>{accName(r.accountId)}</b>{inj.blocked?.[r.accountId] && <span className="pill bad"><i />⏸</span>}</td>
         <td><b>{r.name}</b> <span className="muted-text">{r.position}</span> <RatingBadge grade={r.rating} mini /></td>
         <td>{r.starter ? <span className="pill warn"><i />{x.starter}</span> : <span className="muted-text">{x.bench}</span>}</td>
         <td>{r.hurt ? <span className="pill bad"><i />{x.injured}</span> : <span className="pill ok"><i />{r.healedUntil ? fill(x.healed, { until: new Date(r.healedUntil).toLocaleString() }) : x.healedNoTime}</span>}</td>
         <td className="num">{r.anesthesia > 0 ? r.anesthesia : <span className="bad-text">{x.noItem}</span>}</td>
-      </tr>)}</tbody>
+      </tr>, (g, { open, toggle }) => { const keys = g.accounts.filter(can).map(r => r.key); const on = keys.filter(k => sel.has(k)).length; return <tr key={g.key} className="grp-row">
+        <td className="select-col"><input type="checkbox" disabled={!keys.length} checked={keys.length > 0 && on === keys.length} ref={el => { if (el) el.indeterminate = on > 0 && on < keys.length; }} onChange={() => setSel(prev => { const n = new Set(prev); if (on === keys.length) keys.forEach(k => n.delete(k)); else keys.forEach(k => n.add(k)); return n; })} aria-label={g.label} /></td>
+        <td className="grp-name" onClick={toggle} colSpan={5}><i className="grp-arrow">{open ? '▾' : '▸'}</i><b>{g.label}</b> <small className="muted-text">{new Set(g.accounts.map(r => r.accountId)).size} · {g.accounts.filter(r => r.hurt).length} {x.injured}</small></td>
+      </tr>; })}</tbody>
     </SortTable>}</div>
     <details className="panel pvp-how"><summary>{t.lang === 'tr' ? 'Nasıl çalışır?' : 'How does it work?'}</summary><ul>{x.how.map(l => <li key={l}>{l}</li>)}</ul></details>
   </>;

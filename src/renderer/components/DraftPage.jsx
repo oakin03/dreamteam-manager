@@ -45,6 +45,7 @@ export default function DraftPage({ state, t, toast }) {
   const roles = state.cards?.roles || [];
   const players = useMemo(() => new Map((state.players?.players || []).map(p => [p.id, p])), [state.players]);
   const [busy, setBusy] = useState({});
+  const grpAcc = useGroupedRows('df-accounts');
   useTick();
   useEffect(() => { api.draft.watch().catch(() => {}); return () => { api.draft.unwatch().catch(() => {}); }; }, []);
   const run = async (key, fn) => { setBusy(b => ({ ...b, [key]: true })); try { await fn(); } catch (e) { toast(e.message, 'error'); } finally { setBusy(b => { const n = { ...b }; delete n[key]; return n; }); } };
@@ -74,11 +75,11 @@ export default function DraftPage({ state, t, toast }) {
     {tab === 'manual' && <>
     <h3 className="section-title">{x.accounts}</h3>
     <div className="panel table-panel"><SortTable><thead><tr><th>{x.account}</th><th>{x.level}</th><th>{x.attempts}</th><th>{x.status}</th><th>{x.rooms}</th></tr></thead>
-      <tbody>{(d.accounts || []).map(a => <tr key={a.id}>
+      <tbody>{grpAcc(d.accounts || [], a => <tr key={a.id}>
         <td><b>{a.name}</b></td><td>{a.level ?? '—'}</td><td>{a.attempts ?? '—'}</td>
         <td>{a.inSlot != null ? <span className="pill warn"><i />{fill(a.inSlotFromGame ? x.inRoomGame : x.inRoom, { slot: a.inSlot })}</span> : <span className="pill muted"><i />{x.idle}</span>}</td>
         <td><div className="df-joins">{a.joinable?.length ? a.joinable.map(n => { const s = slotInfo(n); const key = `${a.id}:${n}`; return <button key={n} className="btn primary small" disabled={busy[key]} onClick={() => run(key, () => api.draft.join(a.id, n))}>{busy[key] ? x.joining : fill(x.join, { slot: n, from: s?.range?.[0], to: s?.range?.[1], users: s?.users ?? 0 })}</button>; }) : <span className="muted-text">{x.noRoom}</span>}</div></td>
-      </tr>)}</tbody></SortTable></div>
+      </tr>, groupRowOf(5, g => <><td className="muted-text">{(() => { const lv = g.map(a => Number(a.level)).filter(Number.isFinite); return lv.length ? (Math.min(...lv) === Math.max(...lv) ? lv[0] : `${Math.min(...lv)}–${Math.max(...lv)}`) : '—'; })()}</td><td>{g.reduce((n, a) => n + (Number(a.attempts) || 0), 0)}</td><td>{g.filter(a => a.inSlot != null).length || ''}</td><td /></>))}</tbody></SortTable></div>
 
     {hall}
 
@@ -263,6 +264,9 @@ export function Drafted({ d, x, players, roles, toast, mainName, source = 'draft
   const [edits, setEdits] = useState({});
   const [busy, setBusy] = useState(null);
   const [ask, setAsk] = useState(null);
+  // one panel per account piled up with many accounts (user 2026-11-25): accounts with the same
+  // name prefix sit in one group that opens and closes
+  const grpD = useGroupedRows(`df-drafted-${source}`);
   const stockIds = roles.filter(r => /^stok$/i.test(r.name)).map(r => r.id);
   const entries = Object.entries(d.drafted || {}).map(([k, list]) => [k, (list || []).filter(r => (r.source || 'draft') === source)]).filter(([, list]) => list.length);
   if (!entries.length) return <><h3 className="section-title">{title || x.drafted}</h3><p className="muted-text">{empty || x.none}</p></>;
@@ -301,7 +305,7 @@ export function Drafted({ d, x, players, roles, toast, mainName, source = 'draft
       <p>{ask.text}</p>
       <div className="modal-actions"><button className="btn ghost" onClick={() => setAsk(null)}>{x.no}</button><button className={`btn ${ask.danger ? 'danger' : 'primary'}`} autoFocus onClick={ask.go}>{x.yes}</button></div>
     </div></div>}
-    {entries.map(([accountId, rows]) => <div key={accountId} className="panel table-panel at2-list df-drafted">
+    {grpD(entries.map(([id, rows]) => ({ id, name: accName(id), rows })), ({ id: accountId, rows }) => <div key={accountId} className="panel table-panel at2-list df-drafted">
       <div className="at2-list-head"><b>{accName(accountId)}</b><div className="toolbar"><button className="btn ghost small" onClick={() => api.draft.clearDrafted(accountId, source)}>{x.clear}</button><button className="btn danger small" disabled={busy === accountId || !rows.some(p => !p.listed)} onClick={() => act(accountId, rows.filter(p => !p.listed), 'fire')}>{x.fireAll}</button><button className="btn ghost" disabled={busy === accountId || !rows.some(p => !p.listed && get(p).checked)} onClick={() => act(accountId, rows.filter(p => !p.listed && !p.cardsQueued && get(p).checked), 'cards')}>{busy === accountId ? x.working : x.cardsSel}</button><button className="btn primary" disabled={busy === accountId} onClick={() => list(accountId, rows)}>{x.list}</button></div></div>
       <SortTable><thead><tr><th></th><th>{x.player}</th><th>{x.value}</th><th>{x.salary}</th><th>{x.base}</th><th>{x.roles}</th><th></th><th></th></tr></thead><tbody>{rows.map(p => { const v = get(p); const info = players.get(p.id); const base = p.base ?? info?.base; const rl = (info?.roleIds || []).map(id => roles.find(r => r.id === id)).filter(Boolean); return <tr key={p.id + p.at}>
         <td>{p.listed ? null : <input type="checkbox" checked={v.checked} onChange={e => edit(p.id, { checked: e.target.checked })} />}</td>
@@ -310,5 +314,8 @@ export function Drafted({ d, x, players, roles, toast, mainName, source = 'draft
         <td>{p.listed ? <span className="pill ok"><i />{x.listed}</span> : <><input className="eq-small" type="number" min="1" value={v.price} onChange={e => edit(p.id, { price: e.target.value })} /> <select value={v.currency} onChange={e => edit(p.id, { currency: e.target.value })}><option>APK</option><option>TIX</option></select></>}</td>
         <td className="actions">{p.listed ? null : <><button className="btn ghost small" disabled={busy === accountId || p.cardsQueued} onClick={() => act(accountId, [p], 'cards')}>{x.toCard}</button>{' '}<button className="btn danger small" disabled={busy === accountId || p.fireQueued} onClick={() => act(accountId, [p], 'fire')}>{x.fire}</button></>}</td>
       </tr>; })}</tbody></SortTable>
+    </div>, (g, { open, toggle }) => <div key={g.key} className="panel df-drafted-group" onClick={toggle}>
+      <i className="grp-arrow">{open ? '▾' : '▸'}</i><b>{g.label}</b> <small className="muted-text">{g.accounts.length} · {g.accounts.reduce((n, a) => n + a.rows.length, 0)} {x.player}</small>
+      {!open && <small className="muted-text">{g.accounts.reduce((n, a) => n + a.rows.filter(p => !p.listed).length, 0)} / {g.accounts.reduce((n, a) => n + a.rows.length, 0)}</small>}
     </div>)}</>;
 }

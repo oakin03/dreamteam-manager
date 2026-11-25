@@ -2,7 +2,7 @@ import useDismiss from './useDismiss';
 import { useEffect, useMemo, useState } from 'react';
 import SortTable from './SortTable';
 import { filOf } from '../i18n-fil';
-import { GroupedPicks } from './AccountGroups';
+import { GroupedPicks, useGroupedRows, groupRowOf, asAccounts } from './AccountGroups';
 
 // Equipment page additions (user 2026-11-13): materials upgraded on many accounts at once,
 // several pieces strengthened in a row, gear put on / taken off roster players, and one skill
@@ -174,6 +174,7 @@ export function SkillPlan({ state, t, toast }) {
   useEffect(() => { if (sk.plan) setPlan(sk.plan); }, [JSON.stringify(sk.plan || null)]);
   const set = (pos, i, g) => setPlan(p => { const row = [...(p[pos] || [null, null, null])]; row[i] = g || null; return { ...p, [pos]: row }; });
   const running = Boolean(sk.auto?.running);
+  const grpSk = useGroupedRows('skill-auto');
   const groups = ['OFFENSIVE', 'DEFENSIVE', 'UTILITY'];
   return <div className="panel eq-form sk-plan">
     <b>{x.planTitle}</b>
@@ -193,13 +194,13 @@ export function SkillPlan({ state, t, toast }) {
         : <button className="btn primary" disabled={!ids.length} onClick={() => api.skills.auto(ids, plan).catch(e => toast(e.message, 'error'))}>{fill(x.planRun, { n: ids.length })}</button>}
     </div>
     {sk.auto?.rows?.length > 0 && <div className="table-panel"><SortTable><thead><tr><th>{x.player}</th><th>{x.result}</th></tr></thead>
-      <tbody>{sk.auto.rows.map(r => <tr key={r.accountId}>
+      <tbody>{grpSk(asAccounts(sk.auto.rows), r => <tr key={r.accountId}>
         <td><b>{r.name}</b></td>
         <td><span className={`pill ${r.status === 'done' ? 'ok' : r.status === 'error' ? 'bad' : r.status === 'running' ? 'warn' : 'muted'}`}><i />{x.autoRes[r.status] || r.status}</span>
           {r.status === 'done' && <> <span className="muted-text">{fill(x.got, { hit: (r.players || []).filter(p => p.choice).length, total: (r.players || []).length, shuffles: r.shuffles, changes: r.changes })}</span>
             <div className="sk-got">{(r.players || []).map(p => <span key={p.name} className={p.choice ? 'ok' : ''}>{p.pos} {p.name}: {TIER_EMOJI[p.tier] || ''} {p.skill}{p.choice ? ` (${p.choice})` : ''}</span>)}</div></>}
           {r.error && <small className="bad-text"> {r.error}</small>}</td>
-      </tr>)}</tbody></SortTable></div>}
+      </tr>, groupRowOf(2, g => <td className="muted-text">{g.filter(r => r.status === 'done').length}/{g.length}{g.some(r => r.status === 'error') ? <span className="bad-text"> · {g.filter(r => r.status === 'error').length} ✗</span> : ''}</td>))}</tbody></SortTable></div>}
   </div>;
 }
 

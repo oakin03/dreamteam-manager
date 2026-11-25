@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import SortTable from './SortTable';
+import { useGroupedRows, groupRowOf, asAccounts } from './AccountGroups';
 import { filOf } from '../i18n-fil';
 
 const api = window.dreamteam;
@@ -59,19 +60,20 @@ export default function AccountHealthPanel({ state, t, toast }) {
   const shown = only ? rows.filter(r => r.issues?.length) : rows;
   const refresh = async () => { setBusy(true); try { await api.health.refresh(); } catch (e) { toast(e.message, 'error'); } finally { setBusy(false); } };
   const bad = rows.filter(r => r.issues?.some(i => i.level === 'bad')).length;
+  const grp = useGroupedRows('health');
   return <>
     <h3 className="section-title">{x.title} {bad > 0 && <span className="health-bad-count">{bad}</span>}<small>{h.checkedAt ? `${new Date(h.checkedAt).toLocaleTimeString()} · ${x.hint}` : x.hint}</small></h3>
     <div className="panel health-panel">
       <div className="health-head"><label><input type="checkbox" checked={only} onChange={e => setOnly(e.target.checked)} />{x.onlyIssues}</label><div className="health-tools"><button className="btn ghost small" disabled={busy || h.busy} onClick={refresh}>{busy || h.busy ? x.checking : x.refresh}</button><button className={`icon-btn health-gear${gear ? ' active' : ''}`} title={x.limits} aria-label={x.limits} onClick={() => setGear(g => !g)}>⚙</button>{gear && <LimitsPopover h={h} x={x} toast={toast} onClose={() => setGear(false)} />}</div></div>
       {!rows.length ? <p className="muted-text">{x.none}</p> : !shown.length ? <p className="health-ok">✓ {x.allGood}</p> :
         <div className="health-table-wrap"><SortTable><thead><tr><th>{x.account}</th><th>{x.salary}</th><th>{x.roster}</th><th>{x.tk}</th><th>{x.status}</th></tr></thead>
-          <tbody>{shown.map(r => { const over = r.issues?.some(i => i.kind === 'overCap'); return <tr key={r.accountId} className={over ? 'health-over' : ''}>
+          <tbody>{grp(asAccounts(shown), r => { const over = r.issues?.some(i => i.kind === 'overCap'); return <tr key={r.accountId} className={over ? 'health-over' : ''}>
             <td><b>{r.name}</b>{r.level ? <small className="cell-sub">Lv {r.level}</small> : null}</td>
             <td className={over ? 'bad-text' : ''}><b>{num(r.used)}</b> / {num(r.cap)}</td>
             <td className={r.roster >= (h.limits?.rosterWarn || h.limits?.rosterMax || 11) ? 'warn-text' : ''}>{r.roster ?? '—'}/{h.limits?.rosterMax || 11}</td>
             <td className={r.tk != null && r.tk < (h.limits?.lowTk || 5000) ? 'warn-text' : ''}>{num(r.tk)}</td>
             <td><div className="health-issues">{r.issues?.length ? r.issues.map(i => <span key={i.kind} className={`pill ${i.level === 'bad' ? 'bad' : 'warn'}`} title={i.message || ''}><i />{x.issue[i.kind] || i.kind}</span>) : <span className="pill ok"><i />{x.ok}</span>}</div></td>
-          </tr>; })}</tbody></SortTable></div>}
+          </tr>; }, groupRowOf(5, g => <><td className={g.some(r => r.issues?.some(i => i.kind === 'overCap')) ? 'bad-text' : ''}>{g.filter(r => r.issues?.some(i => i.kind === 'overCap')).length || ''}</td><td /><td /><td className="muted-text">{g.filter(r => r.issues?.length).length}/{g.length}</td></>))}</tbody></SortTable></div>}
     </div>
   </>;
 }

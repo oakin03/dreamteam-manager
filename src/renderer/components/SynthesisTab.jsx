@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import SortTable from './SortTable';
 import InjuryMark from './InjuryMark';
+import { useGroupedRows, groupRowOf } from './AccountGroups';
 import { filOf } from '../i18n-fil';
 
 const api = window.dreamteam;
@@ -42,6 +43,7 @@ export default function SynthesisTab({ state, t, toast }) {
   const [levels, setLevelsRaw] = useState(() => { const saved = state.settings?.synthLevels; return new Set(Array.isArray(saved) && saved.length ? saved.filter(l => LEVELS.includes(l)) : LEVELS); });
   const setLevels = next => { setLevelsRaw(prev => { const v = typeof next === 'function' ? next(prev) : next; api.settings.update({ synthLevels: [...v].sort() }).catch(() => {}); return v; }); };
   const [infoOpen, setInfoOpen] = useState(false);
+  const grpS = useGroupedRows('synth-summary');
   const maxedPlayers = (state.cards?.players || []).filter(p => !p.x && !p.noTeam && Number(p.stars) >= 5).sort((a, b) => String(a.teamName || a.team || '').localeCompare(String(b.teamName || b.team || '')) || String(a.name).localeCompare(String(b.name)));
   const toggle = l => setLevels(s => { const n = new Set(s); n.has(l) ? n.delete(l) : n.add(l); return n; });
   const start = async mode => { try { await api.synthesis.start({ mode, levels: [...levels].sort() }); } catch (e) { toast(e.message, 'error'); } };
@@ -87,8 +89,8 @@ export default function SynthesisTab({ state, t, toast }) {
 
     <h3 className="section-title">{x.summary} <small>{x.summaryHint}</small></h3>
     <div className="panel table-panel"><SortTable><thead><tr><th>{x.account}</th><th>{x.mode}</th>{LEVELS.map(l => <th key={l}>{stars(l)} → {stars(l + 1)}</th>)}</tr></thead>
-      <tbody>{summary.flatMap(([id, s]) => ['team', 'noTeam'].filter(m => s[m]).map(m => <tr key={id + m}><td><b>{s.name}</b></td><td>{m === 'team' ? x.modeTeam : x.modeNoTeam} <small className="muted-text">{new Date(s[m].at).toLocaleString()}</small></td>
-        {LEVELS.map(l => <td key={l} className="synth-sum"><b className="green-text">{s[m].counts[l].ok}</b>/<b className="bad-text">{s[m].counts[l].fail}</b></td>)}</tr>))}
+      <tbody>{grpS(summary.flatMap(([id, s]) => ['team', 'noTeam'].filter(m => s[m]).map(m => ({ id: id + m, name: s.name, m, r: s[m] }))), ({ id, name, m, r }) => <tr key={id}><td><b>{name}</b></td><td>{m === 'team' ? x.modeTeam : x.modeNoTeam} <small className="muted-text">{new Date(r.at).toLocaleString()}</small></td>
+        {LEVELS.map(l => <td key={l} className="synth-sum"><b className="green-text">{r.counts[l].ok}</b>/<b className="bad-text">{r.counts[l].fail}</b></td>)}</tr>, groupRowOf(2 + LEVELS.length, g => <><td />{LEVELS.map(l => <td key={l} className="synth-sum"><b className="green-text">{g.reduce((n, a) => n + (a.r.counts[l]?.ok || 0), 0)}</b>/<b className="bad-text">{g.reduce((n, a) => n + (a.r.counts[l]?.fail || 0), 0)}</b></td>)}</>))}
         {!summary.length && <tr><td colSpan={6} className="muted-text">{x.none}</td></tr>}</tbody></SortTable></div>
   </div>;
 }

@@ -211,7 +211,8 @@ contextBridge.exposeInMainWorld('dreamteam', {
   // @strip-begin(basic)
   rotation: {
     setMode: (mode, on) => ipcRenderer.invoke('rotation:set-mode', { mode, on }),
-    stop: (accountId) => ipcRenderer.invoke('rotation:stop', accountId)
+    stop: (accountId) => ipcRenderer.invoke('rotation:stop', accountId),
+    setRole: (mode, roleId, on) => ipcRenderer.invoke('rotation:set-role', { mode, roleId, on })
   },
   // @strip-end
   // @strip-begin(basic)
