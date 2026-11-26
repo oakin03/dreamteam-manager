@@ -118,3 +118,61 @@ test('auto draft: an "already signed" answer makes the account pick the next pla
   assert.deepEqual(tried, ['se', 'sa']);
   assert.equal(s.run.accounts.a.state, 'picked');
 });
+
+function dummyService(levels, dummies, opts = {}) {
+  const { s, joins } = liveService(levels, opts);
+  const accounts = Object.keys(levels).map(id => ({ id, name: id, role: dummies.includes(id) ? 'rDummy' : undefined }));
+  s.store.getAccounts = () => accounts;
+  const base = s.store.getSettings;
+  s.store.getSettings = () => ({ ...base(), accountRoleDefs: [{ id: 'rDummy', name: 'Dummy' }] });
+  return { s, joins };
+}
+
+test('auto draft / Dummy: players at or over the Dummy price bring as many Dummy accounts; role players bring the others', () => {
+  const { s } = dummyService({ n1: 25, d1: 25, d2: 25 }, ['d1', 'd2'], { playerRoles: { se: 'sellable' } });
+  const pool = [pl('p1', 2500), pl('p2', 2200), pl('p3', 900), pl('se', 500)];
+  const plan = s._extrasPlan({ ours: ['n1'] }, pool, 9);
+  assert.equal(plan.extra, 0, 'one role player: the scout takes it');
+  assert.equal(plan.dummyExtra, 2, 'two players of 2200+');
+  s.saveConfig({ dummyMode: 'normal' });
+  assert.equal(s._extrasPlan({ ours: ['n1'] }, pool, 9).dummyExtra, 0, 'like the other accounts: no Dummy count');
+});
+
+test('auto draft / Dummy: takes the most expensive 2200+ player to list it, else the cheapest for cards; never a Harcayıcı', async () => {
+  const { s } = dummyService({ n1: 25, d1: 25 }, ['d1']);
+  const live = { players: [pl('p1', 2300), pl('p2', 2600), pl('c1', 40)], picked: [] };
+  const c = s._choose({ ours: ['d1'] }, 'd1', live);
+  assert.equal(c.player.id, 'p2');
+  assert.equal(c.kind, 'list');
+  assert.equal(s._choose({ ours: ['d1'] }, 'd1', { players: [pl('x', 900), pl('c1', 40)], picked: [] }).kind, 'cards');
+  const calls = [];
+  s.actions = { toSpender: async (...a) => calls.push(a) };
+  s.draft.snapshot = () => ({ drafted: { d1: [{ id: 'p2' }, { id: 's1' }] } });
+  await s._runJob({ accountId: 'd1', ids: ['p2'], kind: 'list', tries: 0 });
+  await s._runJob({ accountId: 'd1', ids: ['s1'], kind: 'spender', tries: 0 });
+  assert.deepEqual(calls.map(c => [c[0], c[1], c[3]]), [['d1', 'd1', { price: 20, currency: 'APK' }], ['d1', 'd1', { price: 20, currency: 'APK' }]]);
+});
+
+test('auto draft: market hand-ons run side by side, each to its own Harcayıcı; cards wait their turn', async () => {
+  const levels = { a: 25, b: 25, c: 25, sp1: 30, sp2: 30 };
+  const { s } = liveService(levels);
+  const accounts = Object.keys(levels).map(id => ({ id, name: id, role: id.startsWith('sp') ? 'spender' : undefined }));
+  s.store.getAccounts = () => accounts;
+  s.store.getAccountProfile = () => ({ mainAccountId: 'M', accounts: Object.fromEntries(Object.keys(levels).map(id => [id, { userId: 'u-' + id, level: levels[id], tk: id === 'sp1' ? 5000 : 4000 }])) });
+  s.draft.snapshot = () => ({ drafted: { a: [{ id: 'x1' }, { id: 'k1' }], b: [{ id: 'x2' }, { id: 'k2' }], c: [{ id: 'x3' }] } });
+  s.run.status = 'stopped';
+  const live = new Set(); let mostCards = 0, cardsNow = 0;
+  const to = [];
+  s.actions = {
+    toSpender: async (from, sp) => { to.push([from, sp, Array.from(live)]); live.add(sp); await settle(30); live.delete(sp); },
+    toCards: async () => { cardsNow++; mostCards = Math.max(mostCards, cardsNow); await settle(20); cardsNow--; }
+  };
+  s._queue('a', ['x1'], 'spender'); s._queue('b', ['x2'], 'spender'); s._queue('c', ['x3'], 'spender');
+  s._queue('a', ['k1'], 'cards'); s._queue('b', ['k2'], 'cards');
+  s._processPending();
+  for (let i = 0; i < 300 && s.pending.length; i++) await settle(20);
+  assert.equal(s.pending.length, 0);
+  assert.deepEqual(to.slice(0, 2).map(t => t[1]).sort(), ['sp1', 'sp2'], 'the first two go to two different Harcayıcı');
+  assert.ok(to.every(t => !t[2].includes(t[1])), 'a Harcayıcı never takes two at once');
+  assert.equal(mostCards, 1, 'cards one at a time');
+});

@@ -15,6 +15,11 @@
 //    these players;
 //  - after the draft: Kart and cheap players → main → star cards; Satılabilir / Stok → the Harcayıcı
 //    with the most TK (room and TK enough), listed at Auto Trade's price;
+//  - Dummy-role accounts (user 2026-11-26) never hand players to a Harcayıcı: they list them
+//    themselves. Their path is the user's choice (remembered): "own" (default) — as many Dummy
+//    accounts join as the pool has players priced at or over the Dummy price (2200), each takes the
+//    most expensive and lists it (Auto Trade's price, else the default 20 APK); with none left it
+//    takes the cheapest for cards — or "normal": like the other accounts;
 //  - it goes on until the chosen accounts have no draft attempts left.
 const { GameSocket } = require('./game-socket.cjs');
 const R = require('./trade-rules.cjs');
@@ -31,6 +36,8 @@ const ATTEMPTS_EVERY_MS = 60 * 1000;
 const ROSTER_MAX = 11;
 const ROOM_SIZE = 10;
 const ACTION_RETRY_MS = 30 * 1000;
+const HAND_PARALLEL = 10;   // market hand-ons at a time (each to its own Harcayıcı)
+const WAIT = Symbol('wait');
 const MAIN_FULL_RETRY_MS = 5 * 60 * 1000; // main's roster is full: tried again every 5 min, never given up
 const rand = ([a, b]) => a + Math.floor(Math.random() * (b - a + 1));
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -46,6 +53,9 @@ class AutoDraftService {
     this.rosterCache = new Map();
     this.turnTimer = null;
     this.reserved = new Set(); // accounts picked for a room and still joining it
+    this._spBusy = new Set();  // Harcayıcı accounts taking players now
+    this._accBusy = new Set(); // accounts in a hand-on job now
+    this._handBusy = 0;
     // "only Stok" is always off when the app starts (user 2026-11-26)
     const saved = this.store.getSettings?.()?.autoDraft;
     if (saved?.stokOnly) { try { this.store.saveSettings({ ...this.store.getSettings(), autoDraft: { ...saved, stokOnly: false } }); } catch {} }
@@ -58,6 +68,20 @@ class AutoDraftService {
   _profile(id) { return this.store.getAccountProfile?.()?.accounts?.[id] || {}; }
   _level(id) { return Number(this._profile(id).level) || null; }
   _userId(id) { return this._profile(id).userId || null; }
+  // the account role named "Dummy" (Accounts page)
+  _isDummy(id) {
+    const role = this._accounts().find(a => a.id === id)?.role;
+    if (!role) return false;
+    const def = (this.store.getSettings?.()?.accountRoleDefs || []).find(d => d.id === role);
+    return /^dummy$/i.test(String(def?.name || '').trim());
+  }
+  // a Dummy account on its own path (not "like the other accounts")
+  _ownDummy(id) { return this.config().dummyMode !== 'normal' && this._isDummy(id); }
+  // the Dummy path's players: priced at or over the Dummy price, the most expensive first
+  _pricey(players) {
+    const min = this.config().dummyMinPrice;
+    return (players || []).filter(p => !p.signed && (Number(p.baseSalary) || 0) >= min).sort((a, b) => (Number(b.baseSalary) || 0) - (Number(a.baseSalary) || 0));
+  }
   _log(level, code, params, message, accountId = null) {
     this.activity.add({ level, accountId, accountName: accountId ? this._name(accountId) : '', taskName: 'Auto Draft', code, params, message });
   }
@@ -77,6 +101,10 @@ class AutoDraftService {
       priority: order,
       fallback: ['card', 'fire', 'none'].includes(saved.fallback) ? saved.fallback : 'card',
       sideOnly: Boolean(saved.sideOnly),
+      dummyMode: saved.dummyMode === 'normal' ? 'normal' : 'own',
+      dummyMinPrice: Number(saved.dummyMinPrice) > 0 ? Number(saved.dummyMinPrice) : 2200,
+      dummyListPrice: Number(saved.dummyListPrice) > 0 ? Number(saved.dummyListPrice) : 20,
+      dummyListCurrency: saved.dummyListCurrency === 'TIX' ? 'TIX' : 'APK',
       cheapAsCard: Boolean(saved.cheapAsCard),
       cheapPrice: Number(saved.cheapPrice) > 0 ? Number(saved.cheapPrice) : 70,
       stokOnly: Boolean(saved.stokOnly)
@@ -86,7 +114,7 @@ class AutoDraftService {
     const s = this.store.getSettings();
     const cur = this.config();
     const next = { ...cur, ...patch };
-    this.store.saveSettings({ ...s, autoDraft: { accountIds: next.accountIds, priority: next.priority, fallback: next.fallback, sideOnly: next.sideOnly, cheapAsCard: Boolean(next.cheapAsCard), cheapPrice: Number(next.cheapPrice) > 0 ? Math.round(Number(next.cheapPrice)) : 70, stokOnly: Boolean(next.stokOnly) } });
+    this.store.saveSettings({ ...s, autoDraft: { accountIds: next.accountIds, priority: next.priority, fallback: next.fallback, sideOnly: next.sideOnly, cheapAsCard: Boolean(next.cheapAsCard), cheapPrice: Number(next.cheapPrice) > 0 ? Math.round(Number(next.cheapPrice)) : 70, stokOnly: Boolean(next.stokOnly), dummyMode: next.dummyMode === 'normal' ? 'normal' : 'own', dummyMinPrice: Number(next.dummyMinPrice) > 0 ? Math.round(Number(next.dummyMinPrice)) : 2200, dummyListPrice: Number(next.dummyListPrice) > 0 ? Math.round(Number(next.dummyListPrice)) : 20, dummyListCurrency: next.dummyListCurrency === 'TIX' ? 'TIX' : 'APK' } });
     this.onChanged();
     return this.config();
   }
@@ -180,12 +208,12 @@ class AutoDraftService {
 
   // free accounts for a room: chosen, attempts left, fit the level, in no room, not used by Auto
   // Trade, roster not full. `lv30`: 'only' Lv30+ accounts, 'first' or 'last' (Lv30 included).
-  async _free(slot, n, { lv30 = 'last', not = [] } = {}) {
+  async _free(slot, n, { lv30 = 'last', not = [], dummy = null } = {}) {
     const out = [];
     if (n <= 0) return out;
     const hi = id => (this._level(id) || 0) >= 30;
     const cands = this.run.accountIds
-      .filter(id => !not.includes(id) && !this.reserved.has(id) && this._attempts(id) > 0 && !this._inSlot(id) && !this.isBusy(id) && this._fits(id, slot) && (lv30 !== 'only' || hi(id)))
+      .filter(id => !not.includes(id) && (dummy == null || this._ownDummy(id) === dummy) && !this.reserved.has(id) && this._attempts(id) > 0 && !this._inSlot(id) && !this.isBusy(id) && this._fits(id, slot) && (lv30 !== 'only' || hi(id)))
       .sort((a, b) => (lv30 === 'first' ? hi(b) - hi(a) : hi(a) - hi(b)));
     // roster checks a few at a time (each is one short anonymous read)
     for (let i = 0; i < cands.length && out.length < n; i += ROSTER_CHECKS) {
@@ -280,10 +308,17 @@ class AutoDraftService {
     const wanted = this._wanted(players);
     const stok = wanted.filter(w => this._isStok(w.role)).length;
     const counted = cfg.stokOnly ? stok : wanted.length;
-    const hiIn = room.ours.filter(a => (this._level(a) || 0) >= 30).length;
+    const others = room.ours.filter(a => !this._ownDummy(a));
+    const dummies = room.ours.filter(a => this._ownDummy(a));
+    const hiIn = others.filter(a => (this._level(a) || 0) >= 30).length;
     const hiNeed = stok ? Math.max(0, Math.min(stok, Math.max(counted, 1)) - hiIn) : 0;
-    const extra = Math.max(0, Math.min(seats, Math.max(counted - room.ours.length, hiNeed)));
-    return { counted, stok, extra, hiNeed: Math.min(hiNeed, extra) };
+    // a Dummy scout on its own path does not take a role player: the role players bring N others
+    const extra = Math.max(0, Math.min(seats, Math.max(counted - others.length, hiNeed)));
+    // the pricey players without a role bring as many own-path Dummy accounts
+    const roleIds = new Set(wanted.map(w => w.p.id));
+    const pricey = this._pricey(players).filter(p => !roleIds.has(p.id)).length;
+    const dummyExtra = cfg.dummyMode === 'normal' ? 0 : Math.max(0, Math.min(seats - extra, pricey - dummies.length));
+    return { counted, stok, extra, hiNeed: Math.min(hiNeed, extra), pricey, dummyExtra };
   }
 
   async _syncRooms() {
@@ -297,13 +332,16 @@ class AutoDraftService {
         const seats = ROOM_SIZE - Math.max((live.users || []).length, room.ours.length);
         const plan = this._extrasPlan(room, live.players, seats);
         room.rolePlayers = plan.counted;
-        this._log('info', 'ad.pool', { slot: room.slot, count: plan.counted, extra: plan.extra }, `Room ${room.slot}: ${plan.counted} player(s) with a role · ${plan.extra} more account(s) join`, room.scout);
-        if (live.started || plan.extra <= 0) continue;
-        const hi = await this._free(room.slot, plan.hiNeed, { lv30: 'only' });
+        this._log('info', 'ad.pool', { slot: room.slot, count: plan.counted, extra: plan.extra + plan.dummyExtra, pricey: plan.pricey }, `Room ${room.slot}: ${plan.counted} player(s) with a role${plan.pricey ? ` · ${plan.pricey} for Dummy` : ''} · ${plan.extra + plan.dummyExtra} more account(s) join`, room.scout);
+        if (live.started || plan.extra + plan.dummyExtra <= 0) continue;
+        const own = this.config().dummyMode !== 'normal';
+        const hi = await this._free(room.slot, plan.hiNeed, { lv30: 'only', dummy: own ? false : null });
         hi.forEach(id => this.reserved.add(id));
-        const rest = await this._free(room.slot, plan.extra - hi.length, { lv30: 'last', not: hi });
+        const rest = await this._free(room.slot, plan.extra - hi.length, { lv30: 'last', not: hi, dummy: own ? false : null });
         rest.forEach(id => this.reserved.add(id));
-        const ids = [...hi, ...rest];
+        const dum = own ? await this._free(room.slot, plan.dummyExtra, { lv30: 'last', not: [...hi, ...rest], dummy: true }) : [];
+        dum.forEach(id => this.reserved.add(id));
+        const ids = [...hi, ...rest, ...dum];
         room.filling = true;
         this._join(room, ids).finally(() => { room.filling = false; ids.forEach(id => this.reserved.delete(id)); this.onChanged(); });
       }
@@ -333,6 +371,7 @@ class AutoDraftService {
 
   _choose(room, id, live) {
     const cfg = this.config();
+    if (this._ownDummy(id)) return this._chooseDummy(room, id, live);
     const wanted = this._wanted(live.players);
     const mineAll = wanted.filter(w => !this._owns(id, w.p.id));
     // Stok is left for a Lv30+ account of ours that still has to pick (it may get the 5% cut)
@@ -347,6 +386,20 @@ class AutoDraftService {
     const free = (live.players || []).filter(p => !p.signed && Number(p.baseSalary) > 0 && !this._owns(id, p.id));
     const pool = (free.some(p => !kept.has(p.id)) ? free.filter(p => !kept.has(p.id)) : free).sort((a, b) => Number(a.baseSalary) - Number(b.baseSalary));
     return pool[0] ? { player: pool[0], role: null, kind: cfg.fallback === 'fire' ? 'fire' : 'cards' } : null;
+  }
+
+  // Dummy's own path: the most expensive player at or over the Dummy price (a role player only when
+  // no other account of ours still has to pick), listed by the account itself; else the cheapest
+  // for cards
+  _chooseDummy(room, id, live) {
+    const picked = new Set(live.picked || []);
+    const othersLeft = room.ours.some(a => a !== id && !picked.has(a) && !this._ownDummy(a));
+    const roleIds = new Set(this._wanted(live.players).map(w => w.p.id));
+    const pricey = this._pricey(live.players).filter(p => !this._owns(id, p.id) && !(othersLeft && roleIds.has(p.id)));
+    if (pricey[0]) return { player: pricey[0], role: this._roleOf(pricey[0]), kind: 'list' };
+    const free = (live.players || []).filter(p => !p.signed && Number(p.baseSalary) > 0 && !this._owns(id, p.id));
+    const pool = (othersLeft && free.some(p => !roleIds.has(p.id)) ? free.filter(p => !roleIds.has(p.id)) : free).sort((a, b) => Number(a.baseSalary) - Number(b.baseSalary));
+    return pool[0] ? { player: pool[0], role: null, kind: 'cards' } : null;
   }
 
   async _pick(room, id) {
@@ -373,7 +426,17 @@ class AutoDraftService {
     acc.state = 'picked';
     this.run.picked += 1;
     this.rosterCache.delete(id);
+    // handed on at once (user 2026-11-26): to a Harcayıcı for the market (a Dummy lists it itself),
+    // to the cards queue for main
+    this._queue(id, [c.player.id], c.kind);
     this.onChanged();
+    this._processPending();
+  }
+
+  // a hand-on job, once per player
+  _queue(accountId, ids, kind) {
+    const fresh = ids.filter(pid => !this.pending.some(p => p.accountId === accountId && p.ids.includes(pid)));
+    if (fresh.length) this.pending.push({ accountId, ids: fresh, kind, tries: 0, nextAt: 0 });
   }
 
   async _roomEnded(room, { quiet = false } = {}) {
@@ -381,11 +444,13 @@ class AutoDraftService {
     for (const id of room.ours) {
       if (this.run.accounts[id]) { this.run.accounts[id].state = 'waiting'; this.run.accounts[id].slot = null; }
       const rows = (this.draft.snapshot().drafted?.[id] || []).filter(r => r.auto && r.slot === room.slot);
-      for (const kind of ['cards', 'spender', 'fire']) {
-        const ids = rows.filter(r => r.auto === kind).map(r => r.id);
-        if (ids.length) this.pending.push({ accountId: id, ids, kind, tries: 0, nextAt: 0 });
+      // normally handed on right after the pick already; anything missed is queued now
+      for (const kind of ['cards', 'spender', 'fire', 'list']) {
+        const ids = rows.filter(r => r.auto === kind && !r.listed).map(r => r.id);
+        if (ids.length) this._queue(id, ids, kind);
       }
     }
+    this._processPending();
     if (!quiet) this._log('info', 'ad.roomDone', { slot: room.slot }, `Room ${room.slot} is over · the picked players are handed on`);
     this.onChanged();
   }
@@ -395,29 +460,45 @@ class AutoDraftService {
   _requeueLeftovers() {
     const drafted = this.draft.snapshot?.().drafted || {};
     for (const [accountId, rows] of Object.entries(drafted)) {
-      for (const kind of ['cards', 'spender', 'fire']) {
-        const ids = rows.filter(r => r.auto === kind && !r.listed && !this.pending.some(p => p.accountId === accountId && p.ids.includes(r.id))).map(r => r.id);
-        if (ids.length) this.pending.push({ accountId, ids, kind, tries: 0, nextAt: 0 });
+      for (const kind of ['cards', 'spender', 'fire', 'list']) {
+        const ids = rows.filter(r => r.auto === kind && !r.listed).map(r => r.id);
+        if (ids.length) this._queue(accountId, ids, kind);
       }
     }
   }
 
   // ---------- after the draft ----------
   _drain() { this._processPending(); }
+  // Market hand-ons run side by side, each account to a different Harcayıcı (no waiting, user
+  // 2026-11-26); card jobs wait their turn among themselves: main takes one at a time, and when its
+  // roster is full they wait until it has room. An account is in one job at a time.
   _processPending() {
-    if (this._working || !this.actions) return;
-    const job = this.pending.find(p => p.nextAt <= this.now());
-    if (!job) {
-      // nothing due yet: while Auto Draft is not running nobody else looks again, so wake up then
-      if (this.pending.length && this.run?.status !== 'running' && !this.pendingTimer) {
-        const at = Math.min(...this.pending.map(p => p.nextAt));
-        this.pendingTimer = setTimeout(() => { this.pendingTimer = null; this._processPending(); }, Math.max(1000, at - this.now()));
-        this.pendingTimer.unref?.();
-      }
-      return;
+    if (!this.actions) return;
+    const now = this.now();
+    this._accBusy ||= new Set();
+    this._handBusy ||= 0;
+    for (const job of this.pending) {
+      if (job.running || job.nextAt > now || this._accBusy.has(job.accountId)) continue;
+      const cards = job.kind === 'cards';
+      if (cards ? this._cardsBusy : this._handBusy >= HAND_PARALLEL) continue;
+      job.running = true;
+      this._accBusy.add(job.accountId);
+      if (cards) this._cardsBusy = true; else this._handBusy += 1;
+      this._runJob(job).finally(() => {
+        job.running = false;
+        this._accBusy.delete(job.accountId);
+        if (cards) this._cardsBusy = false; else this._handBusy -= 1;
+        this.onChanged();
+        setTimeout(() => this._processPending(), 50);
+      });
     }
-    this._working = true;
-    this._runJob(job).finally(() => { this._working = false; this.onChanged(); if (this.pending.length && !(this.run?.status === 'running')) setTimeout(() => this._processPending(), 1000); });
+    // nothing due now: while Auto Draft is not running nobody else looks again, so wake up then
+    const waiting = this.pending.filter(p => !p.running);
+    if (waiting.length && this.run?.status !== 'running' && !this.pendingTimer) {
+      const at = Math.min(...waiting.map(p => p.nextAt));
+      this.pendingTimer = setTimeout(() => { this.pendingTimer = null; this._processPending(); }, Math.max(1000, at - this.now()));
+      this.pendingTimer.unref?.();
+    }
   }
   async _runJob(job) {
     const mainId = this.store.getAccountProfile?.()?.mainAccountId;
@@ -431,14 +512,29 @@ class AutoDraftService {
         await this.actions.toCards(job.accountId, job.ids);
       } else if (job.kind === 'fire') {
         await this.actions.fire(job.accountId, job.ids);
+      } else if (job.kind === 'list' || this._isDummy(job.accountId)) {
+        // Dummy accounts list what they took themselves (never to a Harcayıcı): Auto Trade's price,
+        // else the Dummy default price
+        const cfg = this.config();
+        await this.actions.toSpender(job.accountId, job.accountId, job.ids, { price: cfg.dummyListPrice, currency: cfg.dummyListCurrency });
       } else {
         const sp = await this._spenderFor(job.accountId, job.ids);
-        await this.actions.toSpender(job.accountId, sp, job.ids);
+        if (sp === WAIT) { job.nextAt = this.now() + 3000; return; } // every fitting Harcayıcı is busy
+        try { await this.actions.toSpender(job.accountId, sp, job.ids); }
+        finally { if (sp !== job.accountId) this._spBusy.delete(sp); }
       }
       this.pending = this.pending.filter(p => p !== job);
       this.capRelief(job.accountId);
     } catch (error) {
-      if (error.code === 'MAIN_FULL') { job.nextAt = this.now() + MAIN_FULL_RETRY_MS; if (!job.fullLogged) { job.fullLogged = true; this._log('warning', 'ad.mainFull', { error: error.message }, error.message, job.accountId); } return; }
+      if (error.code === 'MAIN_FULL') {
+        // every card job waits for main's room together; one warning per wait
+        const at = this.now() + MAIN_FULL_RETRY_MS;
+        for (const p of this.pending) if (p.kind === 'cards' && !p.running) p.nextAt = Math.max(p.nextAt, at);
+        job.nextAt = at;
+        if (!this._mainFullAt || this.now() - this._mainFullAt > MAIN_FULL_RETRY_MS) { this._mainFullAt = this.now(); this._log('warning', 'ad.mainFull', { error: error.message }, error.message, job.accountId); }
+        return;
+      }
+      this._mainFullAt = 0;
       job.tries += 1;
       job.nextAt = this.now() + ACTION_RETRY_MS;
       if (job.tries >= 10) { this.pending = this.pending.filter(p => p !== job); this._log('error', 'ad.handFailed', { error: error.message }, `Drafted players could not be handed on: ${error.message} · they stay in the Draft list`, job.accountId); }
@@ -452,12 +548,18 @@ class AutoDraftService {
     const floor = Number(this.atConfig()?.spenderMinTk) || 0;
     const rows = (this.draft.snapshot().drafted?.[accountId] || []).filter(r => ids.includes(r.id));
     const cost = rows.reduce((n, r) => n + (Number(r.salary ?? r.value) || 0), 0);
+    this._spBusy ||= new Set();
     const cands = this._accounts().filter(a => a.role === 'spender' && a.id !== accountId && this._userId(a.id) && !this.isBusy(a.id))
       .map(a => ({ id: a.id, tk: Number(this._profile(a.id).tk) || 0 })).filter(x => x.tk - cost >= floor).sort((a, b) => b.tk - a.tk);
+    let busy = false;
     for (const c of cands) {
+      if (this._spBusy.has(c.id) || this._accBusy?.has(c.id)) { busy = true; continue; }
       const total = await this._rosterTotal(c.id).catch(() => ROSTER_MAX);
-      if (total + ids.length <= ROSTER_MAX) return c.id;
+      // taken at once: another job choosing meanwhile goes to another Harcayıcı
+      if (total + ids.length <= ROSTER_MAX && !this._spBusy.has(c.id)) { this._spBusy.add(c.id); return c.id; }
+      if (this._spBusy.has(c.id)) busy = true;
     }
+    if (busy) return WAIT;
     this._log('info', 'ad.noSpender', {}, 'No free Harcayıcı with room and TK · the account lists them itself', accountId);
     return accountId;
   }

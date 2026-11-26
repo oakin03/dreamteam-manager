@@ -551,7 +551,7 @@ class DraftService {
 
   // Satılabilir / Stok of the automatic draft (user 2026-11-24): to a Harcayıcı, which puts them on
   // the market at Auto Trade's price. `spenderId` = the drafting account itself: it only lists.
-  async toSpender(accountId, spenderId, playerIds) {
+  async toSpender(accountId, spenderId, playerIds, { fallback = null } = {}) {
     let ids = [...new Set(playerIds || [])].filter(id => (this._drafted()[accountId] || []).some(r => r.id === id));
     if (!ids.length) return 0; // nothing left on the list (handled by hand)
     ids = (await this._stillThere(accountId, ids)).here;
@@ -568,7 +568,8 @@ class DraftService {
       this._log('success', 'df.toSpender', { names, name: sp.name }, `${names} → ${sp.name} (Harcayıcı)`, accountId);
     }
     const priced = (this._withPrices({ [spenderId]: rows })[spenderId] || []);
-    const items = priced.filter(r => r.suggest?.price).map(r => ({ id: r.id, price: r.suggest.price, currency: r.suggest.currency }));
+    // no Auto Trade price (no role): the given default (Dummy accounts: 20 APK, user 2026-11-26)
+    const items = priced.map(r => (r.suggest?.price ? { id: r.id, price: r.suggest.price, currency: r.suggest.currency } : fallback?.price ? { id: r.id, price: fallback.price, currency: fallback.currency || 'APK' } : null)).filter(Boolean);
     if (items.length) await this.listPlayers(spenderId, items);
     return items.length;
   }

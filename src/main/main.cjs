@@ -1782,12 +1782,12 @@ function registerIpc() {
   };
   ipcMain.handle('draft:to-cards', async (_event, { accountId, playerIds }) => draftCardsNow(accountId, playerIds || []));
   // Automatic Draft: Satılabilir / Stok to a Harcayıcı (it lists them); accounts Auto Trade holds wait
-  const draftSpenderNow = async (accountId, spenderId, playerIds) => {
+  const draftSpenderNow = async (accountId, spenderId, playerIds, fallback = null) => {
     const ids = [...new Set([accountId, spenderId])];
     if (ids.some(id => autoTrade?.usesAccount?.(id))) throw new Error('Auto Trade is using the account right now');
-    return draftHand(ids, () => draft.toSpender(accountId, spenderId, playerIds));
+    return draftHand(ids, () => draft.toSpender(accountId, spenderId, playerIds, { fallback }));
   };
-  autoDraft.setActions({ toCards: (a, ids) => draftCardsNow(a, ids), fire: (a, ids) => draftFireNow(a, ids), toSpender: (a, sp, ids) => draftSpenderNow(a, sp, ids) });
+  autoDraft.setActions({ toCards: (a, ids) => draftCardsNow(a, ids), fire: (a, ids) => draftFireNow(a, ids), toSpender: (a, sp, ids, fallback) => draftSpenderNow(a, sp, ids, fallback) });
   ipcMain.handle('auto-draft:start', async (_event, patch) => autoDraft.start(patch || {}));
   ipcMain.handle('auto-draft:stop', async () => autoDraft.stop());
   ipcMain.handle('auto-draft:config', async (_event, patch) => autoDraft.saveConfig(patch || {}));
