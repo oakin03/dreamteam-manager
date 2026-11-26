@@ -10,6 +10,7 @@ const PATH = '/draft-socket/';
 // Normal draft rooms by slot number (verified against the Draft Hall screen).
 const SLOT_LEVELS = { 3: [1, 20], 4: [1, 20], 5: [21, 30], 6: [21, 30], 7: [21, 30], 8: [31, 50], 9: [31, 50], 10: [51, 70], 11: [51, 70], 12: [71, 100] };
 const ROOM_SIZE = 10;
+const ROSTER_LIMIT = 11; // a roster holds 11 players
 const POLL_MS = 2000;
 const JOIN_WAIT_MS = 10000;
 const ATTEMPT_REREAD_MS = 2000;
@@ -32,8 +33,9 @@ function joinableSlots(slots, level, { attempts = 0, busy = false } = {}) {
 }
 
 class DraftService {
-  constructor({ store, activity, sessions, accountProfile, onChanged, onAttention, createSocket, gameHealth = null, now = () => Date.now(), priceOf = null }) {
+  constructor({ store, activity, sessions, accountProfile, onChanged, onAttention, createSocket, gameHealth = null, now = () => Date.now(), priceOf = null, quietFor = () => false }) {
     this.gameHealth = gameHealth;
+    this.quietFor = quietFor;    // accountId -> true: no "your turn" alert (Auto Draft picks for it)
     this.priceOf = priceOf;      // (row, accountId) -> { price, currency } from Auto Trade's pricing
     this.store = store;
     this.activity = activity;
@@ -290,10 +292,12 @@ class DraftService {
       const before = rm.turn?.userId;
       rm.turn = { index: d?.index, seconds: d?.seconds, userId: d?.userId, at: new Date(this.now()).toISOString() };
       rm.pickIndex = d?.index ?? rm.pickIndex;
-      // Our account's turn: bring the app forward once per turn.
-      // Not again for an account that has already picked in this draft (user 2026-11-13).
+      // Our account's turn: an alert once per turn — never for an account that has already picked
+      // in this draft (by the app or in the game: the room marks it signed), nor while Auto Draft
+      // picks for it (user 2026-11-13, 2026-11-26)
       const mine = rm.ours.find(id => this.joined.get(id)?.userId === d?.userId);
-      if (mine && before !== d?.userId && !(rm.picked || []).includes(mine)) this.onAttention?.('draftTurn', this._name(mine));
+      const signed = (rm.picked || []).includes(mine) || (rm.users || []).some(u => u.userId === d?.userId && u.signed);
+      if (mine && before !== d?.userId && !signed && !this.quietFor(mine)) this.onAttention?.('draftTurn', this._name(mine));
       touch();
     });
     s.on('draftEnded', () => this._ended(entry.slot));
@@ -443,6 +447,34 @@ class DraftService {
     return this.snapshot();
   }
 
+  // the player ids on an account's roster, read without logging in
+  async _rosterIds(accountId) {
+    const userId = this._profile?.(accountId)?.userId || this.store.getAccountProfile?.()?.accounts?.[accountId]?.userId;
+    if (!userId) return null;
+    const conn = await GameSocket.open({ createSocket: this.createSocket });
+    try {
+      const r = await conn.ack('getTeamOptimized', { userId }, { timeoutMs: 10000 });
+      const all = [...(r?.players?.starters || []), ...(r?.players?.bench || [])];
+      return new Set(all.map(p => p.id || p.playerId).filter(Boolean));
+    } finally { try { conn.close(); } catch {} }
+  }
+
+  // Players the user handled by hand (sold, fired, moved) are no longer on the account: they leave
+  // the list instead of failing every try (user 2026-11-26). Returns the ids still there.
+  async _stillThere(accountId, ids, { also = null } = {}) {
+    const have = await this._rosterIds(accountId).catch(() => null);
+    if (!have) return { here: ids, moved: [] };
+    const here = ids.filter(id => have.has(id));
+    const moved = also ? ids.filter(id => !have.has(id) && also.has(id)) : [];
+    const gone = ids.filter(id => !have.has(id) && !moved.includes(id));
+    if (gone.length) {
+      const names = gone.map(id => this._rowName(accountId, id)).join(', ');
+      this._dropDrafted(accountId, gone);
+      this._log('info', 'df.gone', { names, count: gone.length }, `${names} · no longer on this account (handled by hand) · taken off the list`, accountId);
+    }
+    return { here, moved };
+  }
+
   _dropDrafted(accountId, ids) {
     const drafted = this._drafted();
     drafted[accountId] = (drafted[accountId] || []).filter(p => !ids.includes(p.id));
@@ -520,9 +552,11 @@ class DraftService {
   // Satılabilir / Stok of the automatic draft (user 2026-11-24): to a Harcayıcı, which puts them on
   // the market at Auto Trade's price. `spenderId` = the drafting account itself: it only lists.
   async toSpender(accountId, spenderId, playerIds) {
-    const ids = [...new Set(playerIds || [])];
+    let ids = [...new Set(playerIds || [])].filter(id => (this._drafted()[accountId] || []).some(r => r.id === id));
+    if (!ids.length) return 0; // nothing left on the list (handled by hand)
+    ids = (await this._stillThere(accountId, ids)).here;
+    if (!ids.length) return 0;
     const rows = (this._drafted()[accountId] || []).filter(r => ids.includes(r.id));
-    if (!rows.length) throw new Error('Player not found.');
     const names = rows.map(r => r.name).join(', ');
     if (spenderId !== accountId) {
       const sp = this._accounts().find(a => a.id === spenderId);
@@ -556,15 +590,34 @@ class DraftService {
     const side = accounts.find(a => a.id === accountId);
     const main = accounts.find(a => a.id === mainId);
     if (!side || !main) throw new Error('Account not found.');
-    const ids = [...new Set(playerIds || [])];
-    if (!ids.length) throw new Error('Player not found.');
-    const names = ids.map(id => this._rowName(accountId, id)).join(', ');
+    let ids = [...new Set(playerIds || [])].filter(id => (this._drafted()[accountId] || []).some(r => r.id === id));
+    if (!ids.length) return this.snapshot(); // nothing left on the list (handled by hand)
     const m = await TradeGameAccount.open({ account: main, sessions: this.sessions, createSocket: this.createSocket });
     const s = null, roomId = null;
+    let names = '';
     try {
+      const mr = (await m.roster().catch(() => null))?.players || {};
+      const onMain = new Set([...(mr.starters || []), ...(mr.bench || [])].map(p => p.id));
+      let give = [], made = [];
       if (accountId !== mainId) {
-        await this._give(accountId, main, m, ids);
-        this._log('success', 'df.toMain', { names, main: main.name }, `${names} → ${main.name}`, accountId);
+        // moved to main by hand: only the Make; gone from both: off the list
+        const { here, moved } = await this._stillThere(accountId, ids, { also: onMain });
+        made = moved;
+        // main's roster has 11 places: as many as fit go now, the rest next time
+        const free = Math.max(0, ROSTER_LIMIT - onMain.size);
+        give = here.slice(0, free);
+        if (here.length && !give.length && !made.length) { const e = new Error(`${main.name}'s roster is full (${onMain.size}/${ROSTER_LIMIT}) · make room on main and the players are moved by themselves`); e.code = 'MAIN_FULL'; throw e; }
+      } else {
+        made = ids.filter(id => onMain.has(id));
+        const gone = ids.filter(id => !onMain.has(id));
+        if (gone.length) this._dropDrafted(accountId, gone);
+      }
+      ids = [...give, ...made];
+      if (!ids.length) return this.snapshot();
+      names = ids.map(id => this._rowName(accountId, id)).join(', ');
+      if (give.length) {
+        await this._give(accountId, main, m, give);
+        this._log('success', 'df.toMain', { names, main: main.name }, `${give.map(id => this._rowName(accountId, id)).join(', ')} → ${main.name}`, accountId);
       }
       const r = await m.makeCards(ids);
       if (!r?.success) {
@@ -574,7 +627,7 @@ class DraftService {
       this._log('success', 'df.carded', { names, count: ids.length }, `${ids.length} drafted player(s) turned into star cards · ${names}`, mainId);
       this._dropDrafted(accountId, ids);
     } catch (error) {
-      this._log('error', 'df.cardFailed', { names, error: error.message }, `Turning into cards failed: ${error.message}`, accountId);
+      this._log(error.code === 'MAIN_FULL' ? 'warning' : 'error', 'df.cardFailed', { names, error: error.message }, `Turning into cards failed: ${error.message}`, accountId);
       throw error;
     } finally {
       if (roomId) s?.cancelRoom(roomId);

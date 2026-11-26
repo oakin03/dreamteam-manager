@@ -31,6 +31,7 @@ const ATTEMPTS_EVERY_MS = 60 * 1000;
 const ROSTER_MAX = 11;
 const ROOM_SIZE = 10;
 const ACTION_RETRY_MS = 30 * 1000;
+const MAIN_FULL_RETRY_MS = 5 * 60 * 1000; // main's roster is full: tried again every 5 min, never given up
 const rand = ([a, b]) => a + Math.floor(Math.random() * (b - a + 1));
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
@@ -103,6 +104,7 @@ class AutoDraftService {
     const ids = cfg.accountIds.filter(id => this._accounts().some(a => a.id === id) && this._userId(id));
     if (!ids.length) throw new Error('Choose at least one account.');
     this.run = { status: 'running', startedAt: new Date(this.now()).toISOString(), accountIds: ids, rooms: {}, accounts: Object.fromEntries(ids.map(id => [id, { state: 'waiting', slot: null, picks: [] }])), picked: 0, attemptsAt: 0 };
+    this._requeueLeftovers();
     await this.draft.watch();
     this._log('info', 'ad.start', { count: ids.length }, `Auto Draft started · ${ids.length} account(s)`);
     this.onChanged();
@@ -124,6 +126,8 @@ class AutoDraftService {
     clearInterval(this.turnTimer); this.turnTimer = null;
     this.run.status = reason === 'done' ? 'done' : 'stopped';
     this.run.finishedAt = new Date(this.now()).toISOString();
+    // rooms still open: what our accounts picked there is handed on all the same
+    for (const room of Object.values(this.run.rooms || {})) if (!room.ended) this._roomEnded(room, { quiet: true }).catch?.(() => {});
     this.draft.unwatch();
     this._log(reason === 'done' ? 'success' : 'warning', reason === 'done' ? 'ad.done' : 'ad.stopped', { picked: this.run.picked }, reason === 'done' ? `Auto Draft finished · ${this.run.picked} player(s) picked` : 'Auto Draft stopped');
     this.onChanged();
@@ -372,7 +376,7 @@ class AutoDraftService {
     this.onChanged();
   }
 
-  async _roomEnded(room) {
+  async _roomEnded(room, { quiet = false } = {}) {
     room.ended = true;
     for (const id of room.ours) {
       if (this.run.accounts[id]) { this.run.accounts[id].state = 'waiting'; this.run.accounts[id].slot = null; }
@@ -382,8 +386,20 @@ class AutoDraftService {
         if (ids.length) this.pending.push({ accountId: id, ids, kind, tries: 0, nextAt: 0 });
       }
     }
-    this._log('info', 'ad.roomDone', { slot: room.slot }, `Room ${room.slot} is over · the picked players are handed on`);
+    if (!quiet) this._log('info', 'ad.roomDone', { slot: room.slot }, `Room ${room.slot} is over · the picked players are handed on`);
     this.onChanged();
+  }
+
+  // drafted rows Auto Draft tagged and that are still on the list (the app was closed before they
+  // were handed on): queued again
+  _requeueLeftovers() {
+    const drafted = this.draft.snapshot?.().drafted || {};
+    for (const [accountId, rows] of Object.entries(drafted)) {
+      for (const kind of ['cards', 'spender', 'fire']) {
+        const ids = rows.filter(r => r.auto === kind && !r.listed && !this.pending.some(p => p.accountId === accountId && p.ids.includes(r.id))).map(r => r.id);
+        if (ids.length) this.pending.push({ accountId, ids, kind, tries: 0, nextAt: 0 });
+      }
+    }
   }
 
   // ---------- after the draft ----------
@@ -391,12 +407,24 @@ class AutoDraftService {
   _processPending() {
     if (this._working || !this.actions) return;
     const job = this.pending.find(p => p.nextAt <= this.now());
-    if (!job) return;
+    if (!job) {
+      // nothing due yet: while Auto Draft is not running nobody else looks again, so wake up then
+      if (this.pending.length && this.run?.status !== 'running' && !this.pendingTimer) {
+        const at = Math.min(...this.pending.map(p => p.nextAt));
+        this.pendingTimer = setTimeout(() => { this.pendingTimer = null; this._processPending(); }, Math.max(1000, at - this.now()));
+        this.pendingTimer.unref?.();
+      }
+      return;
+    }
     this._working = true;
     this._runJob(job).finally(() => { this._working = false; this.onChanged(); if (this.pending.length && !(this.run?.status === 'running')) setTimeout(() => this._processPending(), 1000); });
   }
   async _runJob(job) {
     const mainId = this.store.getAccountProfile?.()?.mainAccountId;
+    // players taken off the list (handled by hand) are not handed on
+    const listed = new Set((this.draft.snapshot().drafted?.[job.accountId] || []).map(r => r.id));
+    job.ids = job.ids.filter(id => listed.has(id));
+    if (!job.ids.length) { this.pending = this.pending.filter(p => p !== job); return; }
     try {
       if (job.kind === 'cards') {
         if (!mainId) throw new Error('No Main account is set.');
@@ -410,6 +438,7 @@ class AutoDraftService {
       this.pending = this.pending.filter(p => p !== job);
       this.capRelief(job.accountId);
     } catch (error) {
+      if (error.code === 'MAIN_FULL') { job.nextAt = this.now() + MAIN_FULL_RETRY_MS; if (!job.fullLogged) { job.fullLogged = true; this._log('warning', 'ad.mainFull', { error: error.message }, error.message, job.accountId); } return; }
       job.tries += 1;
       job.nextAt = this.now() + ACTION_RETRY_MS;
       if (job.tries >= 10) { this.pending = this.pending.filter(p => p !== job); this._log('error', 'ad.handFailed', { error: error.message }, `Drafted players could not be handed on: ${error.message} · they stay in the Draft list`, job.accountId); }
@@ -433,7 +462,7 @@ class AutoDraftService {
     return accountId;
   }
 
-  shutdown() { clearTimeout(this.timer); this.timer = null; clearInterval(this.turnTimer); this.turnTimer = null; }
+  shutdown() { clearTimeout(this.pendingTimer); this.pendingTimer = null; clearTimeout(this.timer); this.timer = null; clearInterval(this.turnTimer); this.turnTimer = null; }
 }
 
 module.exports = { AutoDraftService };

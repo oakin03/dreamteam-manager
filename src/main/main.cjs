@@ -1104,6 +1104,7 @@ function initServices() {
   chat = new ChatService({ store, activity, gameHealth, sessions: gameSessions, onChanged: emitState });
   draft = new DraftService({
     store, activity, gameHealth, sessions: gameSessions, accountProfile, onChanged: emitState, onAttention: autoTradeAttention,
+    quietFor: id => Boolean(autoDraft?.worksWith?.(id)),
     // Auto Trade's pricing for a drafted player (its Stok / Satılabilir price, the discounted one
     // when it was signed at the 5% cut)
     priceOf: (row, accountId) => { const r = autoTrade?._listPrice?.({ id: row.id, baseSalary: row.value, signedSalary: row.salary ?? row.value }, accountId); return r && !r.fire ? { price: r.price, currency: r.currency } : null; }

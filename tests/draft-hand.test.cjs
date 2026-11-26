@@ -57,3 +57,19 @@ test('draft: prices come from the given pricing, queued rows are listed and hand
   draft.queueCards('S', ['d2'], false);
   assert.deepEqual(draft.queuedCards(), {});
 });
+
+test('draft: a player handled by hand (no longer on the account) leaves the list instead of failing', async () => {
+  const { draft, world, data, logs } = setup({ M: {}, S: { bench: [player('d1', 100)] } }, { S: [row('d1'), row('d2')] });
+  await draft.toCards('S', ['d1', 'd2']);
+  assert.deepEqual(world.users.M.made, ['d1']);
+  assert.equal(data().drafted.S, undefined, 'd1 made into a card, d2 off the list');
+  assert.ok(logs.some(l => l.code === 'df.gone'));
+  assert.ok(!logs.some(l => l.code === 'df.cardFailed'));
+});
+
+test('draft: main with a full roster gets nothing and says so (the players wait)', async () => {
+  const full = Array.from({ length: 11 }, (_, i) => player('m' + i, 100));
+  const { draft, data } = setup({ M: { bench: full }, S: { bench: [player('d1', 100)] } }, { S: [row('d1')] });
+  await assert.rejects(draft.toCards('S', ['d1']), e => e.code === 'MAIN_FULL');
+  assert.deepEqual(data().drafted.S.map(p => p.id), ['d1']);
+});
