@@ -98,6 +98,8 @@ const isFmEntry = m => m?.type === 'FM' || /^fm-/.test(String(m?.match_id || '')
 const reasonOf = r => String(r?.error || r?.message || 'rejected');
 const CAP_RE = /salary cap/i;
 
+const MATCH_WAIT_MS = 15 * 60 * 1000; // a running Quick Play match is waited for this long before a party
+
 class DailyRoutineService {
   constructor({ store, activity, sessions, onChanged, createSocket, fetchImpl = (...a) => fetch(...a), now = () => Date.now(), timing = {} }) {
     this.store = store;
@@ -709,6 +711,19 @@ class DailyRoutineService {
     const ours = this._ourUserIds();
     const tried = new Set();
     let party = await this._myParty(sim, userId, signal);
+    // a Quick Play match still running (Auto Play was paused for the routine a moment ago, or the
+    // account was started later): a party cannot be made or joined until it ends (2026-11-27:
+    // "Create party: … is already in a match" on many accounts)
+    const matchEnd = async () => {
+      const until = this.now() + MATCH_WAIT_MS;
+      while ((await sim.ack('getUserActiveMatch', { userId }, { signal }).catch(() => null))?.match) {
+        if (this.now() >= until) return false;
+        this._step(account, 'gmWaitMatch');
+        await sleep(pollMs, signal);
+      }
+      return true;
+    };
+    if (!party) await matchEnd();
     try {
       while (this.now() < deadline) {
         if (!party) {
@@ -737,7 +752,9 @@ class DailyRoutineService {
           }
           if (!party) {
             // not cut short by a stop: a party created meanwhile must still be left
-            const r = await sim.ack('createParty', { userId });
+            let r = await sim.ack('createParty', { userId });
+            // in a match after all: wait for its end and try once more
+            if (!r?.success && /already in a match|in a match|in match/i.test(reasonOf(r)) && await matchEnd()) r = await sim.ack('createParty', { userId });
             if (!r?.success) throw new Error(`Create party: ${reasonOf(r)}`);
             party = r.party || await this._myParty(sim, userId, signal);
             this._log(account, 'info', 'dr.gmCreated', {}, 'No joinable party · created a Group Match party');

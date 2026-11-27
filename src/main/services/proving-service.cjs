@@ -1,6 +1,6 @@
 const { GameSocket } = require('./game-socket.cjs');
 const { handleInjury, InjuredError } = require('./injury-guard.cjs');
-const { WIDE, eachAtOnce, eachWithSocket } = require('./wide.cjs');
+const { WIDE, eachAtOnce, eachWithSocket, eachStaggered } = require('./wide.cjs');
 const { isNetError } = require('./game-health.cjs');
 const { matchStartSlot } = require('./match-start-gate.cjs');
 
@@ -123,8 +123,10 @@ class ProvingBase {
     this._log(null, 'info', 'start', { count: ids.length }, `${this.taskName} started · ${ids.length} account(s)`);
     this.onChanged();
     try {
-      // at most WIDE (200) accounts at once, the next starts when one is over (user 2026-11-25: 1141 at once → the game stopped answering)
-      await eachAtOnce(ids, id => this._safe(id, controller.signal), WIDE);
+      // at most WIDE (200) accounts STARTING at once: the next 200 start as soon as these have
+      // their first match, not when their whole run is over (user 2026-11-25 → 11-27)
+      this._started = new Map();
+      await eachStaggered(ids, (id, _i, started) => { this._started.set(id, started); return this._safe(id, controller.signal); }, WIDE);
     } finally {
       signal?.removeEventListener('abort', onAbort);
       this._report(controller.signal.aborted);
@@ -240,6 +242,7 @@ class DailyBossService extends ProvingBase {
         failures = 0;
         const n = this.run.accounts[id].played + 1;
         this._log(id, 'info', 'matchStarted', { n, boss: boss.name }, `Daily Boss match ${n} started · ${boss.name}`);
+        this._started?.get(id)?.();
         const clearsBefore = info.clears[boss.id] || 0;
         await this._waitMatchEnd(id, userId, signal);
         info = await this._readBoss(id, userId, signal);
@@ -351,6 +354,7 @@ class EliteAscentService extends ProvingBase {
         const n = this.run.accounts[id].played + 1;
         const floor = info.floor;
         this._log(id, 'info', 'matchStarted', { n, floor, enemy: info.enemy || '?' }, `Elite Ascent match ${n} started · floor ${floor}`);
+        this._started?.get(id)?.();
         await this._waitMatchEnd(id, userId, signal);
         info = await this._readAscent(id, gs, signal);
         const won = info.floor > floor;
@@ -712,6 +716,7 @@ class ProfessionalService extends ProvingBase {
         const stage = info.stage;
         const before = info;
         this._log(id, 'info', 'matchStarted', { n, stage, enemy: opponent.name }, `Professional match ${n} started · ${stage} · ${opponent.name}`);
+        this._started?.get(id)?.();
         await this._waitMatchEnd(id, userId, signal);
         const ladder = ['hof', 'honor', 'legacy'].includes(stage);
         const winner = ladder ? null : await this._winner(gs, userId, stage, before.next.id, signal);

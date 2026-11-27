@@ -147,7 +147,7 @@ test('plan: equipped gear is never used, missing pieces are crafted (also gear m
   const g = gearRows({ inventory: inv, players: [] });
   const plan = planCollection(collectionRows([SET])[0], g, recipeRows(RECIPES), materialSummary(inv));
   assert.deepEqual(plan.steps.map(s => `${s.kind}:${s.name}${s.to != null ? `+${s.to}` : ''}`), ['craft:Starter Jersey', 'enhance:Starter Jersey+2', 'craft:Starter Shoes']);
-  assert.deepEqual(plan.short, [{ name: 'Common Fabric', need: 40, have: 30 }]);
+  assert.deepEqual(plan.short, [{ name: 'Common Fabric', need: 40, have: 30 }, { name: 'Common Refine Stone', need: 2, have: 0 }], 'no stone for the +2: short too');
   assert.equal(plan.ok, false);
   const legend = { id: 's2', name: 'Legend', items: [{ slot: 'SHOES', minLevel: 0, item: { id: 'it-legend', name: "Legend's Shoes" } }], isCompleted: false, registeredSlots: [], availableSlots: [] };
   const p2 = planCollection(collectionRows([legend])[0], g, recipeRows(RECIPES), materialSummary(inv));
@@ -261,4 +261,14 @@ test('dismantle: only pieces below BOTH limits and not worn (user 2026-11-18: +7
   assert.deepEqual(dismantlePick(gear, 7, 'epic').map(x => x.id), ['rare6', 'common0'], 'rarity case does not matter');
   assert.deepEqual(dismantlePick(gear, 7, 'NOPE'), []);
   assert.deepEqual(dismantlePick(gear, 1, 'MYTHIC').map(x => x.id), ['common0']);
+});
+
+test('plan: fewer Refine Stones than the levels to climb stops the set before anything is crafted', () => {
+  const inv = [mat('m1', 'Common Fabric', 'COMMON', 100), mat('st', 'Common Refine Stone', 'COMMON', 1)];
+  const g = gearRows({ inventory: inv, players: [] });
+  const plan = planCollection(collectionRows([SET])[0], g, recipeRows(RECIPES), materialSummary(inv));
+  assert.equal(plan.ok, false);
+  assert.deepEqual(plan.short.find(x => /Refine Stone/.test(x.name)), { name: 'Common Refine Stone', need: 2, have: 1 });
+  const inv2 = [mat('m1', 'Common Fabric', 'COMMON', 100), mat('st', 'Common Refine Stone', 'COMMON', 5)];
+  assert.equal(planCollection(collectionRows([SET])[0], gearRows({ inventory: inv2, players: [] }), recipeRows(RECIPES), materialSummary(inv2)).ok, true);
 });

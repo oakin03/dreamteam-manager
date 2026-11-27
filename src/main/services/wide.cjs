@@ -29,4 +29,21 @@ async function eachWithSocket(items, open, fn, { limit = WIDE, onError = null } 
   }));
 }
 
-module.exports = { WIDE, eachAtOnce, eachWithSocket };
+// Long match runs (Go-up, PVP, Tower, Daily Boss…; user 2026-11-27): only the START is limited.
+// At most `limit` accounts are starting at the same time; an account frees its place as soon as
+// it calls `started()` (its first match began) or ends, so the next group starts while the first
+// one is still playing — every account ends up playing at once, none waits for another's run.
+async function eachStaggered(items, fn, limit = WIDE) {
+  let active = 0;
+  const waiters = [];
+  const acquire = () => (active < limit ? (active++, Promise.resolve()) : new Promise(resolve => waiters.push(resolve)));
+  const release = () => { const next = waiters.shift(); if (next) next(); else active--; };
+  await Promise.all([...(items || [])].map(async (item, i) => {
+    await acquire();
+    let held = true;
+    const started = () => { if (held) { held = false; release(); } };
+    try { await fn(item, i, started); } catch {} finally { started(); }
+  }));
+}
+
+module.exports = { WIDE, eachAtOnce, eachWithSocket, eachStaggered };

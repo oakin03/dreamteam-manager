@@ -1,5 +1,5 @@
 const { GameSocket } = require('./game-socket.cjs');
-const { WIDE, eachAtOnce } = require('./wide.cjs');
+const { WIDE, eachAtOnce, eachStaggered } = require('./wide.cjs');
 const { handleInjury, InjuredError } = require('./injury-guard.cjs');
 const { isNetError } = require('./game-health.cjs');
 const { matchStartSlot } = require('./match-start-gate.cjs');
@@ -86,8 +86,10 @@ class TowerService {
     this._log(null, 'info', 'tw.start', { count: ids.length }, `Tower started · ${ids.length} account(s)`);
     this.onChanged();
     try {
-      // at most WIDE (200) accounts at once, the next starts when one is over (user 2026-11-25: 1141 at once → the game stopped answering)
-      await eachAtOnce(ids, id => this._account(id, this.controllers.get(id).signal), WIDE);
+      // at most WIDE (200) accounts STARTING at once: the next 200 start as soon as these have
+      // their first match, not when their whole run is over (user 2026-11-25 → 11-27)
+      this._started = new Map();
+      await eachStaggered(ids, (id, _i, started) => { this._started.set(id, started); return this._account(id, this.controllers.get(id).signal); }, WIDE);
     } finally {
       this.store.saveTowerReport?.(this._report());
       this.controllers.clear();
@@ -183,6 +185,7 @@ class TowerService {
         const floorBefore = t.floor;
         this._row(id, { status: 'playing', tower: t.label, floor: t.floor });
         this._log(id, 'info', 'tw.matchStarted', { tower: t.label, floor: t.floor }, `${t.label} floor ${t.floor} started`);
+        this._started?.get(id)?.();
         await this._waitEnd(id, conn, signal, r.matchId);
         data = await this._towerData(conn, signal);
         this._applyData(id, data);

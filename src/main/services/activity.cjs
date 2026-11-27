@@ -6,6 +6,17 @@ const path = require('path');
 // also appended to a daily archive file logs/YYYY-MM-DD.jsonl (Turkey date) so older
 // days can be read back, searched and exported. Archives older than KEEP_DAYS are removed.
 const KEEP_DAYS = 30;
+// Routine step entries that piled up to 450 000 lines / 147 MB a day with 1141 accounts (user
+// 2026-11-27: "gereksiz kayıtları azaltalım"): they are only counted (the Daily Summary reads the
+// counts from logs/YYYY-MM-DD.tally.json), never listed or archived.
+const TALLY_ONLY = new Set([
+  'qp.own',                                             // Quick Play paired with one of our accounts
+  'eq.enhanced', 'eq.enhanceFailed',                    // every enhance step (eq.enhanceDone stays)
+  'rt.timeout', 'rt.strategy', 'rt.sub', 'rt.attached', // rotation details (rt.done stays)
+  'gu.queued', 'gu.matchStarted',                       // Go-up steps (gu.matchDone stays)
+  'st.levelUp', 'mk.scanned', 'sy.ok'                   // per-account routine successes
+]);
+const TALLY_FLUSH_MS = 10000;
 const trDay = (ms = Date.now()) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Istanbul' }).format(new Date(ms));
 
 class ActivityService {
@@ -14,6 +25,8 @@ class ActivityService {
     this.onChanged = onChanged;
     this.logDir = logDir;
     this.buffer = [];
+    this.tallies = new Map(); // day -> { codes: { code: { n, acc: { name: n } } } } not yet written
+    this.tallyTimer = null;
     this.flushTimer = null;
     if (logDir) { try { fs.mkdirSync(logDir, { recursive: true }); this._prune(); } catch {} }
   }
@@ -25,6 +38,7 @@ class ActivityService {
   // `code` + `params` let the page show the entry in the selected language;
   // `message` stays as the English fallback.
   add({ level = 'info', accountId = null, accountName = '', taskId = null, taskName = '', message, alertType = null, code = null, params = null }) {
+    if (code && TALLY_ONLY.has(code) && level !== 'error') { this.tally(code, accountName, params); return; }
     const settings = this.store.getSettings();
     const max = Number(settings.maxActivityEntries || 500);
     const items = this.store.getActivity();
@@ -51,6 +65,40 @@ class ActivityService {
     this.onChanged?.();
   }
 
+  // Counts one routine entry of the day (no line in the list or the archive).
+  tally(code, accountName = '', params = null) {
+    if (!this.logDir || this.store.frozen) return;
+    const { amountOf } = require('./daily-summary.cjs');
+    const n = amountOf(code, params || {});
+    const day = trDay();
+    const t = this.tallies.get(day) || { codes: {} };
+    const c = (t.codes[code] ||= { n: 0, acc: {} });
+    c.n += n;
+    if (accountName) c.acc[accountName] = (c.acc[accountName] || 0) + n;
+    this.tallies.set(day, t);
+    if (!this.tallyTimer) { this.tallyTimer = setTimeout(() => this.flushTallies(), TALLY_FLUSH_MS); this.tallyTimer.unref?.(); }
+  }
+
+  tallyFile(day) { return path.join(this.logDir, `${day}.tally.json`); }
+
+  flushTallies() {
+    clearTimeout(this.tallyTimer);
+    this.tallyTimer = null;
+    if (!this.logDir || !this.tallies.size) return;
+    for (const [day, add] of this.tallies) {
+      const file = this.tallyFile(day);
+      let cur = { codes: {} };
+      try { cur = JSON.parse(fs.readFileSync(file, 'utf8')); } catch {}
+      for (const [code, c] of Object.entries(add.codes)) {
+        const into = (cur.codes[code] ||= { n: 0, acc: {} });
+        into.n += c.n;
+        for (const [name, v] of Object.entries(c.acc)) into.acc[name] = (into.acc[name] || 0) + v;
+      }
+      try { fs.writeFileSync(file + '.tmp', JSON.stringify(cur)); fs.renameSync(file + '.tmp', file); } catch {}
+    }
+    this.tallies.clear();
+  }
+
   // ---------- daily archive ----------
   _archive(entry) {
     if (!this.logDir || this.store.frozen) return;
@@ -62,6 +110,7 @@ class ActivityService {
   }
 
   flushArchive() {
+    this.flushTallies();
     clearTimeout(this.flushTimer);
     this.flushTimer = null;
     if (!this.logDir || !this.buffer.length || this.store.frozen) { this.buffer = []; return; }
@@ -119,9 +168,10 @@ class ActivityService {
       if (keep.has(day)) continue;
       const file = path.join(this.logDir, `${day}.jsonl`);
       try { const size = fs.statSync(file).size; fs.unlinkSync(file); out.files++; out.bytes += size; } catch {}
+      try { const t = this.tallyFile(day); const size = fs.statSync(t).size; fs.unlinkSync(t); out.bytes += size; } catch {}
     }
     return out;
   }
 }
 
-module.exports = { ActivityService, trDay, KEEP_DAYS };
+module.exports = { ActivityService, trDay, KEEP_DAYS, TALLY_ONLY };

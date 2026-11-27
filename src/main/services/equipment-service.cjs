@@ -153,6 +153,15 @@ function planCollection(collection, gear, recipes, materials) {
     return (materials.other.find(o => o.name === name)?.quantity) || 0;
   };
   const short = Object.entries(need).filter(([n, q]) => owned(n) < q).map(([n, q]) => ({ name: n, need: q, have: owned(n) }));
+  // Refine Stones: every + level costs at least one (a failed try costs one too). Fewer stones than
+  // the levels to climb cannot work, so nothing is crafted for it (user 2026-11-27: the sets after
+  // the stones ran out still crafted and tried)
+  const climb = {};
+  for (const st of steps) if (st.kind === 'enhance' && st.rarity) climb[st.rarity] = (climb[st.rarity] || 0) + Math.max(0, st.to - st.from);
+  for (const [rarity, levels] of Object.entries(climb)) {
+    const have = materials.stone ? (materials.stone[String(rarity).toUpperCase()] || 0) : null;
+    if (have != null && have < levels) short.push({ name: `${rarity.charAt(0).toUpperCase()}${rarity.slice(1).toLowerCase()} Refine Stone`, need: levels, have });
+  }
   return { pieces, steps, materials: need, short, missing, ok: !missing.length && !short.length };
 }
 

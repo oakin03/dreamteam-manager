@@ -123,8 +123,12 @@ class TaskEngine {
   }
 
   buildRuntime(account, manifest, worker, signal) {
-    const log = (level, message) => {
+    // `{ quiet: true }`: only the account's status line (no Activity entry); `{ tally: code }`:
+    // counted for the Daily Summary, no entry (user 2026-11-27: fewer routine log lines)
+    const log = (level, message, { quiet = false, tally = null } = {}) => {
       worker.message = String(message);
+      if (tally) this.activity.tally?.(tally, account.name);
+      if (quiet || tally) { this.onChanged?.(); return; }
       this.activity.add({
         level,
         accountId: account.id,
@@ -237,14 +241,7 @@ class TaskEngine {
     }));
     this.onChanged?.();
 
-    this.activity.add({
-      level: 'warning',
-      accountId,
-      accountName: account.name,
-      taskId,
-      taskName: manifest.name,
-      message: `Preparing ${manifest.name}…`
-    });
+    // "Preparing …" is only the account's status line now (one line per restart was noise)
 
     try {
       const preparedData = await plugin.prepare({
@@ -261,14 +258,6 @@ class TaskEngine {
       entry.preparedData = preparedData;
       entry.mode = preparedData?.mode === 'socket' ? '' : (preparedData?.mode || '');
       entry.message = 'Ready to start';
-      this.activity.add({
-        level: 'success',
-        accountId,
-        accountName: account.name,
-        taskId,
-        taskName: manifest.name,
-        message: `${manifest.name} is ready.`
-      });
       this.onChanged?.();
       return true;
     } catch (error) {

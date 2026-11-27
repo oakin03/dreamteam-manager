@@ -49,3 +49,28 @@ test('a day file is read line by line with the same result', async () => {
     assert.equal((await summarizeFile(file + '.none')).pvp, 0);
   } finally { fs.unlinkSync(file); }
 });
+
+test('routine entries are only counted: no line, the Daily Summary still sees them', async () => {
+  const { ActivityService } = require('../src/main/services/activity.cjs');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tally-'));
+  let list = [];
+  const store = { getSettings: () => ({}), getActivity: () => list, saveActivity: v => { list = v; } };
+  const act = new ActivityService(store, () => {}, { logDir: dir });
+  try {
+    act.add({ level: 'success', accountName: 'D1', taskName: 'Market', code: 'mk.scanned', message: 'x' });
+    act.add({ level: 'info', accountName: 'D1', taskName: 'Rotasyon', code: 'rt.sub', params: { count: 3 }, message: 'x' });
+    act.tally('qp.own', 'D1'); act.tally('qp.own', 'D2');
+    act.add({ level: 'info', accountName: 'D1', taskName: 'PVP', code: 'pvp.matchStarted', message: 'x' });
+    assert.equal(list.length, 1, 'only the PVP entry is listed');
+    act.flushArchive();
+    const day = act.days()[0];
+    const s = await summarizeFile(path.join(dir, `${day}.jsonl`));
+    assert.equal(s.stats.marketScans.n, 1);
+    assert.equal(s.stats.rotationSubs.n, 3);
+    assert.equal(s.quickPlay, 2);
+    assert.equal(s.stats.quickPlay.accounts, 2);
+    assert.equal(s.pvp, 1);
+    assert.equal(s.perAccount.D2.quickPlay, 1);
+    act.prune(0);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});

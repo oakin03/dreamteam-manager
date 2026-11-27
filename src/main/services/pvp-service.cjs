@@ -1,6 +1,6 @@
 const { GameSocket } = require('./game-socket.cjs');
 const { handleInjury, InjuredError } = require('./injury-guard.cjs');
-const { WIDE, eachAtOnce, eachWithSocket } = require('./wide.cjs');
+const { WIDE, eachAtOnce, eachWithSocket, eachStaggered } = require('./wide.cjs');
 const { isNetError } = require('./game-health.cjs');
 
 // PVP Arena over the game's sockets (captured 2026-10-22):
@@ -113,8 +113,10 @@ class PvpService {
     this._log(null, 'info', 'pvp.start', { count: ids.length }, `PVP started · ${ids.length} account(s)`);
     this.onChanged();
     try {
-      // at most WIDE (200) accounts at once, the next starts when one is over (user 2026-11-25: 1141 at once → the game stopped answering)
-      await eachAtOnce(ids, id => this._account(id, controller.signal), WIDE);
+      // at most WIDE (200) accounts STARTING at once: the next 200 start as soon as these have
+      // their first match, not when their whole run is over (user 2026-11-25 → 11-27)
+      this._started = new Map();
+      await eachStaggered(ids, (id, _i, started) => { this._started.set(id, started); return this._account(id, controller.signal); }, WIDE);
     } finally {
       signal?.removeEventListener('abort', onAbort);
       const report = this._report(controller.signal.aborted);
@@ -263,6 +265,7 @@ class PvpService {
         const n = this.run.accounts[id].played + 1;
         this._row(id, { status: 'playing', played: n, message: 'pvp' });
         this._log(id, 'info', 'pvp.matchStarted', { n, left: left == null ? '?' : left - 1 }, `PVP match ${n} started`);
+        this._started?.get(id)?.();
         // The match shows up shortly after the find; then wait for it to end (the
         // button is FIND PVP MATCH again).
         const appearUntil = this.now() + this.timing.appearGraceMs;

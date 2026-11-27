@@ -1,6 +1,6 @@
 const { GameSocket } = require('./game-socket.cjs');
 const { handleInjury, InjuredError } = require('./injury-guard.cjs');
-const { WIDE, eachAtOnce, eachWithSocket } = require('./wide.cjs');
+const { WIDE, eachAtOnce, eachWithSocket, eachStaggered } = require('./wide.cjs');
 const { isNetError } = require('./game-health.cjs');
 
 // Go-up over the game's sockets (read from the game client 2026-10-23):
@@ -178,10 +178,12 @@ class GoUpService {
     this._log(null, 'info', 'gu.start', { count: ids.length, mode: this.run.mode, gap }, `Go-up started · ${ids.length} account(s)${gap ? ` · ${gap} s apart` : ''}`);
     this.onChanged();
     try {
-      // at most WIDE (200) accounts at once, the next starts when one is over (user 2026-11-25: 1141 at once → the game stopped answering)
+      // at most WIDE (200) accounts STARTING at once: the next 200 start as soon as these have
+      // their first match, not when their whole run is over (user 2026-11-25 → 11-27)
       // (one after another with a gap keeps its own timing: every account waits i × gap from the start)
+      this._started = new Map();
       if (gap) await Promise.all(ids.map((id, i) => this._account(id, controller.signal, i * gap * 1000)));
-      else await eachAtOnce(ids, id => this._account(id, controller.signal, 0), WIDE);
+      else await eachStaggered(ids, (id, _i, started) => { this._started.set(id, started); return this._account(id, controller.signal, 0); }, WIDE);
     } finally {
       signal?.removeEventListener('abort', onAbort);
       const report = this._report(controller.signal.aborted);
@@ -287,6 +289,7 @@ class GoUpService {
             until = this.now() + this.timing.matchMaxMs;
             this._row(id, { status: 'playing', played: n, matchStartedAt: new Date(this.now()).toISOString(), opponent: (m.host === userId ? m.opponentName : m.hostName) || null });
             this._log(id, 'info', 'gu.matchStarted', { n, opponent: this.run.accounts[id].opponent || '?' }, `Go-up match ${n} started`);
+            this._started?.get(id)?.();
           }
           if (this.now() > until) throw new Error('The match did not end in time.');
           await sleep(this.timing.pollMs, signal);

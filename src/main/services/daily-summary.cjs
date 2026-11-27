@@ -6,7 +6,7 @@ const n = v => Number(v) || 0;
 const isTix = p => String(p?.currency || '').toUpperCase() === 'TIX';
 const STATS = {
   // matches
-  quickPlay: { codes: ['qp.started'] },
+  quickPlay: { codes: ['qp.started', 'qp.own'] },
   pvp: { codes: ['pvp.matchStarted'] },
   towerWins: { codes: ['tw.won'] },
   towerLosses: { codes: ['tw.lost'] },
@@ -85,6 +85,31 @@ for (const [key, spec] of Object.entries(STATS)) for (const c of spec.codes) BY_
 // the per-account table
 const ACCOUNT_KEYS = ['quickPlay', 'pvp', 'towerWins', 'goUp', 'draftPicks', 'listed', 'bought', 'sales', 'quiz', 'dailyReward'];
 
+// what one entry of `code` adds (the tally of counted-only entries uses the same rule)
+function amountOf(code, params = {}) {
+  const keys = BY_CODE.get(code);
+  if (!keys) return 1;
+  const spec = STATS[keys[0]];
+  return spec.count ? spec.count(params) : 1;
+}
+
+// counted-only entries of the day (logs/YYYY-MM-DD.tally.json)
+function addTally(s, tally) {
+  for (const [code, c] of Object.entries(tally?.codes || {})) {
+    for (const key of BY_CODE.get(code) || []) {
+      s.stats[key].n += Number(c.n) || 0;
+      const seen = (s._acc[key] ||= new Set());
+      for (const [name, v] of Object.entries(c.acc || {})) {
+        seen.add(name);
+        if (ACCOUNT_KEYS.includes(key)) {
+          const a = (s.perAccount[name] ||= Object.fromEntries(ACCOUNT_KEYS.map(k => [k, 0])));
+          a[key] += Number(v) || 0;
+        }
+      }
+    }
+  }
+}
+
 function createSummary() {
   const s = { errors: 0, warnings: 0, stats: {}, perAccount: {}, _acc: {} };
   for (const key of Object.keys(STATS)) s.stats[key] = { n: 0, accounts: 0, sums: {} };
@@ -144,6 +169,7 @@ async function summarizeFile(file) {
   const fs = require('fs');
   const readline = require('readline');
   const s = createSummary();
+  try { addTally(s, JSON.parse(fs.readFileSync(file.replace(/\.jsonl$/, '.tally.json'), 'utf8'))); } catch {}
   if (!fs.existsSync(file)) return finishSummary(s);
   const rl = readline.createInterface({ input: fs.createReadStream(file, { encoding: 'utf8' }), crlfDelay: Infinity });
   let i = 0;
@@ -155,4 +181,4 @@ async function summarizeFile(file) {
   return finishSummary(s);
 }
 
-module.exports = { summarize, summarizeFile, STATS, ACCOUNT_KEYS };
+module.exports = { summarize, summarizeFile, STATS, ACCOUNT_KEYS, amountOf, addTally };

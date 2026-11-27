@@ -253,7 +253,7 @@ tr.row-dragging .row-handle{background:var(--bg-fff1e7);color:var(--fg-b94d08);b
 .relist-msg{max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
 .market-accounts-bar{padding:10px 12px;margin-bottom:12px;display:grid;gap:8px}.market-accounts-bar .toolbar{justify-content:flex-start}
-.listing-section{margin-bottom:16px}.listing-section .section-title{margin-top:6px}
+.listing-section{margin-bottom:16px}.listing-more{display:flex;gap:8px;justify-content:center;padding:10px}.listing-section .section-title{margin-top:6px}
 .listing-filters{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:8px}.listing-filters select,.listing-filters input{height:32px;border:1px solid var(--bd-d7dde6);border-radius:8px;background:var(--bg-ffffff);padding:0 8px;font-size:11.5px;color:var(--fg-253248)}.listing-filters input{min-width:180px}
 .listing-table{max-height:520px}.listing-table thead th.sortable{cursor:pointer}
 .listing-table tr.row-dim td{opacity:.72}.listing-table tr.row-dim td:first-child{opacity:1}

@@ -61,7 +61,7 @@ async function openSocket(ctx, auth) {
     }
   });
   await waitForSocket(socket, ctx.signal, 15000);
-  ctx.log('info', 'Socket connected. Verifying the session…');
+  ctx.log('info', 'Socket connected. Verifying the session…', { quiet: true });
   const probe = await emitAck(socket, 'requestMatchList', undefined, 12000);
   if (!probe || probe.success !== true) {
     socket.disconnect();
@@ -75,10 +75,10 @@ const BROWSER_FAILS_TO_SOCKET = 3; // browser-mode failures in a row before sock
 async function prepareSocketMode(ctx) {
   if (ctx.httpLogin) {
     try {
-      ctx.log('info', 'Signing in (no browser)…');
+      ctx.log('info', 'Signing in (no browser)…', { quiet: true });
       const auth = await ctx.httpLogin();
       const socket = await openSocket(ctx, auth);
-      ctx.log('success', 'Socket mode ready (no browser).');
+      ctx.log('success', 'Socket mode ready (no browser).', { quiet: true });
       return { mode: 'socket', socket, userId: auth.userId };
     } catch (error) {
       if (error?.name === 'AbortError') throw error;
@@ -192,7 +192,7 @@ async function doSocketAction(ctx, prepared) {
   aborted(ctx.signal);
   const { socket, userId } = prepared;
   if (!socket.connected) {
-    ctx.log('warning', 'Socket disconnected; waiting for reconnection…');
+    ctx.log('warning', 'Socket disconnected; waiting for reconnection…', { quiet: true });
     await waitForSocket(socket, ctx.signal, 15000);
   }
 
@@ -208,7 +208,8 @@ async function doSocketAction(ctx, prepared) {
     const opponent = match ? (mine ? match.opponentName : match.hostName) : null;
     const own = Boolean(opponentId && ctx.ownUserIds?.().has(opponentId));
     ctx.setState({ opponent: opponent || null, opponentOwn: own });
-    if (own) ctx.log('warning', `Quick Play paired this account with your own account ${opponent}.`);
+    // paired with one of our accounts (Dummy accounts play each other all day): counted, no line
+    if (own) ctx.log('info', `Quick Play started · vs ${opponent} (own account)`, { tally: 'qp.own' });
     else ctx.log('success', `Quick Play started${opponent ? ` · vs ${opponent}` : ''}.`);
     return true;
   }
@@ -345,7 +346,7 @@ async function run(ctx, prepared) {
     ctx.setState({ message: 'Waiting for the game' });
     await ctx.gameHealth.waitUp();
     if (prepared.socket) { try { prepared.socket.connect(); } catch {} }
-    ctx.log('info', 'The game is reachable again · Quick Play continues.');
+    ctx.log('info', 'The game is reachable again · Quick Play continues.', { quiet: true });
   };
 
   let browserFailures = 0;
@@ -371,7 +372,8 @@ async function run(ctx, prepared) {
       }
       if (error?.name === 'AbortError' || error?.fatal) throw error;
       if (ctx.gameHealth && netError(error)) {
-        ctx.log('warning', `Game not reachable (${error.message}) · waiting, checked every 2 minutes with one connection.`);
+        // the game's outage is logged once for all accounts (gh.down / gh.up)
+        ctx.log('warning', `Game not reachable (${error.message}) · waiting, checked every 2 minutes with one connection.`, { quiet: true });
         ctx.gameHealth.reportDown(error);
         await waitForGame();
         continue;
