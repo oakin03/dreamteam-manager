@@ -72,27 +72,41 @@ class TowerService {
     return this.snapshot();
   }
 
-  async runAndWait(accountIds, { signal } = {}) {
+  // Toplu Başlat: accounts that finished the system before come into the running run
+  addAccounts(accountIds) {
+    if (!this.run || !this._feed || this._feed.closed) return false;
+    const fresh = accountIds.filter(id => !this.run.accounts[id] && this.store.getAccounts().some(a => a.id === id));
+    fresh.forEach(id => this._initRow(id));
+    this._feed.push(fresh);
+    this.onChanged();
+    return true;
+  }
+
+  // `feed` (Toplu Başlat): more accounts may come while it runs; `onAccountDone(id)`
+  async runAndWait(accountIds, { signal, feed = null, onAccountDone = null } = {}) {
     if (this.controllers.size) throw new Error('Tower is already running.');
     const ids = accountIds.filter(id => this.store.getAccounts().some(a => a.id === id));
     if (!ids.length) throw new Error('Select at least one account.');
     this.run = { startedAt: new Date(this.now()).toISOString(), accounts: {} };
-    for (const id of ids) {
+    this._initRow = id => {
       this.run.accounts[id] = { accountId: id, name: this._name(id), status: 'queued', message: null, tower: null, floor: null, towers: [], wins: 0, losses: 0 };
       const c = new AbortController();
       this.controllers.set(id, c);
       signal?.addEventListener('abort', () => c.abort(), { once: true });
-    }
+    };
+    for (const id of ids) this._initRow(id);
+    this._feed = feed;
     this._log(null, 'info', 'tw.start', { count: ids.length }, `Tower started · ${ids.length} account(s)`);
     this.onChanged();
     try {
       // at most WIDE (200) accounts STARTING at once: the next 200 start as soon as these have
       // their first match, not when their whole run is over (user 2026-11-25 → 11-27)
       this._started = new Map();
-      await eachStaggered(ids, (id, _i, started) => { this._started.set(id, started); return this._account(id, this.controllers.get(id).signal); }, WIDE);
+      await eachStaggered(feed || ids, (id, _i, started) => { this._started.set(id, started); return this._account(id, this.controllers.get(id).signal).finally(() => onAccountDone?.(id)); }, WIDE);
     } finally {
       this.store.saveTowerReport?.(this._report());
       this.controllers.clear();
+      this._feed = null;
       this.onChanged();
     }
     return this.snapshot();

@@ -110,7 +110,18 @@ class ProvingBase {
     await sleep(1500, signal); // results are written right after the match
   }
 
-  async runAndWait(plan, { signal, source = 'manual' } = {}) {
+  // `feed` (Toplu Başlat): more accounts may come while it runs (addAccounts); `onAccountDone(id)`
+  // Toplu Başlat: { accountId: target } of accounts that finished the system before
+  addAccounts(plan) {
+    if (!this.run || !this._feed || this._feed.closed) return false;
+    const fresh = Object.keys(plan || {}).filter(id => !this.run.accounts[id] && this.store.getAccounts().some(a => a.id === id));
+    fresh.forEach(id => this._initRow(id, plan[id]));
+    this._feed.push(fresh);
+    this.onChanged();
+    return true;
+  }
+
+  async runAndWait(plan, { signal, source = 'manual', feed = null, onAccountDone = null } = {}) {
     if (this.controller) throw new Error(`${this.taskName} is already running.`);
     const ids = Object.keys(plan).filter(id => this.store.getAccounts().some(a => a.id === id));
     if (!ids.length) throw new Error('Select at least one account.');
@@ -119,19 +130,22 @@ class ProvingBase {
     signal?.addEventListener('abort', onAbort, { once: true });
     this.controller = controller;
     this.run = { startedAt: new Date(this.now()).toISOString(), source, accounts: {} };
-    for (const id of ids) this.run.accounts[id] = { accountId: id, name: this._name(id), status: 'queued', played: 0, won: 0, lost: 0, left: null, target: plan[id], reason: null, last: null };
+    this._initRow = (id, target) => { this.run.accounts[id] = { accountId: id, name: this._name(id), status: 'queued', played: 0, won: 0, lost: 0, left: null, target, reason: null, last: null }; };
+    for (const id of ids) this._initRow(id, plan[id]);
+    this._feed = feed;
     this._log(null, 'info', 'start', { count: ids.length }, `${this.taskName} started · ${ids.length} account(s)`);
     this.onChanged();
     try {
       // at most WIDE (200) accounts STARTING at once: the next 200 start as soon as these have
       // their first match, not when their whole run is over (user 2026-11-25 → 11-27)
       this._started = new Map();
-      await eachStaggered(ids, (id, _i, started) => { this._started.set(id, started); return this._safe(id, controller.signal); }, WIDE);
+      await eachStaggered(feed || ids, (id, _i, started) => { this._started.set(id, started); return this._safe(id, controller.signal).finally(() => onAccountDone?.(id)); }, WIDE);
     } finally {
       signal?.removeEventListener('abort', onAbort);
       this._report(controller.signal.aborted);
       this.controller = null;
       this.run = null;
+      this._feed = null;
       this._closeAnon();
       this.onChanged();
     }

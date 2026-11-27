@@ -163,18 +163,22 @@ class GoUpService {
 
   // Plays Go-up on every account until its daily attempts are used. mode 'parallel'
   // starts all accounts at once; 'staggered' waits gapSec between account starts.
-  async runAndWait(accountIds, { signal, source = 'manual', mode = 'parallel', gapSec = 0 } = {}) {
+  // `feed` (Toplu Başlat): more accounts may come while it runs (addAccounts); `onAccountDone(id)`
+  // is told when an account's run is over
+  async runAndWait(accountIds, { signal, source = 'manual', mode = 'parallel', gapSec = 0, feed = null, onAccountDone = null } = {}) {
     if (this.controller) throw new Error('Go-up is already running.');
     const controller = new AbortController();
     const onAbort = () => controller.abort();
     signal?.addEventListener('abort', onAbort, { once: true });
     this.controller = controller;
     const ids = accountIds.filter(id => this.store.getAccounts().some(a => a.id === id));
-    const gap = mode === 'staggered' ? Math.max(0, Number(gapSec) || 0) : 0;
+    const gap = feed ? 0 : (mode === 'staggered' ? Math.max(0, Number(gapSec) || 0) : 0);
     this.run = { startedAt: new Date(this.now()).toISOString(), source, mode: gap ? 'staggered' : 'parallel', gapSec: gap, accounts: {} };
-    ids.forEach((id, i) => {
+    this._initRow = (id, i = 0) => {
       this.run.accounts[id] = { accountId: id, name: this._name(id), status: 'queued', played: 0, lastDiff: null, attemptsLeft: null, startAt: gap ? new Date(this.now() + i * gap * 1000).toISOString() : null, queuedAt: null, matchStartedAt: null, seasonStart: null, totalStart: null, season: null, total: null, tier: null, reason: null };
-    });
+    };
+    ids.forEach((id, i) => this._initRow(id, i));
+    this._feed = feed;
     this._log(null, 'info', 'gu.start', { count: ids.length, mode: this.run.mode, gap }, `Go-up started · ${ids.length} account(s)${gap ? ` · ${gap} s apart` : ''}`);
     this.onChanged();
     try {
@@ -183,18 +187,29 @@ class GoUpService {
       // (one after another with a gap keeps its own timing: every account waits i × gap from the start)
       this._started = new Map();
       if (gap) await Promise.all(ids.map((id, i) => this._account(id, controller.signal, i * gap * 1000)));
-      else await eachStaggered(ids, (id, _i, started) => { this._started.set(id, started); return this._account(id, controller.signal, 0); }, WIDE);
+      else await eachStaggered(feed || ids, (id, _i, started) => { this._started.set(id, started); return this._account(id, controller.signal, 0).finally(() => onAccountDone?.(id)); }, WIDE);
     } finally {
       signal?.removeEventListener('abort', onAbort);
       const report = this._report(controller.signal.aborted);
       this.store.saveGoUpReport?.(report);
       this.controller = null;
       this.run = null;
+      this._feed = null;
       this._closeAnon();
       this.onChanged();
     }
     if (signal?.aborted) throw abortError();
     return this.snapshot();
+  }
+
+  // Toplu Başlat: accounts that finished the system before come into the running run
+  addAccounts(accountIds) {
+    if (!this.run || !this._feed || this._feed.closed) return false;
+    const fresh = accountIds.filter(id => !this.run.accounts[id] && this.store.getAccounts().some(a => a.id === id));
+    fresh.forEach(id => this._initRow(id));
+    this._feed.push(fresh);
+    this.onChanged();
+    return true;
   }
 
   _report(stopped) {

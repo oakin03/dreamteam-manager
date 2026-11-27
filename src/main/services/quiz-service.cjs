@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { GameSocket } = require('./game-socket.cjs');
-const { eachAtOnce } = require('./wide.cjs');
+const { eachAtOnce, eachStaggered } = require('./wide.cjs');
 
 // Daily Quiz (Office) on /socket/ (read from the game client 2026-10-23):
 //   quiz:canPlay {userId} (ack) -> {success, canPlay}
@@ -92,7 +92,18 @@ class QuizService {
     return true;
   }
 
-  async runAndWait(accountIds, { signal, source = 'manual' } = {}) {
+  // Toplu Başlat: accounts that finished the system before come into the running run
+  addAccounts(accountIds) {
+    if (!this.run || !this._feed || this._feed.closed) return false;
+    const fresh = accountIds.filter(id => !this.run.accounts[id] && this.store.getAccounts().some(a => a.id === id));
+    fresh.forEach(id => this._initRow(id));
+    this._feed.push(fresh);
+    this.onChanged();
+    return true;
+  }
+
+  // `feed` (Toplu Başlat): more accounts may come while it runs; `onAccountDone(id)`
+  async runAndWait(accountIds, { signal, source = 'manual', feed = null, onAccountDone = null } = {}) {
     if (this.controller) throw new Error('Daily Quiz is already running.');
     const controller = new AbortController();
     const onAbort = () => controller.abort();
@@ -100,13 +111,15 @@ class QuizService {
     this.controller = controller;
     const ids = accountIds.filter(id => this.store.getAccounts().some(a => a.id === id));
     this.run = { startedAt: new Date(this.now()).toISOString(), source, accounts: {} };
-    for (const id of ids) this.run.accounts[id] = { accountId: id, name: this._name(id), status: 'queued', number: 0, score: null, correct: 0, auto: 0, byUser: 0, random: 0, learned: 0, question: null, deadline: null, waitUntil: null, last: null, history: [], reason: null };
+    this._initRow = id => { this.run.accounts[id] = { accountId: id, name: this._name(id), status: 'queued', number: 0, score: null, correct: 0, auto: 0, byUser: 0, random: 0, learned: 0, question: null, deadline: null, waitUntil: null, last: null, history: [], reason: null }; };
+    for (const id of ids) this._initRow(id);
+    this._feed = feed;
     this._log(null, 'info', 'qz.start', { count: ids.length, bank: this.bankSize() }, `Daily Quiz started · ${ids.length} account(s) · ${this.bankSize()} known question(s)`);
     this.onChanged();
     try {
       // at most QUIZ_PARALLEL at once (2026-11-24: 1100+ accounts opened together → 555 "Game socket
       // connection timed out"); a timed-out connection is tried again after a short pause
-      await eachAtOnce(ids, id => this._accountRetry(id, controller.signal), QUIZ_PARALLEL);
+      await eachStaggered(feed || ids, id => this._accountRetry(id, controller.signal).finally(() => onAccountDone?.(id)), QUIZ_PARALLEL);
     } finally {
       signal?.removeEventListener('abort', onAbort);
       for (const resolve of this.waiters.values()) resolve(null);
@@ -118,6 +131,7 @@ class QuizService {
       this._log(null, done === rows.length ? 'success' : 'warning', 'qz.summary', { done, total: rows.length, bank: this.bankSize() }, `Daily Quiz result · ${done}/${rows.length} account(s) finished · ${this.bankSize()} known question(s)`);
       this.controller = null;
       this.run = null;
+      this._feed = null;
       this.onChanged();
     }
     if (signal?.aborted) throw abortError();

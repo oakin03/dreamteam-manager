@@ -409,11 +409,16 @@ async function pauseTasksFor(accountIds, taskName, prefix, { keepSocket = false 
   // all of them at once (user 2026-11-12)
   await engine.stopMany(resume.map(r => r.accountId), { reason: `Stopped for ${taskName}`, quiet: true });
   for (const r of resume) activity.add({ level: 'info', accountId: r.accountId, accountName: name(r.accountId), taskName, code: `${prefix}.pausedTask`, params: { task: r.taskName || '' }, message: `${r.taskName} stopped for ${taskName}` });
-  return async () => {
+  // `only`: just these accounts now (Toplu Başlat brings each account back when its last system is
+  // over); every account is brought back once
+  const back = new Set();
+  return async (only = null) => {
     const since = pausedAt;
+    const list = resume.filter(r => !back.has(r.accountId) && (!only || only.includes(r.accountId)));
+    list.forEach(r => back.add(r.accountId));
     // AUTOPLAY_START_PARALLEL at once (2026-11-25: one by one, 1141 accounts after the Daily Quiz took
     // 40 minutes and "Daily Quiz" looked never finished in Toplu Başlat)
-    await startInGroups(resume, r => r.accountId, async r => {
+    await startInGroups(list, r => r.accountId, async r => {
       try {
         if (engine.stoppedByUserSince(r.accountId, since)) return;
         await engine.startAccount(r.accountId, r.taskId, { visibleBrowser: r.visibleBrowser, forceFresh: false, config: r.config, since });
@@ -729,17 +734,62 @@ async function bossPlanFor(ids) {
   }
   return plan;
 }
-async function runDailyStep(step, ids) {
-  const all = obj => Object.fromEntries(ids.map(id => [id, obj]));
+// One system of Toplu Başlat as a run that takes accounts while it goes (user 2026-11-27: an
+// account that finished one system goes on to the next at once, the others do not hold it up).
+// start(ids, onDone) starts it, add(ids) brings more accounts in, close() says no more will come.
+function dailyStepRunner(step) {
   const s = store.getSettings() || {};
-  if (step === 'slot') return dailySlot.spin(ids);
-  if (step === 'quiz') { await startQuizManual(ids); return quizDone; }
-  if (step === 'goup') { await startGoUpManual(ids, { mode: s.goupMode, gapSec: s.goupGapSec }); return goupDone; }
-  if (step === 'ascent') { await startProvingManual(eliteAscent, all(true), 'Elite Ascent', 'ea', p => { ascentDone = p; }); return ascentDone; }
-  if (step === 'magic') { await startProvingManual(magicTeam, all('auto'), 'Magic Team', 'mt', p => { magicDone = p; }); return magicDone; }
-  if (step === 'boss') { const plan = await bossPlanFor(ids); if (!Object.keys(plan).length) throw new Error('No boss for these accounts'); await startProvingManual(dailyBoss, plan, 'Daily Boss', 'bo', p => { bossDone = p; }); return bossDone; }
-  if (step === 'pro') { await startProvingManual(professional, all(true), 'Professional', 'pf', p => { proDone = p; }); return proDone; }
-  if (step === 'tower') { await startTower(ids); return towerDone; }
+  const { Feed } = require('./services/wide.cjs');
+  const feed = new Feed();
+  const all = (ids, v) => Object.fromEntries(ids.map(id => [id, v]));
+  const proving = { ascent: [eliteAscent, true], magic: [magicTeam, 'auto'], pro: [professional, true] }[step];
+  const runner = { feed, promise: null };
+  if (step === 'slot') {
+    // Daily Slot spins a group at a time: the accounts that came meanwhile are the next group
+    runner.start = (ids, onDone) => {
+      feed.push(ids);
+      runner.promise = (async () => {
+        for (;;) {
+          const batch = feed.items.splice(0);
+          if (!batch.length) { if (feed.closed) return; await new Promise(r => { feed.wake = r; }); feed.wake = null; continue; }
+          await dailySlot.spin(batch).catch(() => {});
+          batch.forEach(id => onDone(id));
+        }
+      })();
+    };
+    runner.add = ids => feed.push(ids);
+  } else if (step === 'quiz' || step === 'goup' || step === 'tower') {
+    const svc = { quiz, goup, tower }[step];
+    runner.start = (ids, onDone) => {
+      feed.push(ids);
+      const opts = { source: 'batch', feed, onAccountDone: onDone, ...(step === 'goup' ? { mode: s.goupMode, gapSec: s.goupGapSec } : {}) };
+      runner.promise = svc.runAndWait(ids, opts).catch(() => {});
+    };
+    runner.add = ids => svc.addAccounts(ids);
+  } else if (proving) {
+    const [svc, target] = proving;
+    runner.start = (ids, onDone) => { feed.push(ids); runner.promise = svc.runAndWait(all(ids, target), { source: 'batch', feed, onAccountDone: onDone }).catch(() => {}); };
+    runner.add = ids => svc.addAccounts(all(ids, target));
+  } else if (step === 'boss') {
+    // the best boss each account's level allows; an account with none is passed on at once
+    runner.start = async (ids, onDone) => {
+      const plan = await bossPlanFor(ids);
+      for (const id of ids) if (!plan[id]) onDone(id);
+      const go = Object.keys(plan);
+      if (!go.length) { runner.pendingStart = true; runner.onDone = onDone; return; }
+      feed.push(go);
+      runner.promise = dailyBoss.runAndWait(plan, { source: 'batch', feed, onAccountDone: onDone }).catch(() => {});
+    };
+    runner.add = async ids => {
+      const plan = await bossPlanFor(ids);
+      for (const id of ids) if (!plan[id]) runner.onDoneRef?.(id);
+      if (!Object.keys(plan).length) return true;
+      if (runner.pendingStart) { runner.pendingStart = false; feed.push(Object.keys(plan)); runner.promise = dailyBoss.runAndWait(plan, { source: 'batch', feed, onAccountDone: runner.onDone }).catch(() => {}); return true; }
+      return dailyBoss.addAccounts(plan);
+    };
+  }
+  runner.close = () => feed.close();
+  return runner;
 }
 const stopDailyStep = step => ({ slot: () => dailySlot.stop(), quiz: () => quiz.stop(), goup: () => goup.stop(), ascent: () => eliteAscent.stop(), magic: () => magicTeam.stop(), boss: () => dailyBoss.stop(), pro: () => professional.stop(), tower: () => tower.stop(null) })[step]?.();
 async function startDailyBatch(patch = {}) {
@@ -752,19 +802,28 @@ async function startDailyBatch(patch = {}) {
   if (!steps.length) throw new Error('Tick at least one system.');
   const empty = steps.filter(step => !idsFor(step).length);
   if (empty.length) throw new Error(`Select accounts for: ${empty.join(', ')}`);
-  const ids = [...new Set(steps.flatMap(idsFor))];
+  const busy = steps.filter(step => ({ slot: dailySlot, quiz, goup, ascent: eliteAscent, magic: magicTeam, boss: dailyBoss, pro: professional, tower })[step]?.snapshot?.().running);
+  if (busy.length) throw new Error(`Already running: ${busy.join(', ')}`);
   const log = (level, code, params, message) => activity.add({ level, accountId: null, accountName: '', taskName: 'Toplu Başlat', code, params, message });
-  dailyBatch = { running: true, current: null, accountIds: ids, startedAt: new Date().toISOString(), finishedAt: null, stopped: false, steps: steps.map(id => ({ id, status: 'queued', error: null, accounts: idsFor(id).length })) };
+  const { runBatch } = require('./services/daily-batch.cjs');
+  const sets = Object.fromEntries(steps.map(step => [step, new Set(idsFor(step))]));
+  let resume = async () => {};
+  const batch = runBatch({
+    steps, sets, makeRunner: dailyStepRunner, log, stopRun: stopDailyStep,
+    onChange: () => { dailyBatch.current = batch?.state.current ?? null; emitState(); },
+    // each account gets its Auto Play back when its last system is over
+    onAccountOver: id => { resume([id]).catch(() => {}); }
+  });
+  const ids = batch.ids;
+  dailyBatch = { running: true, current: null, accountIds: ids, startedAt: new Date().toISOString(), finishedAt: null, stopped: false, steps: batch.state.rows };
+  dailyBatch.stopAll = () => batch.stop();
   log('info', 'db.start', { count: ids.length, steps: steps.length }, `Toplu Başlat · ${steps.length} system(s) on ${ids.length} account(s)`);
   emitState();
   (async () => {
-    for (const row of dailyBatch.steps) {
-      if (dailyBatch.stopped) { row.status = 'skipped'; continue; }
-      dailyBatch.current = row.id; row.status = 'running'; row.startedAt = new Date().toISOString(); emitState();
-      try { await runDailyStep(row.id, idsFor(row.id)); row.status = dailyBatch.stopped ? 'stopped' : 'done'; }
-      catch (error) { row.status = 'error'; row.error = error.message; log('warning', 'db.stepFailed', { step: row.id, error: error.message }, `${row.id}: ${error.message} · next system`); }
-      row.finishedAt = new Date().toISOString(); emitState();
-    }
+    // Auto Play steps aside on every account of the batch (Daily Slot alone needs no pause)
+    try { resume = await pauseTasksFor(ids.filter(id => batch.path[id].some(step => step !== 'slot')), 'Toplu Başlat', 'db'); } catch {}
+    await batch.start();
+    await resume().catch(() => {});
     dailyBatch.running = false; dailyBatch.current = null; dailyBatch.finishedAt = new Date().toISOString();
     log(dailyBatch.stopped ? 'warning' : 'success', dailyBatch.stopped ? 'db.stopped' : 'db.done', {}, dailyBatch.stopped ? 'Toplu Başlat stopped' : 'Toplu Başlat finished');
     emitState();
@@ -774,7 +833,7 @@ async function startDailyBatch(patch = {}) {
 function stopDailyBatch() {
   if (!dailyBatch?.running) return dailyBatchSnapshot();
   dailyBatch.stopped = true;
-  if (dailyBatch.current) stopDailyStep(dailyBatch.current);
+  dailyBatch.stopAll?.();
   emitState();
   return dailyBatchSnapshot();
 }

@@ -38,12 +38,37 @@ async function eachStaggered(items, fn, limit = WIDE) {
   const waiters = [];
   const acquire = () => (active < limit ? (active++, Promise.resolve()) : new Promise(resolve => waiters.push(resolve)));
   const release = () => { const next = waiters.shift(); if (next) next(); else active--; };
-  await Promise.all([...(items || [])].map(async (item, i) => {
+  const one = async (item, i) => {
     await acquire();
     let held = true;
     const started = () => { if (held) { held = false; release(); } };
     try { await fn(item, i, started); } catch {} finally { started(); }
-  }));
+  };
+  if (items instanceof Feed) {
+    const tasks = [];
+    let i = 0;
+    for await (const item of items) tasks.push(one(item, i++));
+    await Promise.all(tasks);
+    return;
+  }
+  await Promise.all([...(items || [])].map(one));
 }
 
-module.exports = { WIDE, eachAtOnce, eachWithSocket, eachStaggered };
+// Items that may still arrive while a run works on the first ones (Toplu Başlat, user
+// 2026-11-27: an account that finished one system goes on to the next at once). The run ends
+// when the feed is closed and every item is done.
+class Feed {
+  constructor(items = []) { this.items = [...items]; this.closed = false; this.wake = null; }
+  push(items) { if (this.closed) return false; this.items.push(...items); this.wake?.(); return true; }
+  close() { this.closed = true; this.wake?.(); }
+  async *[Symbol.asyncIterator]() {
+    for (;;) {
+      if (this.items.length) { yield this.items.shift(); continue; }
+      if (this.closed) return;
+      await new Promise(resolve => { this.wake = resolve; });
+      this.wake = null;
+    }
+  }
+}
+
+module.exports = { WIDE, eachAtOnce, eachWithSocket, eachStaggered, Feed };
