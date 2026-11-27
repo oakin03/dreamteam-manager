@@ -5,7 +5,7 @@ const { SignupService } = require('../src/main/services/signup-service.cjs');
 const { AppStore } = require('../src/main/services/store.cjs');
 
 // A game where "Farm1" is taken; X players, a roster and the team / avatar events answer.
-function fakeGame({ taken = ['farm1'], registerStatus = 201, injuredRolls = 0, badLineup = false, fail500 = 0 } = {}) {
+function fakeGame({ taken = ['farm1'], registerStatus = 201, injuredRolls = 0, benchRolls = 0, badLineup = false, fail500 = 0 } = {}) {
   const st = { badLineup, fail500, lineups: [] };
   const calls = [];
   let rolls = 0;
@@ -21,7 +21,7 @@ function fakeGame({ taken = ['farm1'], registerStatus = 201, injuredRolls = 0, b
       if (event === 'register') reply('registrationSuccess', {});
       if (event === 'getUserBasicInfo') reply('userBasicInfo', { success: true, teamName: 'team-x' });
       if (event === 'getXPlayers') reply('xPlayersList', [{ id: 'x1', name: 'Luka Doncic', visualName: 'Luka Doncic' }, { id: 'x2', name: 'Kyrie Irving' }]);
-      if (event === 'requestPlayers') { rolls += 1; reply('playersGenerated', { starters: [{ id: payload.xPlayerId, assignedSlot: 'PG' }, rolls <= injuredRolls ? { id: 'hurt' + rolls, name: 'Hurt Guy', isInjured: true } : { id: 'p2' }], bench: [{ id: 'p3' }] }); }
+      if (event === 'requestPlayers') { rolls += 1; reply('playersGenerated', { starters: [{ id: payload.xPlayerId, assignedSlot: 'PG' }, rolls <= injuredRolls ? { id: 'hurt' + rolls, name: 'Hurt Guy', isInjured: true } : { id: 'p2' }], bench: rolls <= benchRolls ? [{ id: 'p3' }] : [] }); }
       if (event === 'createTeam') { teams.add(payload.teamName.toLowerCase()); reply('teamCreated', { success: true, teamName: payload.teamName }); }
       return true;
     };
@@ -82,12 +82,13 @@ test('bulk creation: prefix + number, lower-case mail, taken names skipped, team
   const snap = await svc.create({ prefix: 'Farm', count: 2, password: 'secret1', avatar: 7 });
   assert.equal(snap.running, false);
   assert.deepEqual(accounts.map(a => a.name), ['Farm2', 'Farm3', 'Farm4'], 'Farm1 taken in the game, Farm2 in the app');
-  assert.deepEqual(accounts.slice(1).map(a => a.login), ['farm3@lnovic.com', 'farm4@lnovic.com']);
+  assert.deepEqual(accounts.slice(1).map(a => a.login.split('@')[0]), ['farm3', 'farm4']);
+  assert.ok(accounts.slice(1).every(a => /@(lnovic|yzcalo)\.com$/.test(a.login)), 'a domain of the list, picked at random');
   const regs = game.calls.filter(c => c.event.endsWith?.('/api/register'));
-  assert.deepEqual(regs.map(r => r.payload), [{ email: 'farm3@lnovic.com', password: 'secret1' }, { email: 'farm4@lnovic.com', password: 'secret1' }]);
+  assert.deepEqual(regs.map(r => r.payload), accounts.slice(1).map(a => ({ email: a.login, password: 'secret1' })));
   const created = game.calls.filter(c => c.event === 'createTeam');
   assert.deepEqual(created.map(c => c.payload.teamName), ['Farm3', 'Farm4'], 'the prefix keeps its capitals');
-  assert.equal(created[0].payload.bench.length, 1);
+  assert.equal(created[0].payload.bench.length, 0, 'a roster without bench players');
   assert.ok(game.calls.filter(c => c.event === 'updateAvatar').every(c => c.payload.avatarUrl === '/avatar/avatar7.webp'));
   assert.deepEqual(daily, ['id-Farm3', 'id-Farm4']);
   assert.deepEqual(started, ['id-Farm3', 'id-Farm4']);
@@ -172,7 +173,7 @@ test('the starting roster: rosters with an injured player are asked for again; a
   const all = fakeGame({ taken: [], injuredRolls: 99 });
   const b = service(all);
   await b.svc.create({ prefix: 'Farm', count: 1, password: 'secret1', avatar: 1, parallel: 1 });
-  assert.equal(all.calls.filter(c => c.event === 'requestPlayers').length, 10);
+  assert.equal(all.calls.filter(c => c.event === 'requestPlayers').length, 30);
   assert.ok(b.logs.some(l => l.code === 'su.teamInjured'));
   assert.ok(all.calls.some(c => c.event === 'createTeam'), 'the team is still made');
 });
@@ -193,3 +194,11 @@ test('a busy server (500) on register: the same address is tried again, no numbe
   assert.deepEqual(lineup.starters.map(x => x.slot).sort(), ['C', 'PF', 'PG', 'SF', 'SG']);
   assert.equal(lineup.starters.find(x => x.slot === 'C').playerId, 'e', 'the PF/C player plays C');
 }, { timeout: 30000 });
+
+test('the starting roster: a roster with bench players is asked for again; injured counts before bench', async () => {
+  const game = fakeGame({ taken: [], benchRolls: 2 });
+  const { svc } = service(game);
+  await svc.create({ prefix: 'Farm', count: 1, password: 'secret1', avatar: 1, parallel: 1 });
+  assert.equal(game.calls.filter(c => c.event === 'requestPlayers').length, 3, 'two rosters with bench players, the third has none');
+  assert.equal(game.calls.find(c => c.event === 'createTeam').payload.bench.length, 0);
+});

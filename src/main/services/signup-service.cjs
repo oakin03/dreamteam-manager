@@ -27,7 +27,7 @@ const NAME_RE = /^[a-zA-Z0-9]{4,10}$/;    // the game's team name rule
 const AVATARS = 15;                       // /avatar/avatar1.webp … avatar15.webp
 const GAP_MS = 4000;                      // between two accounts
 const REGISTER_RETRIES = 3;   // a 5xx of the register call is tried again this many times
-const ROLL_TRIES = 10;       // starting rosters asked for until one has no injured player (user 2026-11-24)
+const ROLL_TRIES = 30;       // starting rosters asked for until one has no injured and no bench player (user 2026-11-24, 11-27)
 const MAX_FAILURES = 5;      // failures in a row that stop the run
 
 function abortError() { const e = new Error('Aborted'); e.name = 'AbortError'; return e; }
@@ -129,7 +129,7 @@ class SignupService {
           const row = { teamName, email: null, status: 'working', step: 'mail', error: null };
           this.run.rows.push(row); this._changed();
           try {
-            const result = await this._createOne({ teamName, password, avatar, domain, row, signal });
+            const result = await this._createOne({ teamName, password, avatar, domain: domain[Math.floor(Math.random() * domain.length)], row, signal });
             if (result === 'taken') { row.status = 'skipped'; row.error = 'taken'; finished(row, false); continue; }
             finished(row, true);
           } catch (error) { if (error?.name === 'AbortError') throw error; fail(row, teamName, error); finished(row, false); }
@@ -216,7 +216,7 @@ class SignupService {
     if (!r.ok) throw Object.assign(new Error(`temp-mail.io answered ${r.status}`), { stopRun: true });
     const list = (await r.json())?.domains?.filter(d => d.type === 'public').map(d => d.name) || [];
     if (!list.length) throw Object.assign(new Error('temp-mail.io gave no domain'), { stopRun: true });
-    return list.includes('lnovic.com') ? 'lnovic.com' : list[0];
+    return list; // every account gets one of them at random (user 2026-11-27: always the same one before)
   }
 
   async _json(url, body, signal) {
@@ -282,19 +282,21 @@ class SignupService {
         const xs = await gs.call('getXPlayers', { userId }, 'xPlayersList', { signal, timeoutMs: 20000, errorEvents: ['error'] });
         const list = Array.isArray(xs) ? xs : [];
         if (!list.length) throw new Error('the game offered no X player');
-        // a starting roster with no injured player (user 2026-11-24): the game makes a new random
-        // roster on every request, so it is asked again (another X player too) up to ROLL_TRIES
-        // times; if every one has an injured player, the one with the fewest is taken
+        // a starting roster with no injured player and no bench player (user 2026-11-24, 11-27):
+        // the game makes a new random roster on every request, so it is asked again (another X
+        // player too) up to ROLL_TRIES times. Injured players count first, bench players last;
+        // when none is clean the best one is taken
         const hurtIn = r => [...(r?.starters || []), ...(r?.bench || [])].filter(p => p?.isInjured || this.injuredName(p?.visualName || p?.name)).map(p => p.visualName || p.name);
+        const better = (a, b) => !b || a.hurt.length < b.hurt.length || (a.hurt.length === b.hurt.length && a.bench < b.bench);
         let best = null;
         for (let t = 0; t < ROLL_TRIES; t++) {
           const cx = list[Math.floor(Math.random() * list.length)];
           gs.socket.emit('updateSelectedXPlayer', { userId, player: cx });
           const r = await gs.call('requestPlayers', { xPlayerId: cx.id }, 'playersGenerated', { signal, timeoutMs: 20000, errorEvents: ['error'] }).catch(error => { if (error?.name === 'AbortError') throw error; return null; });
           if (!r?.starters?.length) continue;
-          const hurt = hurtIn(r);
-          if (!best || hurt.length < best.hurt.length) best = { x: cx, roster: r, hurt };
-          if (!hurt.length) break;
+          const cand = { x: cx, roster: r, hurt: hurtIn(r), bench: (r.bench || []).length };
+          if (better(cand, best)) best = cand;
+          if (!best.hurt.length && !best.bench) break;
           await sleep(700, signal);
         }
         if (!best) throw new Error('the game offered no roster');

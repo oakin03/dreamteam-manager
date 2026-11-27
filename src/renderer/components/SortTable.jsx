@@ -69,7 +69,9 @@ export default function SortTable({ children, className, ...rest }) {
   // What each row shows, per column, read from the page after every render (row key → texts).
   const bodyRef = useRef(null);
   const shown = useRef(new Map());
-  useLayoutEffect(() => {
+  // Reading every cell after every render made big tables (thousands of market listings) slow:
+  // the texts are read only while a column sort is on, and once when a header is clicked.
+  const readShown = () => {
     const tb = bodyRef.current;
     if (!tb) return;
     const map = new Map();
@@ -85,7 +87,8 @@ export default function SortTable({ children, className, ...rest }) {
       }));
     }
     shown.current = map;
-  });
+  };
+  useLayoutEffect(() => { if (sort) readShown(); });
   const parts = flat(children);
   const head = parts.find(p => isValidElement(p) && p.type === 'thead');
   const body = parts.find(p => isValidElement(p) && p.type === 'tbody');
@@ -95,7 +98,7 @@ export default function SortTable({ children, className, ...rest }) {
   const ths = headRow ? flatCells(headRow.props.children).filter(isValidElement) : [];
   const hasControl = node => flat(node).some(n => isValidElement(n) && (['input', 'select', 'button'].includes(n.type) || (n.props?.children != null && hasControl(n.props.children))));
   const sortable = th => !th.props.onClick && th.props['data-nosort'] == null && !hasControl(th.props.children) && textOf(th.props.children).trim() !== '';
-  const toggle = col => setSort(s => (s?.col === col ? (s.dir === 1 ? { col, dir: -1 } : null) : { col, dir: 1 }));
+  const toggle = col => { readShown(); setSort(s => (s?.col === col ? (s.dir === 1 ? { col, dir: -1 } : null) : { col, dir: 1 })); };
   const newThs = ths.map((th, col) => {
     // A header with its own sorting (the page sorts its data): that sort takes over.
     if (th.props.onClick) return cloneElement(th, { key: th.key ?? col, onClick: e => { setSort(null); th.props.onClick(e); } });
