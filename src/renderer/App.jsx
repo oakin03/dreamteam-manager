@@ -2427,7 +2427,8 @@ function Tournament(props) {
   const choose=id=>{setTab(id);api.settings.update({tournamentTab:id}).catch(()=>{})};
   const warn=(state.tournamentLevel?.rows||[]).reduce((n,r)=>n+r.wrong.length,0);
   const labels=t.lang==='tr'?{live:'Canlı',register:'Kayıt',level:'Seviye kontrolü'}:t.lang==='fil'?{live:'Live',register:'Pagpaparehistro',level:'Pagsuri ng level'}:{live:'Live',register:'Registration',level:'Level check'};
-  const liveOn=(state.tournamentLive?.events||[]).length>0;
+  // live only while one of our accounts is still in (user 2026-11-28: all out = live mode over)
+  const liveOn=(state.tournamentLive?.events||[]).some(e=>!e.over&&!e.doneForUs);
   const tabs=<div className="dp-tabs">{['live','register','level'].map(id=><button key={id} className={tab===id?'active':''} onClick={()=>choose(id)}>{labels[id]}{id==='level'&&warn?<span className="bad-text"> ⚠ {warn}</span>:null}{id==='live'&&liveOn?<i className="dp-dot"/>:null}</button>)}</div>;
   if(tab==='live')return <div className="page"><div className="page-title"><div><h1>{t.tournament}</h1><span className="subtitle">{t.tournamentSubtitle}</span></div></div>{tabs}<TournamentLiveTab state={state} t={t} toast={toast}/></div>;
   if(tab==='level')return <div className="page"><div className="page-title"><div><h1>{t.tournament}</h1><span className="subtitle">{t.tournamentSubtitle}</span></div></div>{tabs}<TournamentLevelTab state={state} t={t} toast={toast}/></div>;

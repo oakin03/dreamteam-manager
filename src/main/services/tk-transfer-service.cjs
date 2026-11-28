@@ -35,23 +35,25 @@ function normalizeConfig(raw = {}) {
   };
 }
 
-// A side's listings main may buy now, best first (more salary = more TK per round).
+// A side's listings main may buy now, best first (higher price = more TK per round). The TK a trade
+// moves is the players' price (baseSalary), not their signed salary (user 2026-11-28), so the
+// limit ("minSalary" in the saved settings) and the side's TK check go by `value`.
 // sideOwned: the side's roster — a player it already holds cannot come back in the trade
 // ("guest/host would end up with duplicate players"), so it is never bought.
 function pickListings(listings, { minSalary, maxApk, mainOwned, sideOwned = new Set(), count, sideFunds }) {
   const seen = new Set();
   const out = [];
-  let salary = 0;
+  let value = 0;
   const usable = listings
-    .filter(t => t.status === 'LISTED' && t.currency === 'APK' && t.price <= maxApk && t.salary >= minSalary && t.playerId && !mainOwned.has(t.playerId) && !sideOwned.has(t.playerId))
-    .sort((a, b) => b.salary - a.salary || a.price - b.price);
+    .filter(t => t.status === 'LISTED' && t.currency === 'APK' && t.price <= maxApk && t.value >= minSalary && t.playerId && !mainOwned.has(t.playerId) && !sideOwned.has(t.playerId))
+    .sort((a, b) => b.value - a.value || a.price - b.price);
   for (const t of usable) {
     if (out.length >= count) break;
     if (seen.has(t.playerId)) continue;
-    if (salary + t.salary > sideFunds) continue;
+    if (value + t.value > sideFunds) continue;
     seen.add(t.playerId);
     out.push(t);
-    salary += t.salary;
+    value += t.value;
   }
   return out;
 }
@@ -62,6 +64,8 @@ function ticketRow(t) {
     ticketId: t.id, playerId: t.playerId || p.id || null,
     name: String(p.visualName || p.name || '?').trim(),
     salary: Number(t.signedSalary) || 0, price: Number(t.price) || 0,
+    // the player's price: what a trade moves in TK
+    value: Number(p.baseSalary) || Number(t.baseSalary) || Number(t.signedSalary) || 0,
     currency: t.paymentMode === 'APK_TICKET' ? 'APK' : t.paymentMode === 'TICKET' ? 'TIX' : t.paymentMode,
     status: t.status || null
   };
@@ -206,7 +210,7 @@ class TkTransferService {
         const room = Math.min(ROUND_MAX, mainFree, R.ROSTER_MAX - sideRoster.total);
         let picks = pickListings(listings, { minSalary: config.minSalary, maxApk: config.maxApk, mainOwned: mainRoster.ids, sideOwned: sideRoster.ids, count: room, sideFunds: side.tk });
         if (!picks.length) {
-          const any = listings.some(t => t.status === 'LISTED' && t.currency === 'APK' && t.price <= config.maxApk && t.salary >= config.minSalary && !mainRoster.ids.has(t.playerId) && !sideRoster.ids.has(t.playerId));
+          const any = listings.some(t => t.status === 'LISTED' && t.currency === 'APK' && t.price <= config.maxApk && t.value >= config.minSalary && !mainRoster.ids.has(t.playerId) && !sideRoster.ids.has(t.playerId));
           this._row(side.id, { status: 'idle', note: any ? (room <= 0 ? 'roomFull' : 'noTk') : 'noListings' });
           blocked.add(side.id);
           continue;
@@ -233,7 +237,7 @@ class TkTransferService {
     this.run.rounds++;
     this._row(sid, { status: 'buying', rounds: this.run.accounts[sid].rounds + 1 });
     // every player of this round with its own status, shown live on the page
-    const items = picks.map(t => ({ round: this.run.rounds, side: this._name(sid), name: t.name, salary: t.salary, price: t.price, status: 'toBuy', error: null }));
+    const items = picks.map(t => ({ round: this.run.rounds, side: this._name(sid), name: t.name, salary: t.value, price: t.price, status: 'toBuy', error: null }));
     this.run.items = [...items, ...this.run.items].slice(0, 300);
     const mark = (list, status, error = null) => { for (const it of list) Object.assign(it, { status, error }); this.onChanged(); };
     const itemOf = t => items[picks.indexOf(t)];
@@ -281,7 +285,7 @@ class TkTransferService {
     if (!traded.success) throw new Error(`Trade with ${this._name(sid)} failed: ${traded.message}. The bought players are on ${this._name(mid)}.`);
     mark(boughtItems, 'traded');
     const after = await this._balance(main).catch(() => ({ tk: NaN }));
-    const salary = bought.reduce((n, t) => n + t.salary, 0);
+    const salary = bought.reduce((n, t) => n + t.value, 0);
     const tk = Number.isFinite(after.tk) && Number.isFinite(before.tk) && after.tk > before.tk ? after.tk - before.tk : salary;
     this.run.transferred += tk;
     this.run.accounts[sid].tk += tk;

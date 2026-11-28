@@ -408,7 +408,9 @@ class AutoTradeEngine {
       ...(options.prepOnly ? { prepAll: (options.prepAll || accountIds).filter(id => all.some(a => a.id === id) && !this._tradeLocked(id)) } : {})
     };
     // The form remembers these for next time (not the account selection's one-off main).
-    this.lastConfig = { ...config, benchDecisions: undefined, actingMainId: undefined, prepOnly: undefined, prepAll: undefined };
+    // Hazırlık works only on main + the accounts with a decision, but the form keeps the user's own
+    // selection (user 2026-11-28: the table's selection changed after Hazırlık)
+    this.lastConfig = { ...config, ...(config.prepOnly ? { accountIds: config.prepAll || accountIds } : {}), benchDecisions: undefined, actingMainId: undefined, prepOnly: undefined, prepAll: undefined };
     const accounts = {};
     for (const id of accountIds) {
       accounts[id] = { id, name: this._name(id), role: id === mainId ? 'main' : 'side', status: 'waiting', players: {}, bought: 0, spent: 0, converted: 0, tradesIn: 0, tradesOut: 0, tkPaid: 0, tkReceived: 0, listed: 0, openMs: 0, openedAt: null, visits: 0, funds: null, fundsStart: null, scout: null, benchApplied: false };

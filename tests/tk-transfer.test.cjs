@@ -15,8 +15,9 @@ function setup(users) {
 }
 const listing = (id, salary, price) => ({ player: player(id, salary, { name: id }), price });
 
-test('picks the side listings main may buy: APK, price, salary, not owned, one copy, within the side TK', () => {
-  const t = (playerId, salary, price, extra = {}) => ({ ticketId: 'x' + playerId + price, playerId, name: playerId, salary, price, currency: 'APK', status: 'LISTED', ...extra });
+test('picks the side listings main may buy: APK, player price (TK, what a trade moves), not owned, one copy, within the side TK', () => {
+  // `value` is the player's price (baseSalary): the TK a trade moves (user 2026-11-28); salary is ignored
+  const t = (playerId, value, price, extra = {}) => ({ ticketId: 'x' + playerId + price, playerId, name: playerId, value, salary: 1, price, currency: 'APK', status: 'LISTED', ...extra });
   const picks = pickListings([
     t('a', 900, 40), t('a', 900, 30), t('b', 100, 20), t('c', 700, 60), t('d', 500, 20, { currency: 'TIX' }),
     t('e', 600, 20), t('f', 800, 20), t('g', 300, 20, { status: 'SOLD' }), t('h', 400, 20)

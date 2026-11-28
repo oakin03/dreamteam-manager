@@ -10,10 +10,10 @@ const TEXT = {
   tr: {
     title: 'TK Aktarımı', subtitle: 'Yan hesaplardaki TK\'yı pazar + trade ile ana hesaba taşır · TK harcanmaz, APK harcanır',
     setup: 'Ayarlar', main: 'Ana hesap', sides: 'Yan hesaplar', selectAll: 'Tümünü seç', clear: 'Seçimi temizle',
-    minSalary: 'Minimum oyuncu salary', maxApk: 'Maksimum APK (oyuncu başı)', target: 'Aktarılacak TK',
+    minSalary: 'Minimum oyuncu fiyatı (TK)', maxApk: 'Maksimum APK (oyuncu başı)', target: 'Aktarılacak TK',
     minSalaryHint: '0–2500', maxApkHint: 'en az 20', targetHint: 'bu değer geçilince durur',
     start: 'Başlat', stop: 'Durdur', save: 'Kaydet',
-    errMain: 'Ana hesabı seç.', errSides: 'En az bir yan hesap seç.', errSalary: 'Salary 0 ile 2500 arasında tam sayı olmalı.', errApk: 'APK en az 20 olmalı (tam sayı).', errTarget: 'Aktarılacak TK\'yı gir.',
+    errMain: 'Ana hesabı seç.', errSides: 'En az bir yan hesap seç.', errSalary: 'Fiyat 0 ile 2500 arasında tam sayı olmalı.', errApk: 'APK en az 20 olmalı (tam sayı).', errTarget: 'Aktarılacak TK\'yı gir.',
     live: 'Canlı durum', last: 'Son çalıştırma', none: 'Henüz TK aktarımı yapılmadı.',
     transferred: 'Aktarılan TK', apkSpent: 'Harcanan APK', rounds: 'Tur',
     account: 'Hesap', role: 'Rol', roleMain: 'Ana', roleSide: 'Yan', tk: 'TK', apk: 'APK', bought: 'Alınan', relisted: 'Tekrar listelenen', tkMoved: 'Aktardığı TK', status: 'Durum',
@@ -21,12 +21,12 @@ const TEXT = {
     note: { noListings: 'uygun ilan yok', noTk: 'TK yetmiyor', roomFull: 'kadroda yer yok' },
     step: { starting: 'Başlıyor', order: 'Hesaplar TK\'ya göre sıralanıyor', reading: '{side} ilanları okunuyor', buying: '{side} · {name} alınıyor ({n}/{of})', trading: '{side} ile trade · {n} oyuncu', listing: '{side} · {name} pazara koyuluyor' },
     reason: { target: 'Hedef aşıldı', apk: 'APK bitti', noListings: 'Uygun ilan kalmadı', stopped: 'Durduruldu', limit: 'Durduruldu', error: 'Hata' },
-    players: 'Oyuncular', noPlayers: 'Henüz uygun oyuncu bulunmadı.', round: 'Tur', player: 'Oyuncu', side: 'Yan hesap', salary: 'Salary', price: 'Fiyat',
+    players: 'Oyuncular', noPlayers: 'Henüz uygun oyuncu bulunmadı.', round: 'Tur', player: 'Oyuncu', side: 'Yan hesap', salary: 'Fiyat (TK)', price: 'APK',
     item: { toBuy: 'Satın alınacak', buying: 'Satın alınıyor', bought: 'Satın alındı', trading: 'Takasa veriliyor', traded: 'Takasla verildi', listing: 'Listeleniyor', relisted: 'Tekrar listelendi', buyFailed: 'Alınamadı', tradeFailed: 'Takas başarısız', relistFailed: 'Listelenemedi', skipped: 'APK yetmedi' },
     how: 'Nasıl çalışır?',
     howLines: [
-      'Ana hesap, seçili yan hesapların pazarda APK ile listelediği oyuncuları alır: fiyatı en fazla "Maksimum APK", salary\'si en az "Minimum oyuncu salary" olanlar. Ana hesapta zaten olan oyuncu ve aynı oyuncudan ikinci kopya alınmaz. İlk ilanları sen açarsın; sistem ilan açmaz.',
-      'Bir yan hesaptan bir seferde en fazla 5 oyuncu alınır (yer, APK ve yan hesabın TK\'sı yettiği kadar). Sonra yan hesap trade odası açar, ana hesap oyuncuları geri verir; yan hesap oyuncuların salary toplamı kadar TK öder.',
+      'Ana hesap, seçili yan hesapların pazarda APK ile listelediği oyuncuları alır: fiyatı en fazla "Maksimum APK", oyuncu fiyatı (TK) en az "Minimum oyuncu fiyatı" olanlar. Ana hesapta zaten olan oyuncu ve aynı oyuncudan ikinci kopya alınmaz. İlk ilanları sen açarsın; sistem ilan açmaz.',
+      'Bir yan hesaptan bir seferde en fazla 5 oyuncu alınır (yer, APK ve yan hesabın TK\'sı yettiği kadar). Sonra yan hesap trade odası açar, ana hesap oyuncuları geri verir; yan hesap oyuncuların fiyat (TK) toplamı kadar TK öder (trade\'de maaş değil fiyat geçer).',
       'Trade\'den sonra yan hesap aynı oyuncuları aynı APK fiyatıyla tekrar pazara koyar, satışın APK\'sı toplanır. Böylece ana hesap aynı oyuncuları tekrar alabilir.',
       'Yan hesaplar en yüksek TK\'lıdan başlar; her turdan sonra sıra yeniden hesaplanır. Aktarılan TK hedefi geçince, ana hesabın APK\'sı bitince ya da uygun ilan kalmayınca durur.',
       'Hesaplara giriş yapılır (oyunda açıksa oradan çıkış yapılır). Bu hesaplardaki Auto Play durdurulur, bitince yeniden başlatılır.'
@@ -35,10 +35,10 @@ const TEXT = {
   en: {
     title: 'TK Transfer', subtitle: 'Moves TK from side accounts to the main account with market + trade · no TK spent, APK is spent',
     setup: 'Settings', main: 'Main account', sides: 'Side accounts', selectAll: 'Select all', clear: 'Clear selection',
-    minSalary: 'Minimum player salary', maxApk: 'Maximum APK (per player)', target: 'TK to transfer',
+    minSalary: 'Minimum player price (TK)', maxApk: 'Maximum APK (per player)', target: 'TK to transfer',
     minSalaryHint: '0–2500', maxApkHint: 'at least 20', targetHint: 'stops once this is passed',
     start: 'Start', stop: 'Stop', save: 'Save',
-    errMain: 'Choose the main account.', errSides: 'Choose at least one side account.', errSalary: 'Salary must be a whole number from 0 to 2500.', errApk: 'APK must be at least 20 (whole number).', errTarget: 'Enter the TK to transfer.',
+    errMain: 'Choose the main account.', errSides: 'Choose at least one side account.', errSalary: 'The price must be a whole number from 0 to 2500.', errApk: 'APK must be at least 20 (whole number).', errTarget: 'Enter the TK to transfer.',
     live: 'Live status', last: 'Last run', none: 'No TK transfer yet.',
     transferred: 'TK transferred', apkSpent: 'APK spent', rounds: 'Rounds',
     account: 'Account', role: 'Role', roleMain: 'Main', roleSide: 'Side', tk: 'TK', apk: 'APK', bought: 'Bought', relisted: 'Listed again', tkMoved: 'TK moved', status: 'Status',
@@ -46,12 +46,12 @@ const TEXT = {
     note: { noListings: 'no usable listing', noTk: 'not enough TK', roomFull: 'no roster room' },
     step: { starting: 'Starting', order: 'Sorting the accounts by TK', reading: 'Reading the listings of {side}', buying: '{side} · buying {name} ({n}/{of})', trading: 'Trade with {side} · {n} player(s)', listing: '{side} · listing {name}' },
     reason: { target: 'Target passed', apk: 'APK ran out', noListings: 'No usable listing left', stopped: 'Stopped', limit: 'Stopped', error: 'Error' },
-    players: 'Players', noPlayers: 'No usable player found yet.', round: 'Round', player: 'Player', side: 'Side account', salary: 'Salary', price: 'Price',
+    players: 'Players', noPlayers: 'No usable player found yet.', round: 'Round', player: 'Player', side: 'Side account', salary: 'Price (TK)', price: 'APK',
     item: { toBuy: 'To buy', buying: 'Buying', bought: 'Bought', trading: 'Being traded', traded: 'Traded back', listing: 'Listing', relisted: 'Listed again', buyFailed: 'Not bought', tradeFailed: 'Trade failed', relistFailed: 'Not listed', skipped: 'Not enough APK' },
     how: 'How does it work?',
     howLines: [
-      'The main account buys the players the selected side accounts list on the market for APK: price at most "Maximum APK", salary at least "Minimum player salary". A player main already owns and a second copy of one player are never bought. You open the first listings; the system does not.',
-      'At most 5 players are bought from one side at a time (as far as roster room, APK and the side\'s TK allow). Then the side opens a trade room and main gives the players back; the side pays their salary sum in TK.',
+      'The main account buys the players the selected side accounts list on the market for APK: price at most "Maximum APK", player price (TK) at least "Minimum player price". A player main already owns and a second copy of one player are never bought. You open the first listings; the system does not.',
+      'At most 5 players are bought from one side at a time (as far as roster room, APK and the side\'s TK allow). Then the side opens a trade room and main gives the players back; the side pays their price sum in TK (a trade moves the price, not the salary).',
       'After the trade the side lists the same players again at the same APK price and the APK of the sale is claimed, so main can buy them again.',
       'Sides go from the highest TK down; the order is recomputed after every round. It stops when the transferred TK passes the target, when main runs out of APK or when no usable listing is left.',
       'The accounts are signed in (an open game tab of them is signed out). Auto Play on these accounts is stopped and started again afterwards.'
@@ -153,7 +153,7 @@ function TkTab({ state, t, toast, tabs }) {
         {!(shown.items || []).length ? <div className="empty">{x.noPlayers}</div> :
           <SortTable><thead><tr><th>{x.round}</th><th>{x.side}</th><th>{x.player}</th><th>{x.salary}</th><th>{x.price}</th><th>{x.status}</th></tr></thead>
             <tbody>{grpIt((shown.items || []).map((p, i) => ({ ...p, id: String(i), name0: p.name, name: p.side })), p0 => { const p = { ...p0, name: p0.name0 }; return <tr key={p0.id} className={['buying', 'trading', 'listing'].includes(p.status) ? 'dp-live' : ''}>
-              <td className="num">{p.round}</td><td>{p.side}</td><td><b>{p.name}</b><InjuryMark name={p.name} /></td><td className="num">{num(p.salary)}</td><td className="num">{p.price} APK</td>
+              <td className="num">{p.round}</td><td>{p.side}</td><td><b>{p.name}</b><InjuryMark name={p.name} /></td><td className="num">{num(p.salary)}</td><td className="num">{p.price}</td>
               <td><span className={`tk-badge ${ITEM_TONE[p.status] || ''}`} title={p.error || ''}>{x.item[p.status] || p.status}</span>{p.error && <small className="cell-sub bad-text">{p.error}</small>}</td>
             </tr>; }, (g, { open, toggle }) => <tr key={g.key} className="grp-row"><td /><td className="grp-name" onClick={toggle} colSpan={5}><i className="grp-arrow">{open ? '▾' : '▸'}</i><b>{g.label}</b> <small className="muted-text">{new Set(g.accounts.map(p => p.side)).size} · {g.accounts.length} · {num(g.accounts.reduce((n, p) => n + (Number(p.salary) || 0), 0))} TK</small></td></tr>)}</tbody></SortTable>}
       </>}
