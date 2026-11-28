@@ -10,7 +10,7 @@ const api = window.dreamteam;
 const TEXT = {
   tr: {
     title: 'Kart Fabrikası', subtitle: 'Yan hesaplar ucuz oyuncu alır, hedef hesaba verir, hedef hepsini karta çevirir',
-    target: 'Hedef hesap', chooseTarget: 'Hedef hesabı seç…', maxPrice: 'Maksimum fiyat (TK)', goal: 'Kaç oyuncu', parallel: 'Aynı anda yan hesap',
+    target: 'Hedef hesap', targets: 'Hedef hesaplar', multiHint: 'Birden fazla hedef: yan hesaplar rollerine göre hedeflere eşit bölünür; her hedef kendi sayacıyla ayrı çalışır, biri bitince ya da hata verince diğerleri devam eder. Oyuncu sayısı ve fiyat her hedef için ayrıdır.', chooseTarget: 'Hedef hesabı seç…', maxPrice: 'Maksimum fiyat (TK)', goal: 'Kaç oyuncu', parallel: 'Aynı anda yan hesap',
     sides: 'Yan hesaplar', selectAll: 'Tümünü seç', clear: 'Temizle', sidesN: '{n} yan hesap seçili',
     hint: 'Scout fiyatı maksimum fiyat ve altındaki her oyuncu alınır (rol bakılmaz; Satılabilir / Stok / ekstra kart rolü yok). Her hesap kendi Scout’unu, ücretsiz yenilemelerini (Callback eşyası kullanılmaz) ve arkadaşlarının Scout’larını kullanır; yer kalırsa diğer hesaplarımızı arkadaş ekleyip onların Scout’larından da alır. Kadrosu dolan yan hesap hedefe takas eder (odalar sırayla), hedef kadrosu dolunca karta çevirir. Hedef de kendi Scout’undan alır. Sadece bu servisin aldığı oyuncular takas edilir ve karta çevrilir.',
     tk: 'TK kontrolü', tkCheck: 'TK’yı kontrol et', tkOk: 'Hedefte {funds} TK var · kalan {remaining} oyuncu için en fazla {need} TK gerekiyor · yeterli', tkShort: 'Hedefte {funds} TK var · kalan {remaining} oyuncu için en fazla {need} TK gerekiyor · yetmiyor (~{covers} oyuncuya yeter). Başlatılmaz.',
@@ -26,7 +26,7 @@ const TEXT = {
   },
   en: {
     title: 'Card Factory', subtitle: 'Side accounts sign cheap players, give them to the target, the target turns them all into cards',
-    target: 'Target account', chooseTarget: 'Choose the target…', maxPrice: 'Max price (TK)', goal: 'How many players', parallel: 'Side accounts at once',
+    target: 'Target account', targets: 'Target accounts', multiHint: 'Several targets: the side accounts are split evenly by role among the targets; every target runs with its own count, one that ends or fails does not stop the others. The player count and the price are for each target.', chooseTarget: 'Choose the target…', maxPrice: 'Max price (TK)', goal: 'How many players', parallel: 'Side accounts at once',
     sides: 'Side accounts', selectAll: 'Select all', clear: 'Clear', sidesN: '{n} side account(s) chosen',
     hint: 'Every player with a Scout price at or under the max price is signed (no roles; no Satılabilir / Stok / extra card role). Every account uses its own Scout, its free callbacks (no Callback items) and its friends’ Scouts; with room left it befriends our other accounts and signs off their Scouts too. A side with a full roster trades to the target (one room after another), the target turns a full bench into cards. The target signs off its own Scout too. Only players this service signed are traded and made into cards.',
     tk: 'TK check', tkCheck: 'Check TK', tkOk: 'The target has {funds} TK · the remaining {remaining} players need up to {need} TK · enough', tkShort: 'The target has {funds} TK · the remaining {remaining} players need up to {need} TK · not enough (~{covers} players). It does not start.',
@@ -50,14 +50,15 @@ export default function CardFactoryPage({ state, t, toast, msgText }) {
   const accounts = state.accounts || [];
   const running = Boolean(cf.running);
   const saved = cf.config || {};
-  const [form, setForm] = useState(() => ({ targetId: saved.targetId || '', sideIds: saved.sideIds || [], maxPrice: saved.maxPrice ?? 70, goal: saved.goal ?? 1000, parallel: saved.parallel ?? 10 }));
+  // several targets at once (user 2026-11-28): each one is a factory of its own
+  const [form, setForm] = useState(() => ({ targetIds: (saved.targetIds?.length ? saved.targetIds : [saved.targetId]).filter(Boolean), sideIds: saved.sideIds || [], maxPrice: saved.maxPrice ?? 70, goal: saved.goal ?? 1000, parallel: saved.parallel ?? 10 }));
   const [tk, setTk] = useState(null);
   const [ask, setAsk] = useState(false);
   const grp = useGroupedRows('cf-rows');
   const set = patch => { const next = { ...form, ...patch }; setForm(next); setTk(null); api.cardFactory.config(patch).catch(() => {}); };
-  const sides = form.sideIds.filter(id => id !== form.targetId && accounts.some(a => a.id === id));
-  const problem = !form.targetId ? x.needTarget : !sides.length ? x.needSides : !(Number(form.maxPrice) >= 1 && Number(form.goal) >= 1) ? x.needNums : null;
-  const cfg = () => ({ ...form, sideIds: sides, maxPrice: Number(form.maxPrice), goal: Number(form.goal), parallel: Number(form.parallel) });
+  const sides = form.sideIds.filter(id => !form.targetIds.includes(id) && accounts.some(a => a.id === id));
+  const problem = !form.targetIds.length ? x.needTarget : !sides.length ? x.needSides : !(Number(form.maxPrice) >= 1 && Number(form.goal) >= 1) ? x.needNums : null;
+  const cfg = () => ({ ...form, targetId: form.targetIds[0] || null, sideIds: sides, maxPrice: Number(form.maxPrice), goal: Number(form.goal), parallel: Number(form.parallel) });
   const check = async () => { try { setTk(await api.cardFactory.tkCheck(cfg())); } catch (e) { toast(e.message, 'error'); } };
   const start = async fresh => {
     setAsk(false);
@@ -67,6 +68,49 @@ export default function CardFactoryPage({ state, t, toast, msgText }) {
     } catch (e) { toast(e.message, 'error'); }
   };
   useEffect(() => { setTk(null); }, [cf.made]);
+  // several targets: the start goes on while any of them is under the goal
+  const made = Math.min(...(cf.targets?.length ? cf.targets : [cf]).map(v => v.made || 0));
+  return <div className="page card-factory">
+    <div className="page-title"><div><h1>{x.title}</h1><span className="subtitle">{x.subtitle}</span></div>
+      <div className="toolbar">
+        {running ? <button className="btn danger-soft" onClick={() => api.cardFactory.stop().catch(e => toast(e.message, 'error'))}>{x.stop}</button> : <>
+          <button className="btn primary" disabled={Boolean(problem) || (made > 0 && made >= Number(form.goal))} title={problem || ''} onClick={() => start(false)}>{made > 0 ? fill(x.cont, { made, goal: form.goal }) : x.start}</button>
+          {made > 0 && <button className="btn ghost" disabled={Boolean(problem)} onClick={() => setAsk(true)}>{x.fresh}</button>}
+        </>}
+      </div>
+    </div>
+
+    {ask && <div className="modal-backdrop" onClick={() => setAsk(false)}><div className="modal" style={{ maxWidth: 440 }} onClick={e => e.stopPropagation()}>
+      <p>{fill(x.freshAsk, { made })}</p>
+      <div className="modal-actions"><button className="btn ghost" onClick={() => setAsk(false)}>{x.cancel}</button><button className="btn danger-soft" autoFocus onClick={() => start(true)}>{x.yes}</button></div>
+    </div></div>}
+
+    {(cf.targets?.length ? cf.targets : [cf]).map(v => <CfTarget key={v.targetId || 'one'} cf={v} running={Boolean(v.running)} many={(cf.targets || []).length > 1} accounts={accounts} form={form} x={x} t={t} msgText={msgText} />)}
+
+    <div className="panel cf-form">
+      <div className="cf-fields">
+        <div className="cf-targets"><span>{x.targets}</span><GroupedPicks storeKey="cf-targets" accounts={accounts} selected={form.targetIds} disabled={running} onSet={ids => set({ targetIds: ids, sideIds: form.sideIds.filter(id => !ids.includes(id)) })} render={a => <label key={a.id} className={form.targetIds.includes(a.id) ? 'on' : ''}><input type="checkbox" disabled={running} checked={form.targetIds.includes(a.id)} onChange={() => { const ids = form.targetIds.includes(a.id) ? form.targetIds.filter(v => v !== a.id) : [...form.targetIds, a.id]; set({ targetIds: ids, sideIds: form.sideIds.filter(id => !ids.includes(id)) }); }} /><b>{a.name}</b></label>} />{form.targetIds.length > 1 && <small className="muted-text">{x.multiHint}</small>}</div>
+        <label><span>{x.maxPrice}</span><input type="number" min="1" value={form.maxPrice} disabled={running} onChange={e => set({ maxPrice: e.target.value })} /></label>
+        <label><span>{x.goal}</span><input type="number" min="1" value={form.goal} disabled={running} onChange={e => set({ goal: e.target.value })} /></label>
+        <label><span>{x.parallel}</span><input type="number" min="1" max="20" value={form.parallel} disabled={running} onChange={e => set({ parallel: e.target.value })} /></label>
+      </div>
+      <small className="muted-text">{x.hint}</small>
+      <div className="cf-tk"><b>{x.tk}</b> <button className="btn ghost small" disabled={!form.targetIds[0] || running} onClick={check}>{x.tkCheck}</button>
+        {tk && (tk.ok ? <span className="good-text">{fill(x.tkOk, tk)}</span> : tk.funds != null ? <span className="bad-text">{fill(x.tkShort, tk)}</span> : null)}</div>
+    </div>
+
+    <div className="panel cf-sides">
+      <div className="cf-sides-head"><b>{x.sides}</b> <small className="muted-text">{fill(x.sidesN, { n: sides.length })}</small>
+        <button className="chip" disabled={running} onClick={() => set({ sideIds: sides.length === accounts.filter(a => !form.targetIds.includes(a.id)).length ? [] : accounts.filter(a => !form.targetIds.includes(a.id)).map(a => a.id) })}>{sides.length === accounts.filter(a => !form.targetIds.includes(a.id)).length ? x.clear : x.selectAll}</button></div>
+      <div className="pvp-picks"><GroupedPicks storeKey="cf-sides" accounts={accounts.filter(a => !form.targetIds.includes(a.id))} selected={sides} disabled={running} onSet={ids => set({ sideIds: ids })} render={a => <button key={a.id} type="button" disabled={running} className={sides.includes(a.id) ? 'selected' : ''} onClick={() => set({ sideIds: sides.includes(a.id) ? sides.filter(v => v !== a.id) : [...sides, a.id] })}><span>{a.name}</span></button>} /></div>
+    </div>
+
+  </div>;
+}
+
+// One target's factory: its progress and its accounts
+function CfTarget({ cf, running, many, accounts, form, x, t, msgText }) {
+  const grp = useGroupedRows('cf-rows');
   const run = cf.run;
   const made = cf.made || 0;
   const goal = Number(run?.config?.goal || form.goal) || 0;
@@ -84,25 +128,12 @@ export default function CardFactoryPage({ state, t, toast, msgText }) {
   </tr>;
   const stepText = run?.status === 'running' && run.step ? fill(x.step[run.step] || '', { t: run.stepParams?.at ? new Date(run.stepParams.at).toLocaleTimeString() : '' }) : '';
 
-  return <div className="page card-factory">
-    <div className="page-title"><div><h1>{x.title}</h1><span className="subtitle">{x.subtitle}</span></div>
-      <div className="toolbar">
-        {running ? <button className="btn danger-soft" onClick={() => api.cardFactory.stop().catch(e => toast(e.message, 'error'))}>{x.stop}</button> : <>
-          <button className="btn primary" disabled={Boolean(problem) || (made > 0 && made >= Number(form.goal))} title={problem || ''} onClick={() => start(false)}>{made > 0 ? fill(x.cont, { made, goal: form.goal }) : x.start}</button>
-          {made > 0 && <button className="btn ghost" disabled={Boolean(problem)} onClick={() => setAsk(true)}>{x.fresh}</button>}
-        </>}
-      </div>
-    </div>
-
-    {ask && <div className="modal-backdrop" onClick={() => setAsk(false)}><div className="modal" style={{ maxWidth: 440 }} onClick={e => e.stopPropagation()}>
-      <p>{fill(x.freshAsk, { made })}</p>
-      <div className="modal-actions"><button className="btn ghost" onClick={() => setAsk(false)}>{x.cancel}</button><button className="btn danger-soft" autoFocus onClick={() => start(true)}>{x.yes}</button></div>
-    </div></div>}
-
+  const targetName = name(cf.targetId || run?.config?.targetId || '');
+  return <>
     <div className="panel cf-progress">
       <div className="cf-progress-head">
         <span className={`pill ${run?.status === 'error' ? 'bad' : running ? 'ok' : 'muted'}`}><i />{x.status[running ? 'running' : run?.status || 'idle'] || run?.status}</span>
-        <b>{fill(x.progress, { made, goal })}</b>
+        <b>{many ? `${targetName} · ` : ''}{fill(x.progress, { made, goal })}</b>
         <span className="muted-text">{fill(x.onTarget, { n: cf.onTarget || 0 })} · {fill(x.onSides, { n: cf.onSides || 0 })}</span>
         {run?.ratePerHour ? <span className="muted-text">{fill(x.rate, { n: run.ratePerHour })}{run.etaHours != null ? ' · ' + fill(x.eta, { t: dur(run.etaHours) }) : ''}</span> : null}
       </div>
@@ -111,25 +142,7 @@ export default function CardFactoryPage({ state, t, toast, msgText }) {
       {run?.status === 'error' && run.error && <span className="bad-text">{msgText ? msgText(t, run.error.code || 'cf.failed', { ...(run.error.params || {}), error: run.error.message }, run.error.message) : run.error.message}</span>}
     </div>
 
-    <div className="panel cf-form">
-      <div className="cf-fields">
-        <label><span>{x.target}</span><select value={form.targetId} disabled={running} onChange={e => set({ targetId: e.target.value })}><option value="">{x.chooseTarget}</option>{accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select></label>
-        <label><span>{x.maxPrice}</span><input type="number" min="1" value={form.maxPrice} disabled={running} onChange={e => set({ maxPrice: e.target.value })} /></label>
-        <label><span>{x.goal}</span><input type="number" min="1" value={form.goal} disabled={running} onChange={e => set({ goal: e.target.value })} /></label>
-        <label><span>{x.parallel}</span><input type="number" min="1" max="20" value={form.parallel} disabled={running} onChange={e => set({ parallel: e.target.value })} /></label>
-      </div>
-      <small className="muted-text">{x.hint}</small>
-      <div className="cf-tk"><b>{x.tk}</b> <button className="btn ghost small" disabled={!form.targetId || running} onClick={check}>{x.tkCheck}</button>
-        {tk && (tk.ok ? <span className="good-text">{fill(x.tkOk, tk)}</span> : tk.funds != null ? <span className="bad-text">{fill(x.tkShort, tk)}</span> : null)}</div>
-    </div>
-
-    <div className="panel cf-sides">
-      <div className="cf-sides-head"><b>{x.sides}</b> <small className="muted-text">{fill(x.sidesN, { n: sides.length })}</small>
-        <button className="chip" disabled={running} onClick={() => set({ sideIds: sides.length === accounts.filter(a => a.id !== form.targetId).length ? [] : accounts.filter(a => a.id !== form.targetId).map(a => a.id) })}>{sides.length === accounts.filter(a => a.id !== form.targetId).length ? x.clear : x.selectAll}</button></div>
-      <div className="pvp-picks"><GroupedPicks storeKey="cf-sides" accounts={accounts.filter(a => a.id !== form.targetId)} selected={sides} disabled={running} onSet={ids => set({ sideIds: ids })} render={a => <button key={a.id} type="button" disabled={running} className={sides.includes(a.id) ? 'selected' : ''} onClick={() => set({ sideIds: sides.includes(a.id) ? sides.filter(v => v !== a.id) : [...sides, a.id] })}><span>{a.name}</span></button>} /></div>
-    </div>
-
     {rows.length > 0 && <div className="panel table-panel"><SortTable><thead><tr><th>{x.acc.account}</th><th>{x.acc.role}</th><th>{x.acc.status}</th><th>{x.acc.signed}</th><th>{x.acc.traded}</th><th>{x.acc.spent}</th><th>{x.acc.note}</th></tr></thead>
       <tbody>{targetRow.map(row)}{grp(sideRows, row, groupRowOf(7, g => <><td /><td /><td className="num">{sumOf(g, r => r.signed)}</td><td className="num">{sumOf(g, r => r.traded)}</td><td className="num">{sumOf(g, r => r.spent)}</td><td /></>))}</tbody></SortTable></div>}
-  </div>;
+  </>;
 }

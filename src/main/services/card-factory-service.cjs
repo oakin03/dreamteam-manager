@@ -580,3 +580,100 @@ class CardFactoryService {
 }
 
 module.exports = { CardFactoryService, PARALLEL_MAX, PARALLEL_DEFAULT };
+
+// ---------- several targets (user 2026-11-28) ----------
+// One factory per target, each with its own count, holds and run, all at the same time: one that
+// ends or fails never stops the others. The side accounts are split evenly by role among the
+// targets. Saved as cardFactory = { multi: true, config, byTarget: { targetId: data } } (an older
+// single-target save becomes the data of its target).
+const { splitByRole } = require('./split-roles.cjs');
+class CardFactoryMulti {
+  constructor(deps) {
+    this.deps = deps;
+    this.store = deps.store;
+    this._rev = 0;
+    this.children = new Map();
+    const saved = this.store.getCardFactory?.() || {};
+    if (saved.multi) this.all = { multi: true, config: saved.config || null, byTarget: saved.byTarget || {} };
+    else {
+      const tid = saved.config?.targetId;
+      this.all = { multi: true, config: saved.config ? { ...saved.config, targetIds: tid ? [tid] : [] } : null, byTarget: tid ? { [tid]: saved } : {} };
+    }
+    for (const tid of Object.keys(this.all.byTarget)) this._child(tid);
+  }
+  get revision() { let n = this._rev; for (const c of this.children.values()) n += c.revision; return n; }
+  get done() { return Promise.all([...this.children.values()].map(c => c.done).filter(Boolean)); }
+  _saveAll() { this.store.saveCardFactory?.({ ...this.all }); }
+  _child(tid) {
+    if (this.children.has(tid)) return this.children.get(tid);
+    const store = Object.create(this.store);
+    store.getCardFactory = () => this.all.byTarget[tid] || {};
+    store.saveCardFactory = v => { this.all.byTarget[tid] = v; this._saveAll(); };
+    const usedElsewhere = id => this.deps.usedElsewhere?.(id) || [...this.children.entries()].some(([t, c]) => t !== tid && c.usesAccount(id));
+    const child = new CardFactoryService({ ...this.deps, store, usedElsewhere });
+    this.children.set(tid, child);
+    return child;
+  }
+  _accounts() { return this.store.getAccounts(); }
+  _normalize(raw = {}) {
+    const has = id => this._accounts().some(a => a.id === id);
+    const targetIds = [...new Set((Array.isArray(raw.targetIds) && raw.targetIds.length ? raw.targetIds : [raw.targetId]).filter(id => id && has(id)))];
+    const one = this._child(targetIds[0] || '_')._normalize({ ...raw, targetId: targetIds[0] || null });
+    if (!targetIds[0]) this.children.delete('_');
+    return { ...one, targetId: targetIds[0] || null, targetIds, sideIds: (raw.sideIds || []).filter(id => has(id) && !targetIds.includes(id)) };
+  }
+  isRunning() { return [...this.children.values()].some(c => c.isRunning()); }
+  usesAccount(id) { return [...this.children.values()].some(c => c.usesAccount(id)); }
+  snapshot() {
+    const cfg = this.all.config;
+    const ids = cfg?.targetIds?.length ? cfg.targetIds : [...this.children.keys()];
+    const targets = ids.filter(t => this.children.has(t)).map(t => ({ targetId: t, ...this.children.get(t).snapshot() }));
+    const first = targets[0] || { made: 0, onTarget: 0, onSides: 0, run: null, history: [] };
+    return { ...first, running: this.isRunning(), config: cfg, targets };
+  }
+  saveConfig(patch = {}) {
+    this.all.config = this._normalize({ ...(this.all.config || {}), ...patch });
+    this._saveAll(); this._rev++; this.deps.onChanged?.();
+    return this.snapshot();
+  }
+  // every target must have the TK for the rest of its own count
+  async tkCheck(raw = {}) {
+    const cfg = this._normalize({ ...(this.all.config || {}), ...raw });
+    if (!cfg.targetIds.length) return { ok: false, code: 'cf.noTarget' };
+    const per = [];
+    for (const tid of cfg.targetIds) per.push({ targetId: tid, ...(await this._child(tid).tkCheck({ ...cfg, targetId: tid })) });
+    const bad = per.find(p => !p.ok);
+    return { ...(bad || per[0]), ok: !bad, perTarget: per };
+  }
+  async start(raw = {}, { fresh = false } = {}) {
+    if (this.isRunning()) throw new Error('Kart Fabrikası is already running.');
+    const cfg = this._normalize({ ...(this.all.config || {}), ...raw });
+    if (!cfg.targetIds.length) throw new Error('Choose the target account.');
+    if (!cfg.sideIds.length) throw new Error('Choose at least one side account.');
+    this.all.config = cfg; this._saveAll();
+    if (cfg.targetIds.length === 1) return this._child(cfg.targetId).start({ ...cfg }, { fresh }).then(() => this.snapshot());
+    const roleOf = id => this._accounts().find(a => a.id === id)?.role || 'side';
+    const share = splitByRole(cfg.sideIds, cfg.targetIds, roleOf);
+    let short = null;
+    for (const tid of cfg.targetIds) {
+      if (!share[tid].length) continue;
+      try {
+        const r = await this._child(tid).start({ ...cfg, targetId: tid, sideIds: share[tid] }, { fresh });
+        if (r?.tkShort) short ||= { ...r.tkShort, targetId: tid };
+      } catch (error) {
+        this._child(tid)._log('error', 'failed', { error: error.message }, `Kart Fabrikası not started: ${error.message}`, tid);
+      }
+    }
+    return { ...this.snapshot(), ...(short && !this.isRunning() ? { tkShort: short } : {}) };
+  }
+  stop() { for (const c of this.children.values()) c.stop(); return this.snapshot(); }
+  async shutdown() { await Promise.all([...this.children.values()].map(c => c.shutdown())); }
+  resetCount() {
+    if (this.isRunning()) throw new Error('Stop it first.');
+    const ids = this.all.config?.targetIds || [];
+    for (const tid of ids) this._child(tid).resetCount();
+    return this.snapshot();
+  }
+}
+
+module.exports.CardFactoryMulti = CardFactoryMulti;

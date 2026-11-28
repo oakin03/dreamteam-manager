@@ -29,7 +29,7 @@ const { SocialService } = require('./services/social-service.cjs');
 const { AccountProfileService } = require('./services/account-profile-service.cjs');
 const { CardsService } = require('./services/cards-service.cjs');
 const { AutoTradeEngine } = require('./services/auto-trade-engine.cjs');
-const { CardFactoryService } = require('./services/card-factory-service.cjs');
+const { CardFactoryService, CardFactoryMulti } = require('./services/card-factory-service.cjs');
 const { eachAtOnce } = require('./services/wide.cjs');
 // Auto Play is started on accounts with the "Dummy" account role AUTOPLAY_START_PARALLEL at a time
 // (user 2026-11-25: 1000+ dummies one by one took most of an hour); the other accounts one by one, as
@@ -1085,7 +1085,7 @@ function initServices() {
   autoTrade = new AutoTradeEngine({ onRoster: id => capRelief(id), cardBusy: () => Boolean(synthesis?.snapshot().running || activate?.snapshot().running), friendNet, pauseAccount: pauseAccountForTrade, onSpenderListed: e => buy?.recordListed?.(e), gameHealth, store, credentials, activity, sessions: gameSessions, accountProfile, onChanged: emitState, onAttention: autoTradeAttention, onScout: (id, reply) => scout.showSocketScout?.(id, reply), onCycleEnd: () => cards.refresh() });
   market = new MarketService({ store, activity, accountProfile, sessions: gameSessions, onChanged: emitState });
   // its own accounts never in Auto Trade at the same time (and the other way round)
-  cardFactory = new CardFactoryService({ store, activity, sessions: gameSessions, createSocket: undefined, friendNet, gameHealth, onChanged: emitState,
+  cardFactory = new CardFactoryMulti({ store, activity, sessions: gameSessions, createSocket: undefined, friendNet, gameHealth, onChanged: emitState,
     usedElsewhere: id => Boolean(autoTrade?.usesAccount?.(id) || autoTrade?.worksWith?.(id) && autoTrade?.isRunning?.()),
     pauseAccount: async (id, task) => { const r1 = await pauseServicesFor([id], task, { prefix: 'cfp', logTask: task, skipFactory: true }); const r2 = await pauseTasksFor([id], task, 'cfp'); return async () => { await r2(); await r1(); }; } });
   const alertedDays = new Map(); // playerId -> day already reported // @strip(basic)

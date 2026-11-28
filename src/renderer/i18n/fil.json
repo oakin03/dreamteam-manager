@@ -4191,5 +4191,6 @@
   "Splitting the side accounts among the targets…": "Hinahati ang mga side account sa mga target…",
   "TK transfer started · {targets} target(s) · {sides} side account(s) · {target} TK each": "Nagsimula ang paglipat ng TK · {targets} target · {sides} side account · {target} TK bawat isa",
   "{count} side account(s) left out · no usable listing or not enough TK": "{count} side account ang hindi isinama · walang magagamit na listing o kulang ang TK",
-  "No side account left for this target": "Walang natirang side account para sa target na ito"
+  "No side account left for this target": "Walang natirang side account para sa target na ito",
+  "Several targets: the side accounts are split evenly by role among the targets; every target runs with its own count, one that ends or fails does not stop the others. The player count and the price are for each target.": "Ilang target: pantay na hinahati ayon sa role ang mga side account sa mga target; bawat target ay tumatakbo sa sarili nitong bilang, ang natapos o pumalya ay hindi pumipigil sa iba. Ang bilang ng manlalaro at presyo ay para sa bawat target."
 }
