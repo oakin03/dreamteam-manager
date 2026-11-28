@@ -27,8 +27,10 @@ const sameIds = (a, b) => (a || []).length === (b || []).length && (a || []).eve
 function normalizeConfig(raw = {}) {
   const int = (v, d) => (Number.isFinite(Number(v)) ? Math.round(Number(v)) : d);
   return {
-    mainId: raw.mainId || null,
-    sideIds: [...new Set((raw.sideIds || []).filter(Boolean))].filter(id => id !== raw.mainId),
+    mainId: raw.mainId || (Array.isArray(raw.mainIds) ? raw.mainIds[0] : null) || null,
+    // several targets at once (user 2026-11-28): each one is a main of its own run
+    mainIds: [...new Set((Array.isArray(raw.mainIds) && raw.mainIds.length ? raw.mainIds : [raw.mainId]).filter(Boolean))],
+    sideIds: [...new Set((raw.sideIds || []).filter(Boolean))].filter(id => id !== raw.mainId && !(raw.mainIds || []).includes(id)),
     minSalary: Math.min(2500, Math.max(0, int(raw.minSalary, 0))),
     maxApk: Math.max(20, int(raw.maxApk, 20)),
     targetTk: Math.max(1, int(raw.targetTk, 50000))
@@ -72,8 +74,10 @@ function ticketRow(t) {
 }
 
 class TkTransferService {
-  constructor({ store, activity, sessions, onChanged, createSocket, now = () => Date.now(), timing = {} }) {
-    Object.assign(this, { store, activity, sessions, createSocket, now });
+  constructor({ store, activity, sessions, onChanged, createSocket, now = () => Date.now(), timing = {}, child = false }) {
+    Object.assign(this, { store, activity, sessions, createSocket, now, child });
+    this.deps = { store, activity, sessions, onChanged, createSocket, now, timing };
+    this.children = null; // several targets: one run each
     this.onChanged = onChanged || (() => {});
     this.timing = { buyGapMs: BUY_GAP_MS, ...timing };
     this.controller = null;
@@ -81,9 +85,10 @@ class TkTransferService {
   }
 
   snapshot() {
-    return { running: Boolean(this.controller), run: this.run ? JSON.parse(JSON.stringify(this.run)) : null, config: this.store.getSettings?.()?.tkTransfer || null, lastReport: this.store.getSettings?.()?.tkTransferReport || null };
+    const runs = this.children ? this.children.map(c => (c.run ? JSON.parse(JSON.stringify(c.run)) : null)).filter(Boolean) : null;
+    return { running: Boolean(this.controller), run: this.run ? JSON.parse(JSON.stringify(this.run)) : null, runs, config: this.store.getSettings?.()?.tkTransfer || null, lastReport: this.store.getSettings?.()?.tkTransferReport || null };
   }
-  stop() { this.controller?.abort(); }
+  stop() { this.controller?.abort(); for (const c of this.children || []) c.stop(); }
   _account(id) { return this.store.getAccounts().find(a => a.id === id) || null; }
   _name(id) { return this._account(id)?.name || id; }
   _log(id, level, code, params, message) {
@@ -103,7 +108,7 @@ class TkTransferService {
   validate(raw) {
     const c = normalizeConfig(raw);
     const ids = new Set(this.store.getAccounts().map(a => a.id));
-    if (!c.mainId || !ids.has(c.mainId)) throw new Error('Choose the main account.');
+    if (!c.mainIds.length || c.mainIds.some(id => !ids.has(id))) throw new Error('Choose the main account.');
     if (!c.sideIds.filter(id => ids.has(id)).length) throw new Error('Choose at least one side account.');
     const n = v => Number(v);
     if (!Number.isInteger(n(raw.minSalary)) || n(raw.minSalary) < 0 || n(raw.minSalary) > 2500) throw new Error('Minimum salary must be a whole number between 0 and 2500.');
@@ -115,7 +120,9 @@ class TkTransferService {
   async runAndWait(raw, { signal } = {}) {
     if (this.controller) throw new Error('TK transfer is already running.');
     const config = this.validate(raw);
-    this.saveConfig(config);
+    if (!this.child) this.saveConfig(config);
+    if (config.mainIds.length > 1) return this._runMany(config, signal);
+    this.children = null;
     const controller = new AbortController();
     const onAbort = () => controller.abort();
     signal?.addEventListener('abort', onAbort, { once: true });
@@ -345,8 +352,9 @@ class TkTransferService {
   _report(result) {
     const r = this.run;
     const report = { startedAt: r.startedAt, finishedAt: new Date(this.now()).toISOString(), config: r.config, transferred: r.transferred, apkSpent: r.apkSpent, rounds: r.rounds, reason: result?.reason || 'error', error: result?.error || null, accounts: Object.values(r.accounts).map(a => ({ ...a })), items: r.items.map(i => ({ ...i })) };
-    const settings = this.store.getSettings?.() || {};
-    this.store.saveSettings?.({ ...settings, tkTransferReport: report });
+    this.lastReport = report;
+    // a target's run of several: the parent keeps all of them in one report
+    if (!this.child) { const settings = this.store.getSettings?.() || {}; this.store.saveSettings?.({ ...settings, tkTransferReport: report }); }
     const params = { tk: r.transferred, apk: r.apkSpent, rounds: r.rounds, target: r.config.targetTk };
     const lines = {
       target: ['success', 'doneTarget', `TK transfer finished · ${r.transferred} TK transferred (target ${r.config.targetTk}) · ${r.apkSpent} APK spent · ${r.rounds} round(s)`],
@@ -359,5 +367,73 @@ class TkTransferService {
     this._log(null, lines[0], lines[1], params, lines[2]);
   }
 }
+
+// Several targets (user 2026-11-28): the side accounts are split among them by how much TK they can
+// move — a side with no usable listing or not the TK for its cheapest one is left out — and every
+// target runs on its own: one that ends or fails never holds up or stops the others.
+TkTransferService.prototype._runMany = async function _runMany(config, signal) {
+  const controller = new AbortController();
+  const onAbort = () => controller.abort();
+  signal?.addEventListener('abort', onAbort, { once: true });
+  this.controller = controller;
+  this.run = null;
+  this.children = [];
+  this._log(null, 'info', 'multiStart', { targets: config.mainIds.length, sides: config.sideIds.length, target: config.targetTk }, `TK transfer started · ${config.mainIds.length} target(s) · ${config.sideIds.length} side account(s) · ${config.targetTk} TK each`);
+  this.onChanged();
+  const conns = new Map();
+  try {
+    // what each side can move: its usable listings (price, APK, value limits) up to its own TK
+    const cap = new Map();
+    await Promise.all(config.sideIds.map(async id => {
+      try {
+        const c = await TradeGameAccount.open({ account: this._account(id), sessions: this.sessions, createSocket: this.createSocket, signal: controller.signal });
+        conns.set(id, c);
+        const [bal, listings] = await Promise.all([this._balance(c), this._listings(c)]);
+        const usable = listings.filter(t => t.status === 'LISTED' && t.currency === 'APK' && t.price <= config.maxApk && t.value >= config.minSalary && t.playerId).sort((a, b) => a.value - b.value);
+        const tk = Number(bal.tk) || 0;
+        if (!usable.length || tk < usable[0].value) return; // nothing it can move: left out
+        let sum = 0;
+        for (const t of usable) { if (sum + t.value > tk) break; sum += t.value; }
+        cap.set(id, Math.min(tk, sum));
+      } catch (error) {
+        if (error?.name === 'AbortError') throw error;
+        this._log(id, 'warning', 'loginFailed', { error: error.message }, `Could not connect: ${error.message}`);
+      }
+    }));
+    for (const c of conns.values()) { try { c.close(); } catch {} }
+    conns.clear();
+    const left = config.sideIds.filter(id => !cap.has(id)).length;
+    if (left) this._log(null, 'info', 'sidesLeftOut', { count: left }, `${left} side account(s) left out · no usable listing or not enough TK`);
+    if (!cap.size) throw new Error('No side account has a usable listing and the TK for it.');
+    // the richest side first, always to the target that has the least so far
+    const share = new Map(config.mainIds.map(id => [id, { ids: [], tk: 0 }]));
+    for (const [id, tk] of [...cap.entries()].sort((a, b) => b[1] - a[1])) {
+      const [, sh] = [...share.entries()].sort((a, b) => a[1].tk - b[1].tk)[0];
+      sh.ids.push(id); sh.tk += tk;
+    }
+    const jobs = [];
+    for (const [mainId, sh] of share) {
+      if (!sh.ids.length) { this._log(mainId, 'warning', 'noSides', {}, 'No side account left for this target'); continue; }
+      const child = new TkTransferService({ ...this.deps, onChanged: this.onChanged, child: true });
+      this.children.push(child);
+      jobs.push(child.runAndWait({ ...config, mainId, mainIds: [mainId], sideIds: sh.ids }, { signal: controller.signal }).catch(() => {}));
+    }
+    this.onChanged();
+    await Promise.all(jobs);
+  } catch (error) {
+    if (error?.name !== 'AbortError') this._log(null, 'error', 'failed', { error: error.message }, `TK transfer stopped: ${error.message}`);
+  } finally {
+    for (const c of conns.values()) { try { c.close(); } catch {} }
+    signal?.removeEventListener('abort', onAbort);
+    const reports = (this.children || []).map(c => c.lastReport).filter(Boolean);
+    const sum = k => reports.reduce((n, r) => n + (Number(r[k]) || 0), 0);
+    const report = { multi: true, startedAt: reports[0]?.startedAt || new Date(this.now()).toISOString(), finishedAt: new Date(this.now()).toISOString(), config, transferred: sum('transferred'), apkSpent: sum('apkSpent'), rounds: sum('rounds'), reason: reports.every(r => r.reason === 'target') && reports.length ? 'target' : (controller.signal.aborted ? 'stopped' : (reports[0]?.reason || 'error')), error: null, runs: reports, accounts: reports.flatMap(r => r.accounts), items: reports.flatMap(r => r.items) };
+    const settings = this.store.getSettings?.() || {};
+    this.store.saveSettings?.({ ...settings, tkTransferReport: report });
+    this.controller = null;
+    this.onChanged();
+  }
+  return this.snapshot();
+};
 
 module.exports = { TkTransferService, pickListings, normalizeConfig };

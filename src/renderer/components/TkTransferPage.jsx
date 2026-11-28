@@ -9,7 +9,7 @@ const api = window.dreamteam;
 const TEXT = {
   tr: {
     title: 'TK Aktarımı', subtitle: 'Yan hesaplardaki TK\'yı pazar + trade ile ana hesaba taşır · TK harcanmaz, APK harcanır',
-    setup: 'Ayarlar', main: 'Ana hesap', sides: 'Yan hesaplar', selectAll: 'Tümünü seç', clear: 'Seçimi temizle',
+    setup: 'Ayarlar', main: 'Ana hesap', mains: 'Hedef hesaplar', multiHint: 'Birden fazla hedef: yan hesaplar aktarabilecekleri TK’ya göre hedeflere bölünür (uygun ilanı ya da TK’sı olmayanlar alınmaz); her hedef kendi başına çalışır, biri bitince ya da hata verince diğerleri devam eder. Aktarılacak TK her hedef için ayrıdır.', splitting: 'Yan hesaplar hedeflere bölünüyor…', sides: 'Yan hesaplar', selectAll: 'Tümünü seç', clear: 'Seçimi temizle',
     minSalary: 'Minimum oyuncu fiyatı (TK)', maxApk: 'Maksimum APK (oyuncu başı)', target: 'Aktarılacak TK',
     minSalaryHint: '0–2500', maxApkHint: 'en az 20', targetHint: 'bu değer geçilince durur',
     start: 'Başlat', stop: 'Durdur', save: 'Kaydet',
@@ -34,7 +34,7 @@ const TEXT = {
   },
   en: {
     title: 'TK Transfer', subtitle: 'Moves TK from side accounts to the main account with market + trade · no TK spent, APK is spent',
-    setup: 'Settings', main: 'Main account', sides: 'Side accounts', selectAll: 'Select all', clear: 'Clear selection',
+    setup: 'Settings', main: 'Main account', mains: 'Target accounts', multiHint: 'Several targets: the side accounts are split among the targets by the TK they can move (those without a usable listing or the TK are left out); every target runs on its own, one that ends or fails does not stop the others. The TK to transfer is for each target.', splitting: 'Splitting the side accounts among the targets…', sides: 'Side accounts', selectAll: 'Select all', clear: 'Clear selection',
     minSalary: 'Minimum player price (TK)', maxApk: 'Maximum APK (per player)', target: 'TK to transfer',
     minSalaryHint: '0–2500', maxApkHint: 'at least 20', targetHint: 'stops once this is passed',
     start: 'Start', stop: 'Stop', save: 'Save',
@@ -81,32 +81,30 @@ function TkTab({ state, t, toast, tabs }) {
   const accounts = state.accounts || [];
   const prof = state.accountProfile || {};
   const saved = tk.config || {};
-  const [mainId, setMainId] = useState(saved.mainId || prof.mainAccountId || '');
+  // several targets at once (user 2026-11-28): each is a main of its own run
+  const [mainIds, setMainIds] = useState(() => (saved.mainIds?.length ? saved.mainIds : [saved.mainId || prof.mainAccountId]).filter(id => id && accounts.some(a => a.id === id)));
+  const mainId = mainIds[0] || '';
   const [sideIds, setSideIds] = useState(() => (saved.sideIds || []).filter(id => accounts.some(a => a.id === id)));
   const [minSalary, setMinSalary] = useState(String(saved.minSalary ?? 0));
   const [maxApk, setMaxApk] = useState(String(saved.maxApk ?? 20));
   const [targetTk, setTargetTk] = useState(String(saved.targetTk ?? 50000));
   const running = Boolean(tk.running);
   const stat = id => prof.accounts?.[id] || {};
-  const sides = accounts.filter(a => a.id !== mainId).sort((a, b) => (Number(stat(b.id).tk) || 0) - (Number(stat(a.id).tk) || 0));
-  const chosen = sideIds.filter(id => id !== mainId && accounts.some(a => a.id === id));
+  const sides = accounts.filter(a => !mainIds.includes(a.id));
+  const chosen = sideIds.filter(id => !mainIds.includes(id) && accounts.some(a => a.id === id));
   const allOn = sides.length > 0 && sides.every(a => chosen.includes(a.id));
   const errors = [
-    !mainId && x.errMain,
+    !mainIds.length && x.errMain,
     !chosen.length && x.errSides,
     !(isInt(minSalary) && Number(minSalary) >= 0 && Number(minSalary) <= 2500) && x.errSalary,
     !(isInt(maxApk) && Number(maxApk) >= 20) && x.errApk,
     !(isInt(targetTk) && Number(targetTk) >= 1) && x.errTarget
   ].filter(Boolean);
-  const config = () => ({ mainId, sideIds: chosen, minSalary: Number(minSalary), maxApk: Number(maxApk), targetTk: Number(targetTk) });
+  const config = () => ({ mainId, mainIds, sideIds: chosen, minSalary: Number(minSalary), maxApk: Number(maxApk), targetTk: Number(targetTk) });
   const start = async () => { try { await api.tk.start(config()); } catch (e) { toast(e.message, 'error'); } };
-  const run = tk.run;
+  const runs = running ? (tk.runs?.length ? tk.runs : tk.run ? [tk.run] : []) : [];
   const report = !running && tk.lastReport;
-  const shown = running ? run : report;
-  const rows = shown ? Object.values(shown.accounts || {}) : [];
-  const grp = useGroupedRows('tk-accounts');
-  const grpIt = useGroupedRows('tk-items');
-  const pct = shown ? Math.min(100, Math.round(((shown.transferred || 0) / Math.max(1, shown.config?.targetTk || 1)) * 100)) : 0;
+  const reports = report ? (report.multi ? report.runs || [] : [report]) : [];
 
   return <div className="page tk-page">
     <div className="page-title"><div><h1>{x.title}</h1><span className="subtitle">{x.subtitle}</span></div>
@@ -118,7 +116,7 @@ function TkTab({ state, t, toast, tabs }) {
 
     <div className="panel tk-setup">
       <div className="tk-fields">
-        <label><span>{x.main}</span><select disabled={running} value={mainId} onChange={e => { setMainId(e.target.value); setSideIds(sideIds.filter(id => id !== e.target.value)); }}><option value="">—</option>{accounts.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select></label>
+        <div className="tk-targets"><span>{x.mains}</span><GroupedPicks storeKey="tk-targets" accounts={accounts} selected={mainIds} disabled={running} onSet={ids => { setMainIds(ids); setSideIds(sideIds.filter(id => !ids.includes(id))); }} render={a => <label key={a.id} className={mainIds.includes(a.id) ? 'on' : ''}><input type="checkbox" disabled={running} checked={mainIds.includes(a.id)} onChange={() => { const next = mainIds.includes(a.id) ? mainIds.filter(v => v !== a.id) : [...mainIds, a.id]; setMainIds(next); setSideIds(sideIds.filter(id => !next.includes(id))); }} /><b>{a.name}</b></label>} />{mainIds.length > 1 && <small className="muted-text">{x.multiHint}</small>}</div>
         <label><span>{x.minSalary}</span><input type="number" min="0" max="2500" step="1" disabled={running} value={minSalary} onChange={e => setMinSalary(e.target.value)} /><small>{x.minSalaryHint}</small></label>
         <label><span>{x.maxApk}</span><input type="number" min="20" step="1" disabled={running} value={maxApk} onChange={e => setMaxApk(e.target.value)} /><small>{x.maxApkHint}</small></label>
         <label><span>{x.target}</span><input type="number" min="1" step="1" disabled={running} value={targetTk} onChange={e => setTargetTk(e.target.value)} /><small>{x.targetHint}</small></label>
@@ -131,11 +129,27 @@ function TkTab({ state, t, toast, tabs }) {
       {errors.length > 0 && !running && <div className="tk-errors">{errors.map(e => <span key={e}>{e}</span>)}</div>}
     </div>
 
-    <div className="panel tk-live">
-      <div className="tk-live-head"><b>{running ? x.live : x.last}</b>
-        {shown && <span className="muted">{running ? fill(x.step[run.step] || '', run.stepParams || {}) : `${x.reason[report.reason] || report.reason}${report.error ? `: ${report.error}` : ''} · ${new Date(report.finishedAt).toLocaleString()}`}</span>}
-      </div>
-      {!shown ? <div className="empty">{x.none}</div> : <>
+    {running && runs.length === 0 && <div className="panel tk-live"><div className="tk-live-head"><b>{x.live}</b><span className="muted">{x.splitting}</span></div></div>}
+    {running ? runs.map(r => <TkRun key={r.config?.mainId || 'run'} shown={r} running x={x} many={runs.length > 1} />)
+      : reports.length ? reports.map((r, i) => <TkRun key={(r.config?.mainId || '') + i} shown={r} running={false} x={x} many={reports.length > 1} />)
+      : <div className="panel tk-live"><div className="tk-live-head"><b>{x.last}</b></div><div className="empty">{x.none}</div></div>}
+    <details className="panel pvp-how"><summary>{x.how}</summary><ul>{x.howLines.map(l => <li key={l}>{l}</li>)}</ul></details>
+  </div>;
+}
+
+// One target's run (or report): its accounts and its players
+function TkRun({ shown, running, x, many }) {
+  const accounts = useGroupedRows('tk-accounts');
+  const grp = accounts;
+  const grpIt = useGroupedRows('tk-items');
+  const rows = Object.values(shown.accounts || {});
+  const pct = Math.min(100, Math.round(((shown.transferred || 0) / Math.max(1, shown.config?.targetTk || 1)) * 100));
+  const mainName = rows.find(r => r.main)?.name;
+  return <div className="panel tk-live">
+    <div className="tk-live-head"><b>{running ? x.live : x.last}{many && mainName ? ` · ${mainName}` : ''}</b>
+      <span className="muted">{running ? fill(x.step[shown.step] || '', shown.stepParams || {}) : `${x.reason[shown.reason] || shown.reason || ''}${shown.error ? `: ${shown.error}` : ''}${shown.finishedAt ? ` · ${new Date(shown.finishedAt).toLocaleString()}` : ''}`}</span>
+    </div>
+    <>
         <div className="tk-stats">
           <div><span>{x.transferred}</span><b className="num">{num(shown.transferred)} / {num(shown.config?.targetTk)}</b><i className="tk-bar"><em style={{ width: `${pct}%` }} /></i></div>
           <div><span>{x.apkSpent}</span><b className="num">{num(shown.apkSpent)}</b></div>
@@ -156,8 +170,6 @@ function TkTab({ state, t, toast, tabs }) {
               <td className="num">{p.round}</td><td>{p.side}</td><td><b>{p.name}</b><InjuryMark name={p.name} /></td><td className="num">{num(p.salary)}</td><td className="num">{p.price}</td>
               <td><span className={`tk-badge ${ITEM_TONE[p.status] || ''}`} title={p.error || ''}>{x.item[p.status] || p.status}</span>{p.error && <small className="cell-sub bad-text">{p.error}</small>}</td>
             </tr>; }, (g, { open, toggle }) => <tr key={g.key} className="grp-row"><td /><td className="grp-name" onClick={toggle} colSpan={5}><i className="grp-arrow">{open ? '▾' : '▸'}</i><b>{g.label}</b> <small className="muted-text">{new Set(g.accounts.map(p => p.side)).size} · {g.accounts.length} · {num(g.accounts.reduce((n, p) => n + (Number(p.salary) || 0), 0))} TK</small></td></tr>)}</tbody></SortTable>}
-      </>}
-    </div>
-    <details className="panel pvp-how"><summary>{x.how}</summary><ul>{x.howLines.map(l => <li key={l}>{l}</li>)}</ul></details>
+    </>
   </div>;
 }

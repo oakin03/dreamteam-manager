@@ -78,3 +78,23 @@ test('a player the side already holds is never bought (the trade back would fail
   assert.ok(world.tickets.some(t => t.playerId === 'p1' && t.status === 'LISTED'), 'p1 stays listed');
   assert.ok(!world.users.main.bench.length);
 });
+
+test('TK transfer to several targets: the sides are split, one with nothing usable is left out, each target runs on its own', async () => {
+  const { world, svc, logs, settings } = setup({
+    m1: { name: 'M1', funds: 0, apk: 1000 },
+    m2: { name: 'M2', funds: 0, apk: 1000 },
+    a: { name: 'A', funds: 5000, market: [listing('a1', 600, 30), listing('a2', 500, 30)] },
+    b: { name: 'B', funds: 4000, market: [listing('b1', 700, 30)] },
+    poor: { name: 'Poor', funds: 100, market: [listing('q1', 800, 25)] },
+    none: { name: 'None', funds: 9000, market: [] }
+  });
+  await svc.runAndWait({ mainIds: ['m1', 'm2'], sideIds: ['a', 'b', 'poor', 'none'], minSalary: 0, maxApk: 50, targetTk: 1000 });
+  const r = settings().tkTransferReport;
+  assert.equal(r.multi, true);
+  assert.equal(r.runs.length, 2, 'one run per target');
+  const sidesOf = m => r.runs.find(x => x.config.mainId === m).config.sideIds;
+  assert.deepEqual([...sidesOf('m1'), ...sidesOf('m2')].sort(), ['a', 'b'], 'Poor (not the TK) and None (no listing) are left out');
+  assert.notDeepEqual(sidesOf('m1'), sidesOf('m2'));
+  assert.ok(world.users.m1.funds >= 1000 && world.users.m2.funds >= 700, 'both targets got TK');
+  assert.ok(logs.some(l => l.code === 'tk.sidesLeftOut'));
+});

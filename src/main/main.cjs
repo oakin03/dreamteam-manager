@@ -1717,7 +1717,7 @@ function registerIpc() {
   ipcMain.handle('tk:start', async (_event, raw) => {
     const config = tkTransfer.validate(raw || {});
     if (tkTransfer.snapshot().running) throw new Error('TK transfer is already running.');
-    const resume = await pauseTasksFor([config.mainId, ...config.sideIds], 'TK Transfer', 'tk');
+    const resume = await pauseTasksFor([...config.mainIds, ...config.sideIds], 'TK Transfer', 'tk');
     tkDone = tkTransfer.runAndWait(config).catch(() => {}).finally(resume);
     return tkTransfer.snapshot();
   });
