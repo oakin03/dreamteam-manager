@@ -131,8 +131,12 @@ test('signs in over HTTP (no browser) and hands the session to the shared sessio
   const game = fakeGame({ taken: [] });
   const { svc, seeded } = service(game);
   await svc.create({ prefix: 'Farm', count: 1, password: 'secret1', avatar: 1 });
-  assert.deepEqual(seeded, [['id-Farm1', 'u-farm1@lnovic.com']]);
-  assert.ok(game.calls.some(c => c.event === 'login' && c.payload === 'farm1@lnovic.com'));
+  // the mail domain is picked at random from the list
+  assert.equal(seeded.length, 1);
+  assert.equal(seeded[0][0], 'id-Farm1');
+  assert.match(seeded[0][1], /^u-farm1@(lnovic|yzcalo)\.com$/);
+  const mail = seeded[0][1].slice(2);
+  assert.ok(game.calls.some(c => c.event === 'login' && c.payload === mail));
 });
 
 test('a prefix goes on after its highest number, also after the accounts were deleted', async () => {
