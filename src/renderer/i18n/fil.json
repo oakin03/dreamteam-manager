@@ -4192,5 +4192,9 @@
   "TK transfer started · {targets} target(s) · {sides} side account(s) · {target} TK each": "Nagsimula ang paglipat ng TK · {targets} target · {sides} side account · {target} TK bawat isa",
   "{count} side account(s) left out · no usable listing or not enough TK": "{count} side account ang hindi isinama · walang magagamit na listing o kulang ang TK",
   "No side account left for this target": "Walang natirang side account para sa target na ito",
-  "Several targets: the side accounts are split evenly by role among the targets; every target runs with its own count, one that ends or fails does not stop the others. The player count and the price are for each target.": "Ilang target: pantay na hinahati ayon sa role ang mga side account sa mga target; bawat target ay tumatakbo sa sarili nitong bilang, ang natapos o pumalya ay hindi pumipigil sa iba. Ang bilang ng manlalaro at presyo ay para sa bawat target."
+  "Several targets: the side accounts are split evenly by role among the targets; every target runs with its own count, one that ends or fails does not stop the others. The player count and the price are for each target.": "Ilang target: pantay na hinahati ayon sa role ang mga side account sa mga target; bawat target ay tumatakbo sa sarili nitong bilang, ang natapos o pumalya ay hindi pumipigil sa iba. Ang bilang ng manlalaro at presyo ay para sa bawat target.",
+  "Extra targets": "Mga dagdag na target",
+  "Every extra target runs an Auto Trade of its own with itself as main: the chosen accounts and the Harcayıcı accounts are split evenly by role among the targets; one that ends or fails does not stop the others. Hazırlık is done on the first target only.": "Bawat dagdag na target ay may sariling Auto Trade na ito mismo ang main: pantay na hinahati ayon sa role ang mga napiling account at Harcayıcı sa mga target; ang natapos o pumalya ay hindi pumipigil sa iba. Ang Hazırlık ay sa unang target lang.",
+  "Other targets": "Ibang mga target",
+  "{accounts} accounts · {bought} bought · {converted} cards · {trades} trades": "{accounts} account · {bought} nabili · {converted} card · {trades} trade"
 }

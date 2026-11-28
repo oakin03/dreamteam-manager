@@ -2766,7 +2766,7 @@ export default function App(){
   // Orange dot next to a page name while its service works (like "Sentez ●").
   const navRun={
     autoplay:Object.values(state.runtime||{}).some(r=>['running','preparing','starting'].includes(r?.status)),
-    autotrade:['running','paused','stopping'].includes(state.autoTrade2?.run?.status)||state.autoTrade2?.prep?.status==='running',
+    autotrade:['running','paused','stopping'].includes(state.autoTrade2?.run?.status)||state.autoTrade2?.prep?.status==='running'||(state.autoTradeExtra||[]).some(e=>['running','paused','stopping'].includes(e.run?.status)),
     cardfactory:Boolean(state.cardFactory?.running),
     pvp:Boolean(state.pvp?.running),
     tower:Boolean(state.tower?.running),

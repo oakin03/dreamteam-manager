@@ -383,6 +383,8 @@ class AutoTradeEngine {
       : (this.lastConfig?.roomPasswordEncrypted ? this.credentials.decryptSecret(this.lastConfig.roomPasswordEncrypted) : DEFAULTS.roomPassword);
     const config = {
       accountIds, mainId,
+      // several targets (user 2026-11-28): each run gets its own share of the Harcayıcı accounts
+      spenderIds: Array.isArray(options.spenderIds) ? options.spenderIds : null,
       sideToMainRoleIds: cfg.sideToMainRoleIds, mainToSideRoleIds: cfg.mainToSideRoleIds, maxPrice: cfg.maxPrice,
       roleRules: R.normalizeRoleRules(cfg.roleRules),
       roomDescription: String(cfg.roomDescription || DEFAULTS.roomDescription).slice(0, 50),
@@ -1413,7 +1415,8 @@ class AutoTradeEngine {
   _dayKey() { return new Date(this.now() + 8 * 3600 * 1000).toISOString().slice(0, 10); } // the game's day (Manila)
   // Every Harcayıcı account (the role decides, not the run's account list); never main.
   _spenderIds() {
-    return this.store.getAccounts().filter(a => a.role === 'spender' && a.id !== this.state.config.mainId && this._userIdOf(a.id)).map(a => a.id);
+    const own = this.state.config.spenderIds;
+    return this.store.getAccounts().filter(a => a.role === 'spender' && a.id !== this.state.config.mainId && (!own || own.includes(a.id)) && this._userIdOf(a.id)).map(a => a.id);
   }
   _level(id) { return Number(this.store.getAccountProfile?.()?.accounts?.[id]?.level) || 0; }
   // A Satılabilir / Stok player on the Scout of a Harcayıcı of this run whose turn is still to

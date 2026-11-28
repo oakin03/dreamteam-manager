@@ -121,6 +121,24 @@ let accountProfile;
 let cards;
 let autoTrade;
 let cardFactory; // Kart Fabrikası (user 2026-11-24)
+// Auto Trade for several targets (user 2026-11-28): the first target is the usual engine, every other
+// target an engine of its own (not resumed after a restart); targetId -> AutoTradeEngine
+const autoTradeExtra = new Map();
+let autoTradeDeps = null;
+function extraTradeEngine(targetId) {
+  if (autoTradeExtra.has(targetId)) return autoTradeExtra.get(targetId);
+  const st = Object.create(store);
+  st.getAutoTrade2 = () => null;
+  st.saveAutoTrade2 = () => {};
+  const e = new AutoTradeEngine({ ...autoTradeDeps, store: st, onCycleEnd: null });
+  e.pricing = autoTrade.pricing;
+  e.lastConfig = autoTrade.lastConfig;
+  autoTradeExtra.set(targetId, e);
+  return e;
+}
+function extraTradeSnapshots() {
+  return [...autoTradeExtra.entries()].map(([targetId, e]) => ({ targetId, ...e.snapshot() })).filter(x => x.run);
+}
 let lastCardFactoryRevision = -1;
 let market;
 let gameSessions;
@@ -186,6 +204,7 @@ let equipment;
 let signup; // @strip(basic)
 let lastEquipmentRevision = -1;
 let lastAutoTradeRevision = -1;
+let lastAutoTradeExtraRev = -1;
 let dataDir;
 let systemLocale = 'en-US';
 let pendingState = null;
@@ -272,6 +291,7 @@ function snapshot({ incremental = false } = {}) {
   if (!incremental || tradeRowsChanged) state.trading.rows = trading.rowsSnapshot();
   if (!incremental || lastCardsKey !== cardKey) state.cards = cards.snapshot();
   if (autoTrade && (!incremental || lastAutoTradeRevision !== autoTrade.revision)) { state.autoTrade2 = autoTrade.snapshot(); lastAutoTradeRevision = autoTrade.revision; }
+  { const rev = [...autoTradeExtra.values()].reduce((n, e) => n + (e.revision || 0), 0) + autoTradeExtra.size * 1e9; if (!incremental || lastAutoTradeExtraRev !== rev) { state.autoTradeExtra = extraTradeSnapshots(); lastAutoTradeExtraRev = rev; } }
   if (cardFactory && (!incremental || lastCardFactoryRevision !== cardFactory.revision)) { state.cardFactory = cardFactory.snapshot(); lastCardFactoryRevision = cardFactory.revision; }
   // 640 players: sent when the list or the roles changed.
   const playersKey = players ? `${players.revision}:${store.revision('cardMetadata')}:${store.revision('cardRoles')}:${store.revision('cards')}` : null;
@@ -1082,7 +1102,11 @@ function initServices() {
   trading = new TradingHallService({ store, credentials, browserService, activity, onChanged: emitState });
   dailyRewards = new DailyRewardService({ store, activity, engine, sessions: gameSessions, gameHealth, isPaused: () => Boolean(globalPause), onChanged: emitState });
   const friendNet = new FriendNetwork({ store, sessions: gameSessions, activity, perSide: () => autoTrade?.lastConfig?.spendersPerSide, onChanged: () => { if (autoTrade) autoTrade.revision++; emitState(); } });
-  autoTrade = new AutoTradeEngine({ onRoster: id => capRelief(id), cardBusy: () => Boolean(synthesis?.snapshot().running || activate?.snapshot().running), friendNet, pauseAccount: pauseAccountForTrade, onSpenderListed: e => buy?.recordListed?.(e), gameHealth, store, credentials, activity, sessions: gameSessions, accountProfile, onChanged: emitState, onAttention: autoTradeAttention, onScout: (id, reply) => scout.showSocketScout?.(id, reply), onCycleEnd: () => cards.refresh() });
+  autoTradeDeps = { onRoster: id => capRelief(id), cardBusy: () => Boolean(synthesis?.snapshot().running || activate?.snapshot().running), friendNet, pauseAccount: pauseAccountForTrade, onSpenderListed: e => buy?.recordListed?.(e), gameHealth, store, credentials, activity, sessions: gameSessions, accountProfile, onChanged: emitState, onAttention: autoTradeAttention, onScout: (id, reply) => scout.showSocketScout?.(id, reply), onCycleEnd: () => cards.refresh() };
+  autoTrade = new AutoTradeEngine(autoTradeDeps);
+  // the other targets' runs count as Auto Trade for every other service
+  { const uses = autoTrade.usesAccount.bind(autoTrade); autoTrade.usesAccount = id => uses(id) || [...autoTradeExtra.values()].some(e => e.usesAccount(id)); }
+  { const works = autoTrade.worksWith?.bind(autoTrade); if (works) autoTrade.worksWith = id => works(id) || [...autoTradeExtra.values()].some(e => e.worksWith?.(id) && e.isRunning?.()); }
   market = new MarketService({ store, activity, accountProfile, sessions: gameSessions, onChanged: emitState });
   // its own accounts never in Auto Trade at the same time (and the other way round)
   cardFactory = new CardFactoryMulti({ store, activity, sessions: gameSessions, createSocket: undefined, friendNet, gameHealth, onChanged: emitState,
@@ -1499,7 +1523,34 @@ function registerIpc() {
     const clash = (options.accountIds || []).filter(id => cardFactory?.usesAccount(id));
     if (clash.length) throw new Error(`Kart Fabrikası is using: ${clash.map(id => store.getAccounts().find(a => a.id === id)?.name || id).join(', ')}`);
     if (options.stopConflicts) await stopAutoTradeConflicts(options.accountIds || [], { keepAutoPlay: Boolean(options.keepAutoPlay ?? options.config?.keepAutoPlay) });
-    return autoTrade.start(options);
+    const targets = [...new Set((options.targetIds || []).filter(id => store.getAccounts().some(a => a.id === id)))];
+    if (targets.length < 2) return autoTrade.start(options);
+    // several targets (user 2026-11-28): each is a main of its own run; the chosen accounts (each
+    // role evenly) and the Harcayıcı accounts are split among them; one run that ends or fails
+    // never stops or holds up the others
+    const { splitByRole } = require('./services/split-roles.cjs');
+    const busy = targets.filter(t => t !== targets[0] && extraTradeEngine(t).isRunning?.());
+    if (autoTrade.isRunning?.() || busy.length) throw new Error('Auto Trade is already running.');
+    const realMain = store.getAccountProfile()?.mainAccountId || null;
+    const acc = id => store.getAccounts().find(a => a.id === id);
+    const sides = (options.accountIds || []).filter(id => !targets.includes(id) && id !== realMain && acc(id)?.role !== 'spender');
+    const spenders = store.getAccounts().filter(a => a.role === 'spender' && !targets.includes(a.id)).map(a => a.id);
+    const sideShare = splitByRole(sides, targets, id => acc(id)?.role || 'side');
+    const spenderShare = splitByRole(spenders, targets, () => 'spender');
+    const runOne = async (t, i) => {
+      const engine = i === 0 ? autoTrade : extraTradeEngine(t);
+      if (i > 0) { engine.pricing = autoTrade.pricing; }
+      const ids = [t, ...sideShare[t], ...spenderShare[t].filter(id => (options.accountIds || []).includes(id))];
+      try {
+        return await engine.start({ ...options, accountIds: ids, actingMainId: t, spenderIds: spenderShare[t], targetIds: undefined });
+      } catch (error) {
+        activity.add({ level: 'error', accountId: t, accountName: acc(t)?.name || '', taskName: 'Auto Trade', code: 'at2.targetFailed', params: { error: error.message }, message: `Auto Trade could not start for this target: ${error.message}` });
+        return null;
+      }
+    };
+    const results = await Promise.all(targets.map(runOne));
+    emitState();
+    return results[0] || autoTrade.snapshot();
   });
   // Hazırlık: a run that only does the bench decisions (list, fire, trade / card to main).
   // Auto Play steps aside on main and the accounts with a decision.
@@ -1521,10 +1572,10 @@ function registerIpc() {
   ipcMain.handle('card-factory:stop', async () => cardFactory.stop());
   ipcMain.handle('card-factory:reset-count', async () => cardFactory.resetCount());
   ipcMain.handle('auto-trade:clear-prepare', async () => autoTrade.clearPrepare());
-  ipcMain.handle('auto-trade:pause', async () => autoTrade.pause());
-  ipcMain.handle('auto-trade:resume', async () => autoTrade.resume());
-  ipcMain.handle('auto-trade:stop', async () => autoTrade.stop());
-  ipcMain.handle('auto-trade:continue', async () => autoTrade.continue());
+  ipcMain.handle('auto-trade:pause', async () => { for (const e of autoTradeExtra.values()) { try { await e.pause(); } catch {} } return autoTrade.pause(); });
+  ipcMain.handle('auto-trade:resume', async () => { for (const e of autoTradeExtra.values()) { try { await e.resume(); } catch {} } return autoTrade.resume(); });
+  ipcMain.handle('auto-trade:stop', async () => { for (const e of autoTradeExtra.values()) { try { await e.stop(); } catch {} } return autoTrade.stop(); });
+  ipcMain.handle('auto-trade:continue', async () => { for (const e of autoTradeExtra.values()) { try { await e.continue(); } catch {} } return autoTrade.continue(); });
   ipcMain.handle('auto-trade:reset', async () => autoTrade.reset());
   ipcMain.handle('auto-trade:reset-cards', async () => autoTrade.resetCardCounts());
   ipcMain.handle('auto-trade:respond-listing', async (_event, items) => autoTrade.respondListing(items));

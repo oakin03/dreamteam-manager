@@ -30,3 +30,14 @@ test('Card Factory with several targets: one factory each, sides split by role, 
   assert.equal(saved.multi, true);
   assert.deepEqual(saved.config.targetIds, ['T1', 'T2']);
 });
+
+test('Auto Trade: a run with its own Harcayıcı share uses only those', () => {
+  const { AutoTradeEngine } = require('../src/main/services/auto-trade-engine.cjs');
+  const e = Object.create(AutoTradeEngine.prototype);
+  const accounts = ['s1', 's2', 's3', 'M'].map(id => ({ id, name: id, role: id.startsWith('s') ? 'spender' : undefined }));
+  e.store = { getAccounts: () => accounts, getAccountProfile: () => ({ accounts: Object.fromEntries(accounts.map(a => [a.id, { userId: 'u-' + a.id }])) }) };
+  e.state = { config: { mainId: 'M', spenderIds: ['s2'] } };
+  assert.deepEqual(e._spenderIds(), ['s2']);
+  e.state.config.spenderIds = null;
+  assert.deepEqual(e._spenderIds(), ['s1', 's2', 's3'], 'one target: every Harcayıcı as before');
+});

@@ -30,7 +30,7 @@ const TEXT = {
     start: 'Başlat', pause: 'Duraklat', resume: 'Devam ettir', stop: 'Durdur', cont: 'Kaldığı yerden devam et', reset: 'İlerlemeyi sıfırla',
     resetConfirm: 'Kayıtlı ilerleme silinecek ve Auto Trade sıfırdan başlayacak. Emin misin?', yes: 'Evet, sıfırla', cancel: 'Vazgeç', close: 'Kapat',
     status: { awaitingRole: 'Seçimini bekliyor', idle: 'Hazır', waitingGame: 'Oyun bekleniyor · gelince devam edecek', running: 'Çalışıyor', paused: 'Duraklatıldı', stopping: 'Durduruluyor', stopped: 'Durduruldu', error: 'Hata · senin müdahalen gerekiyor', done: 'Tamamlandı', awaitingListing: 'Pazar listesi bekleniyor' },
-    accounts: 'Hesaplar', selectAll: 'Tümünü seç', mainBadge: 'Main', actingMain: 'Bu çalıştırmada Main gibi davranacak hesap', actingMainHint: 'Asıl Main seçili değil. Seçim sadece bu çalıştırma için; asıl Main değişmez.',
+    accounts: 'Hesaplar', selectAll: 'Tümünü seç', extraTargets: 'Ek hedefler', extraTargetsHint: 'Seçilen ek hedeflerin her biri kendi ana hesabıyla ayrı bir Auto Trade çalıştırır: seçili hesaplar ve Harcayıcılar rollerine göre hedeflere eşit bölünür; biri biterse ya da hata verirse diğerleri devam eder. Hazırlık yalnızca ilk hedefte yapılır.', extraRuns: 'Diğer hedefler', extraTotals: '{accounts} hesap · {bought} alınan · {converted} kart · {trades} takas', mainBadge: 'Main', actingMain: 'Bu çalıştırmada Main gibi davranacak hesap', actingMainHint: 'Asıl Main seçili değil. Seçim sadece bu çalıştırma için; asıl Main değişmez.',
     routing: 'Roller', sideToMain: 'Side → Main', mainToSide: 'Main → Side', sideToMainNote: 'Side → Main yönündeki roller Main\'e geçer ve Main\'de karta çevrilir.', mainToSideNote: 'Main → Side yönündeki roller Side hesaplarda kalır; sonunda pazara listeleyebilirsin.',
     roleRules: 'Hesap rollerine göre kurallar', roleRulesHint: 'Main hariç her hesap rolünün Scout\'tan ne imzalayacağı. Satılabilir: Satılabilir rollü oyuncular; Kart: Kart rollü oyuncular; Ucuz: fiyat sınırının altındakiler. Fiyat boşsa genel sınır geçerli. Sayı, o roldeki seçili hesap sayısı. Harcayıcı satırı da geçerlidir: orada kapalı olan oyuncuyu Harcayıcılar ne Scout\'tan alır ne takasla kabul eder.', rrRole: 'Rol', rrCheap: 'Ucuz', rrPrice: 'Fiyat sınırı', rrUnused: 'Bu rol yukarıdaki yön seçimlerinde yok, oyuncu yönlendirmiyor',
     maxPrice: 'Maksimum fiyat (Scout Price)', maxPriceHint: 'Bu fiyat ve altındaki oyuncular rolüne bakılmadan Main\'e gider ve karta çevrilir. 0–2500; 50\'nin altı = sadece roller.',
@@ -90,7 +90,7 @@ const TEXT = {
     start: 'Start', pause: 'Pause', resume: 'Resume', stop: 'Stop', cont: 'Continue from where it stopped', reset: 'Reset progress',
     resetConfirm: 'Saved progress is deleted and Auto Trade starts from scratch. Are you sure?', yes: 'Yes, reset', cancel: 'Cancel', close: 'Close',
     status: { awaitingRole: 'Waiting for your choice', idle: 'Ready', waitingGame: 'Waiting for the game · continues when it is back', running: 'Running', paused: 'Paused', stopping: 'Stopping', stopped: 'Stopped', error: 'Error · needs you', done: 'Finished', awaitingListing: 'Waiting for a market listing' },
-    accounts: 'Accounts', selectAll: 'Select all', mainBadge: 'Main', actingMain: 'Account acting as main for this run', actingMainHint: 'The real main is not selected. This choice is for this run only; the real main stays main.',
+    accounts: 'Accounts', selectAll: 'Select all', extraTargets: 'Extra targets', extraTargetsHint: 'Every extra target runs an Auto Trade of its own with itself as main: the chosen accounts and the Harcayıcı accounts are split evenly by role among the targets; one that ends or fails does not stop the others. Hazırlık is done on the first target only.', extraRuns: 'Other targets', extraTotals: '{accounts} accounts · {bought} bought · {converted} cards · {trades} trades', mainBadge: 'Main', actingMain: 'Account acting as main for this run', actingMainHint: 'The real main is not selected. This choice is for this run only; the real main stays main.',
     routing: 'Roles', sideToMain: 'Side → Main', mainToSide: 'Main → Side', sideToMainNote: 'Roles routed side → main move to main and are turned into star cards there.', mainToSideNote: 'Roles routed main → side stay on the sides; you can list them on the market at the end.',
     roleRules: 'Rules by account role', roleRulesHint: 'What every account role but Main signs from Scout. Every column is a player role of the Cards page (Sellable, Card, Stock…); Cheap: players at or under the price limit whatever their role. An empty price uses the general limit. The number is how many selected accounts have the role. The Harcayıcı row counts too: a player switched off there is neither signed nor taken by trade by the Harcayıcı accounts.', rrRole: 'Role', rrCheap: 'Cheap', rrPrice: 'Price limit', rrUnused: 'This role is in neither direction above, so it routes no players',
     maxPrice: 'Maximum price (Scout Price)', maxPriceHint: 'Players at or below this price go to main and become cards whatever their role. 0–2500; under 50 = roles only.',
@@ -243,6 +243,13 @@ export default function AutoTradePage({ state, t, toast, msgText, Modal, refresh
   const priceNum = Number(form.maxPrice);
   const priceValid = /^\d+$/.test(String(form.maxPrice).trim()) && priceNum >= 0 && priceNum <= 2500;
   const canStart = selected.length >= 2 && priceValid && (mainSelected || (form.actingMainId && selected.includes(form.actingMainId)));
+  // several targets (user 2026-11-28): the main of the run plus extra targets, each a main of its own run
+  const firstTarget = mainSelected ? realMain : form.actingMainId;
+  const [extraTargets, setExtraTargets] = useState(() => { try { return JSON.parse(localStorage.getItem('at.extraTargets') || '[]'); } catch { return []; } });
+  const extras = extraTargets.filter(id => selected.includes(id) && id !== firstTarget);
+  const setExtras = ids => { setExtraTargets(ids); try { localStorage.setItem('at.extraTargets', JSON.stringify(ids)); } catch {} };
+  const targetIds = extras.length ? [firstTarget, ...extras] : undefined;
+  const extraRuns = state.autoTradeExtra || [];
   const toggleAcc = id => set({ accountIds: form.accountIds.includes(id) ? form.accountIds.filter(v => v !== id) : [...form.accountIds, id] });
   const toggleRole = (key, id) => set({ [key]: form[key].includes(id) ? form[key].filter(v => v !== id) : [...form[key], id] });
 
@@ -276,7 +283,7 @@ export default function AutoTradePage({ state, t, toast, msgText, Modal, refresh
   const startNow = stopConflicts => run_(async () => {
     setStarting(true);
     try {
-    await api.autoTrade.start({ ...form, maxPrice: priceNum, loopCount: Number(form.loopCount) || 1, parallelSides: Number(form.parallelSides) || 3, accountIds: selected, actingMainId: mainSelected ? undefined : form.actingMainId, roomPassword: form.roomPassword || undefined, benchDecisions: decisions, stopConflicts });
+    await api.autoTrade.start({ ...form, maxPrice: priceNum, loopCount: Number(form.loopCount) || 1, parallelSides: Number(form.parallelSides) || 3, accountIds: selected, targetIds, actingMainId: mainSelected ? undefined : form.actingMainId, roomPassword: form.roomPassword || undefined, benchDecisions: decisions, stopConflicts });
     setPre(null);
     await refresh();
     } finally { setStarting(false); }
@@ -320,6 +327,12 @@ export default function AutoTradePage({ state, t, toast, msgText, Modal, refresh
       <span className="pill muted" title={x.activeTime}><i />{x.activeTime}: {dur(activeSec(run))}</span>
       {run.stage === 'sides' && run.cycleInfo && <span className="muted-text at2-cycle">{fill(x.cycleProgress, { done: run.cycleInfo.finished, total: run.cycleInfo.total, active: run.cycleInfo.active })}{run.cycleInfo.etaSeconds != null && running && run.status === 'running' ? ' · ' + fill(x.cycleEta, { t: dur(run.cycleInfo.etaSeconds) }) : ''}</span>}
     </div>}
+    {extraRuns.length > 0 && <div className="panel at2-extra"><b>{x.extraRuns}</b>{extraRuns.map(e => { const st = e.run?.status; const on = ['running', 'paused', 'stopping', 'awaitingListing', 'awaitingRole'].includes(st); const accs = Object.values(e.run?.accounts || {}); return <div key={e.targetId} className="at2-extra-row">
+      <span className={`pill ${st === 'error' ? 'bad' : on ? 'ok' : 'muted'}`}><i />{accounts.find(a => a.id === e.targetId)?.name || e.targetId} · {x.status[st] || st}</span>
+      <span className="at2-step">{fill(x.steps[e.run?.step] || '', e.run?.stepParams || {})}</span>
+      <span className="muted-text">{fill(x.extraTotals, { accounts: accs.length, bought: accs.reduce((n, a) => n + (a.bought || 0), 0), converted: accs.reduce((n, a) => n + (a.converted || 0), 0), trades: accs.reduce((n, a) => n + (a.tradesIn || 0) + (a.tradesOut || 0), 0) })}</span>
+      {st === 'error' && <span className="bad-text">{e.run?.error?.message}</span>}
+    </div>; })}</div>}
     {run?.wrapUp && <div className="panel at2-wrap">
       <span className="pill warn"><i />{run.wrapUp.kind === 'pause' ? x.status.paused : x.status.stopping}</span>
       <span>{fill(run.wrapUp.kind === 'pause' ? x.wrapPause : x.wrapStop, { cheap: run.wrapUp.cheap })}</span>
@@ -331,7 +344,7 @@ export default function AutoTradePage({ state, t, toast, msgText, Modal, refresh
     {tab === 'pricing' && <PricingTab x={x} pricing={at.pricing} rows={pricingRows} toast={toast} roles={roles} players={state.players?.players || []} />}
     {tab === 'run' && missingPrices > 0 && <div className="panel at2-price-banner"><span>{fill(x.pr.banner, { n: missingPrices })}</span><button className="btn ghost small" onClick={() => chooseTab('pricing')}>{x.pr.bannerBtn}</button></div>}
     {tab === 'run' && <>
-    {!running && <ConfigPanel state={state} x={x} form={form} set={set} accounts={accounts} realMain={realMain} selected={selected} mainSelected={mainSelected} toggleAcc={toggleAcc} locked={locked} levelOf={levelOf} roles={roles} toggleRole={toggleRole} priceValid={priceValid} last={last} />}
+    {!running && <ConfigPanel state={state} x={x} form={form} set={set} accounts={accounts} realMain={realMain} selected={selected} mainSelected={mainSelected} toggleAcc={toggleAcc} locked={locked} levelOf={levelOf} roles={roles} toggleRole={toggleRole} priceValid={priceValid} last={last} firstTarget={firstTarget} extras={extras} setExtras={setExtras} running={running} />}
     <div className="panel at2-how"><button className="link-btn" onClick={() => setShowHow(v => !v)}>{showHow ? '▾' : '▸'} {x.howTitle}</button>{showHow && <ol>{x.how.map((h, i) => <li key={i}>{h}</li>)}</ol>}</div>
 
     {run && <>
@@ -365,7 +378,7 @@ export default function AutoTradePage({ state, t, toast, msgText, Modal, refresh
   </div>;
 }
 
-function ConfigPanel({ state, x, form, set, accounts, realMain, selected, mainSelected, toggleAcc, locked, levelOf, roles, toggleRole, priceValid, last }) {
+function ConfigPanel({ state, x, form, set, accounts, realMain, selected, mainSelected, toggleAcc, locked, levelOf, roles, toggleRole, priceValid, last, firstTarget, extras = [], setExtras = () => {}, running = false }) {
   const [showPass, setShowPass] = useState(false);
   const open = accounts.filter(a => !locked(a.id));
   const all = open.length > 0 && open.every(a => form.accountIds.includes(a.id));
@@ -376,6 +389,7 @@ function ConfigPanel({ state, x, form, set, accounts, realMain, selected, mainSe
         <GroupedPicks storeKey="autotrade" accounts={accounts} selected={form.accountIds} isPickable={a => !locked(a.id)} onSet={ids => set({ accountIds: ids })} render={a => locked(a.id) ? <label key={a.id} className="at2-chip off" title={fill(x.lowLevel, { lv: levelOf(a.id) })}><input type="checkbox" checked={false} disabled />{a.name}<small>LV {levelOf(a.id)}</small></label> : <label key={a.id} className={`at2-chip ${form.accountIds.includes(a.id) ? 'on' : ''}`}><input type="checkbox" checked={form.accountIds.includes(a.id)} onChange={() => toggleAcc(a.id)} />{a.name}{a.id === realMain && <span className="main-dot">{x.mainBadge}</span>}</label>} />
       </div>
       {!mainSelected && selected.length > 0 && <div className="at2-acting"><label><span>{x.actingMain}</span><select value={form.actingMainId} onChange={e => set({ actingMainId: e.target.value })}><option value="">—</option>{selected.map(id => <option key={id} value={id}>{accounts.find(a => a.id === id)?.name}</option>)}</select></label><small>{x.actingMainHint}</small></div>}
+      {selected.length > 2 && firstTarget && <div className="at2-acting at2-targets"><span>{x.extraTargets}</span><div className="at2-target-picks">{extras.map(id => <span key={id} className="chip on">{accounts.find(a => a.id === id)?.name}<button type="button" disabled={running} onClick={() => setExtras(extras.filter(v => v !== id))} aria-label="×">×</button></span>)}<select value="" disabled={running} onChange={e => { if (e.target.value) setExtras([...extras, e.target.value]); }}><option value="">+ {x.extraTargets}</option>{accounts.filter(a => selected.includes(a.id) && a.id !== firstTarget && !extras.includes(a.id)).map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select></div><small>{x.extraTargetsHint}</small></div>}
     </section>
     <section><h4>{x.routing}</h4>
       <div className="at2-route"><b>{x.sideToMain}</b><div className="at2-chips">{roles.map(r => <label key={r.id} className={`at2-chip ${form.sideToMainRoleIds.includes(r.id) ? 'on' : ''}`}><input type="checkbox" checked={form.sideToMainRoleIds.includes(r.id)} onChange={() => toggleRole('sideToMainRoleIds', r.id)} /><i className="role-dot" style={{ background: r.color }} />{r.name}</label>)}</div><small>{x.sideToMainNote}</small></div>
