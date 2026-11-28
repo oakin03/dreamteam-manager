@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { filOf } from '../i18n-fil';
-import { GroupedPicks } from './AccountGroups';
+import { GroupedPicks, orderOf } from './AccountGroups';
 import { RotationModes } from './RotationPanel';
 
 // Turnuva → Canlı (user 2026-11-13): one table of every account of ours in the tournament, updated
@@ -53,7 +53,7 @@ export default function TournamentLiveTab({ state, t, toast }) {
   const [now, setNow] = useState(Date.now());
   useEffect(() => { const i = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(i); }, []);
   // still in first, then by name
-  const rows = useMemo(() => [...(tl.rows || [])].sort((a, b) => (a.out - b.out) || (b.live - a.live) || String(a.name).localeCompare(String(b.name))), [tl.rows]);
+  const rows = useMemo(() => [...(tl.rows || [])].sort((a, b) => (a.out - b.out) || (b.live - a.live) || (orderOf(a) - orderOf(b))), [tl.rows]);
   const toggle = (setter, id) => setter(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
   const props = async () => {
     const ids = [...sel];

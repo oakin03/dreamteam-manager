@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import SortTable from './SortTable';
 import { filOf } from '../i18n-fil';
 import RatingBadge from './RatingBadge';
-import { useGroupedRows } from './AccountGroups';
+import { useGroupedRows, orderOf } from './AccountGroups';
 
 // Çanta → Anestezi (user 2026-11-18): the injured players of every roster, Anesthesia on the ticked
 // ones (every account at once), the bench swap, and the automatic fixes of the injury guard.
@@ -97,7 +97,7 @@ export default function InjuryTab({ state, t, toast }) {
   const rows = useMemo(() => {
     const out = [];
     for (const [aid, team] of Object.entries(inj.teams || {})) for (const p of team.players || []) if (p.injured) out.push({ ...p, accountId: aid, anesthesia: team.anesthesia || 0, key: aid + ':' + p.id });
-    return out.sort((a, b) => (b.hurt - a.hurt) || (b.starter - a.starter) || accName(a.accountId).localeCompare(accName(b.accountId)));
+    return out.sort((a, b) => (b.hurt - a.hurt) || (b.starter - a.starter) || (orderOf(a) - orderOf(b)));
   }, [inj.teams, accounts]);
   const can = r => r.anesthesia > 0 && !busy.has(r.accountId);
   const picked = rows.filter(r => sel.has(r.key) && can(r));

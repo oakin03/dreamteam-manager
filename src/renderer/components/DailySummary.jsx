@@ -87,7 +87,7 @@ export default function DailySummary({ t }) {
     if (main?.accounts) sub.push(fill(x.accountsN, { n: num(main.accounts) }));
     return <div key={label} className={`ds-tile${vals.every(v => !v) ? ' zero' : ''}`}><span>{x[label]}</span><b>{vals.map(num).join(' / ')}</b>{sub.length > 0 && <small>{sub.join(' · ')}</small>}</div>;
   };
-  const accounts = Object.entries(s?.perAccount || {}).map(([n, a]) => ({ ...a, id: n, name: n })).sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+  const accounts = Object.entries(s?.perAccount || {}).map(([n, a]) => ({ ...a, id: n, name: n })); // the grouped table sorts by the account order
   return <div className="daily-summary-page">
     <div className="ds-head">
       <h1>{x.title}</h1><small className="muted-text">{x.hint}</small><span className="sp" />
